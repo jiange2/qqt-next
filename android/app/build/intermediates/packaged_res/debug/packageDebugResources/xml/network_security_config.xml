@@ -5,9 +5,10 @@
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- Allow cleartext for local development (emulator/localhost) -->
+    <!-- Allow cleartext for local development (emulator/localhost) and server IP -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain>
         <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">47.111.25.157</domain>
     </domain-config>
 </network-security-config>

@@ -1,19 +1,23 @@
 [
     {
-        "merged": "com.qqt.music.app-debug-58:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.qqt.music.app-main-60:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-debug-58:\\drawable_ic_launcher_foreground.xml.flat",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-main-60:\\drawable\\ic_launcher_foreground.xml"
     },
     {
-        "merged": "com.qqt.music.app-debug-58:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.qqt.music.app-main-60:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-debug-58:\\drawable_ic_launcher_background.xml.flat",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-main-60:\\drawable\\ic_launcher_background.xml"
     },
     {
-        "merged": "com.qqt.music.app-debug-58:/drawable_ic_launcher_foreground.xml.flat",
-        "source": "com.qqt.music.app-main-60:/drawable/ic_launcher_foreground.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-debug-58:\\mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-main-60:\\mipmap-anydpi-v26\\ic_launcher.xml"
     },
     {
-        "merged": "com.qqt.music.app-debug-58:/drawable_ic_launcher_background.xml.flat",
-        "source": "com.qqt.music.app-main-60:/drawable/ic_launcher_background.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-debug-58:\\mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-main-60:\\mipmap-anydpi-v26\\ic_launcher_round.xml"
+    },
+    {
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-debug-58:\\xml_network_security_config.xml.flat",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.qqt.music.app-main-60:\\xml\\network_security_config.xml"
     },
     {
         "merged": "com.qqt.music.app-debug-58:/xml_network_security_config.xml.flat",
