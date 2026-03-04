@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # PHP + Apache 服务
+  web:
+    build:
+      context: .
+    container_name: qqt-web
+    ports:
+      - "8000:80"
+    volumes:
+      - ./backend:/var/www/html
+    environment:
+      - DB_HOST=mysql
+      - DB_USER=root
+      - DB_PASSWORD=${DB_PASSWORD:-lq520977WC}
+      - DB_NAME=${DB_NAME:-qqt}
+    networks:
+      - local-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # MySQL 数据库服务
+  mysql:
+    image: mysql:8.0
+    container_name: qqt-mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-lq520977WC}
+      MYSQL_DATABASE: ${DB_NAME:-qqt}
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/install/database.sql:/docker-entrypoint-initdb.d/database.sql
+    networks:
+      - local-network
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD:-lq520977WC}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  local-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
