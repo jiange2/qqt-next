@@ -11,6 +11,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqt.music.ui.theme.OrangePrimary
@@ -31,6 +32,9 @@ fun MusicTopBar(
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
                 color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(0.7f),
             )
         },
         navigationIcon = {
@@ -53,6 +57,5 @@ fun MusicTopBar(
             containerColor = OrangePrimary,
             titleContentColor = Color.White,
         ),
-        modifier = Modifier.height(56.dp),
     )
 }

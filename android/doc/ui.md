@@ -12,7 +12,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 |------|------|
 | `ui/navigation/Screen.kt` | 所有路由枚举（route 字符串 + title），`bottomNavRoutes` / `drawerTopRoutes` 分组 |
 | `ui/navigation/AppNavigation.kt` | 整体框架：ModalNavigationDrawer + Scaffold + NavHost，控制 TopBar 显示逻辑 |
-| `ui/components/TopBar.kt` | `MusicTopBar`：橙色顶栏，左侧菜单/返回，右侧搜索 |
+| `ui/components/TopBar.kt` | `MusicTopBar`：橙色顶栏，标题支持文本截断（`TextOverflow.Ellipsis`）和宽度限制防止溢出，左侧菜单/返回，右侧搜索 |
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：5个 Tab，中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（始终显示于 BottomBar 上方，有歌曲时可见） |
@@ -91,3 +91,4 @@ Column {
 - `PlayerViewModel` 通过 `by viewModels()` 在 `MainActivity` 创建，然后通过参数逐层传递给页面 Composable（非 Hilt inject）
 - Settings 页面的 `gesturesEnabled = false` 是为了防止侧滑手势与 Settings 内部滑动冲突
 - `Screen.titleOf(route)` 函数用于 `TopBar` 动态显示当前页面标题，新增路由时需同步更新此函数
+- **[坑] TopBar 文本溢出处理**：使用 `TextOverflow.Ellipsis` 时，**必须导入** `androidx.compose.ui.text.style.TextOverflow`（注意包含 `.style.`），而不是 `androidx.compose.ui.text.TextOverflow`。后者不存在，会导致编译错误。参考 `SongListItem.kt`、`MiniPlayer.kt` 等其他组件的导入方式。
