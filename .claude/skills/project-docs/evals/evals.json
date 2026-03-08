@@ -1,0 +1,50 @@
+{
+  "skill_name": "project-docs",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我为这个音乐播放器项目创建完整的项目说明文档。这个项目有好几个子模块（前端、后端、管理后台、安卓），我希望能有一个根目录的 PROJECT.md 说明整体结构，每个子模块也有自己的 PROJECT.md，然后每个子模块的主要功能都有对应的 doc/xx.md 细节文档，这样以后 AI 改代码时能快速找到相关文档。工作目录是 d:/project/audio-player。",
+      "expected_output": "在项目根目录生成 PROJECT.md（总览），在 audio-player-frontend/、audio-player-backend/、audio-player-admin/、audio-player-android/ 各生成 PROJECT.md（子模块文档），并在各子模块的 doc/ 目录下生成若干 xx.md 功能细节文档。所有文档都有「何时阅读」说明，文件引用准确，结构清晰。",
+      "files": [],
+      "assertions": [
+        "根目录存在 PROJECT.md 文件",
+        "根目录 PROJECT.md 包含所有4个子模块的导航表格",
+        "audio-player-frontend/PROJECT.md 存在且包含功能模块索引表格",
+        "audio-player-backend/PROJECT.md 存在且包含功能模块索引表格",
+        "audio-player-frontend/doc/ 目录下至少存在2个功能文档",
+        "audio-player-backend/doc/ 目录下至少存在2个功能文档",
+        "每个功能文档包含「何时阅读」提示和「关键文件」表格",
+        "文件路径引用使用代码格式（反引号）且路径准确存在"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "我有一个前后端分离的 Node.js + Vue 项目，目录结构大概是这样：\n\n```\nmy-app/\n  backend/      # Express API 服务\n    src/\n      routes/\n      services/\n      middlewares/\n    package.json\n  frontend/     # Vue 3 SPA\n    src/\n      views/\n      components/\n      stores/\n      api/\n    package.json\n  docker-compose.yml\n  README.md\n```\n\n后端主要功能是用户认证、商品管理 API、订单处理。前端主要功能是登录页、商品列表/详情、购物车、订单管理。请帮我规划并生成这套项目的文档体系（PROJECT.md + 子模块 PROJECT.md + doc/xx.md），让后续的 AI 改代码时能方便定位。",
+      "expected_output": "生成 PROJECT.md（根）含模块导航；backend/PROJECT.md 和 frontend/PROJECT.md 各含功能索引；backend/doc/ 下有 auth.md、products.md、orders.md；frontend/doc/ 下有 auth.md、products.md、cart.md 或类似划分；内容具体反映该项目场景，不是通用模板。",
+      "files": [],
+      "assertions": [
+        "根目录 PROJECT.md 包含 backend 和 frontend 两个模块的导航信息",
+        "backend/PROJECT.md 包含目录结构说明和功能索引",
+        "frontend/PROJECT.md 包含目录结构说明和功能索引",
+        "backend/doc/ 下至少生成3个功能文档（覆盖认证、商品、订单）",
+        "frontend/doc/ 下至少生成3个功能文档（覆盖登录/商品/购物车或订单）",
+        "每个 doc 文件都有「何时阅读」和「关键文件」章节",
+        "文档内容与给定的项目场景对应（提及正确的技术栈和功能名称）"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "我的后端项目 src/ 下有这些模块：\n\n- auth/ - JWT 认证，登录/注册/刷新 token\n- music/ - 音乐元数据管理，CRUD\n- album/ - 专辑管理\n- download/ - 文件下载，带断点续传和进度追踪\n- playRecord/ - 播放记录统计\n- cache/ - Redis 缓存层\n\n入口是 server.js，配置在 config/database.js。我想为这个后端单独生成文档，不用管前端，帮我生成 PROJECT.md 和 doc/ 功能文档，要能让 AI 快速找到每个模块的代码。",
+      "expected_output": "生成 PROJECT.md（后端模块），包含目录结构和6个模块的功能索引；doc/ 下为每个模块生成对应的文档（auth.md、music.md、album.md、download.md、playRecord.md、cache.md）；每个文档列出关键文件和数据流；download.md 应特别说明断点续传的实现细节。",
+      "files": [],
+      "assertions": [
+        "PROJECT.md 包含所有6个模块（auth、music、album、download、playRecord、cache）的索引",
+        "doc/ 下存在至少5个功能文档",
+        "download 功能文档包含断点续传相关说明",
+        "playRecord 功能文档提到统计/记录相关逻辑",
+        "每个文档包含关键文件列表和数据流说明",
+        "PROJECT.md 中提到 server.js 作为入口和 config/database.js 配置"
+      ]
+    }
+  ]
+}

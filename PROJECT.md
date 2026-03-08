@@ -37,9 +37,10 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 - **后端登录/鉴权** → 阅读 [`backend/doc/auth.md`](backend/doc/auth.md)
 - **媒体文件上传/LRC歌词/缩略图** → 阅读 [`backend/doc/media.md`](backend/doc/media.md)
 - **Android API 请求逻辑/数据模型** → 阅读 [`android/doc/api.md`](android/doc/api.md)
-- **Android 音乐播放器（播放控制/队列/后台服务）** → 阅读 [`android/doc/player.md`](android/doc/player.md)
+- **Android 音乐播放器（播放控制/队列/缓存/元数据）** → 阅读 [`android/doc/player.md`](android/doc/player.md)
+- **Android 后台保活/自启动**（前台服务/WiFi 锁/设备重启） → 阅读 [`android/doc/background.md`](android/doc/background.md)
 - **Android UI/导航/页面** → 阅读 [`android/doc/ui.md`](android/doc/ui.md)
-- **Android 本地存储（最近播放/已下载）** → 阅读 [`android/doc/storage.md`](android/doc/storage.md)
+- **Android 本地存储**（最近播放/已下载/播放进度） → 阅读 [`android/doc/storage.md`](android/doc/storage.md)
 
 ## 跨模块约定
 

@@ -23,7 +23,7 @@ Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后�
 ```
 app/src/main/java/com/qqt/music/
   AppConfig.kt              # 全局配置：BASE_URL、PACKAGE_NAME、SIGN_KEY
-  MainActivity.kt           # 应用入口，初始化 PrefsManager，创建 PlayerViewModel，挂载 AppNavigation
+  MainActivity.kt           # 应用入口：启动前台服务、初始化 PrefsManager、创建 PlayerViewModel
   data/
     api/
       ApiClient.kt          # Retrofit 单例 + buildData()（签名编码：json  urlencode  base64）
@@ -36,10 +36,18 @@ app/src/main/java/com/qqt/music/
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
   player/
-    MusicPlayer.kt          # ExoPlayer 简单封装（早期低级封装，已被 PlayerViewModel 替代）
-    MusicPlayerService.kt   # 前台播放服务（MediaSessionService，foregroundServiceType=mediaPlayback）
+    MusicPlayerService.kt   # 前台服务：持有 ExoPlayer + MediaSession + WiFi 锁 + 缓存
+    MediaControllerManager.kt # 单例：异步连接 MusicPlayerService，管理 MediaController
+    AudioCache.kt           # LRU 缓存单例：占用磁盘 60%，自动驱逐最旧数据
+    LastPlayedStore.kt      # SharedPreferences 封装：保存/加载播放进度（专辑/曲目/位置）
+    MusicPlayer.kt          # ExoPlayer 简单封装（早期低级版本，已被 PlayerViewModel 替代）
+  service/
+    KeepAliveService.kt     # 独立前台服务：轻量级保活，与 MusicPlayerService 双层保活
+  receiver/
+    BootReceiver.kt         # BroadcastReceiver：BOOT_COMPLETED 后启动 KeepAliveService
+    ManufacturerCompat.kt   # 工具类：获取小米/华为/OPPO/VIVO 自启动管理页面的 Intent
   viewmodel/
-    PlayerViewModel.kt      # 全局播放状态（currentSong/isPlaying/queue），playSong()/skipNext() 等
+    PlayerViewModel.kt      # 全局播放状态：通过 MediaController 控制 Service 的 ExoPlayer，定期保存进度
   ui/
     navigation/
       Screen.kt             # 所有页面路由与标题定义（bottomNavRoutes、drawerTopRoutes）
@@ -60,7 +68,7 @@ app/src/main/java/com/qqt/music/
       BannerCarousel.kt     # HorizontalPager 轮播（3秒自动翻页 + 圆点指示器）
       BottomBar.kt          # 底部导航栏（5 Tab，中间下载为 FAB 样式）
       DrawerContent.kt      # 侧边抽屉（橙色头图 + 6个导航项 + 底部设置）
-      MiniPlayer.kt         # 底部迷你播放器（封面+歌曲名+上/播/下控制）
+      MiniPlayer.kt         # 底部迷你播放器：实时显示歌曲名、进度、播放控制
       SongListItem.kt       # 歌曲列表行（缩略图+标题+艺术家+评分+下载按钮）
       TopBar.kt             # 顶部导航栏（菜单/返回 + 标题 + 搜索按钮）
     theme/                  # Material3 主题（OrangePrimary=#E8441C，固定橙色不跟随系统Dynamic Color）
@@ -71,7 +79,8 @@ app/src/main/java/com/qqt/music/
 | 功能 | 文档 | 说明 |
 |------|------|------|
 | API 请求与数据模型 | [`doc/api.md`](doc/api.md) | ApiClient、MusicRepository、数据模型 |
-| 音乐播放器 | [`doc/player.md`](doc/player.md) | PlayerViewModel、MusicPlayerService、队列管理 |
+| 音乐播放器 | [`doc/player.md`](doc/player.md) | PlayerViewModel、MusicPlayerService、MediaController、缓存、进度保存 |
+| 后台保活与自启动 | [`doc/background.md`](doc/background.md) | 双层前台服务、WiFi 锁、设备重启自启动、国产 ROM 兼容 |
 | UI 导航与页面 | [`doc/ui.md`](doc/ui.md) | AppNavigation、Screen 路由、所有屏幕、公共组件 |
 | 本地存储 | [`doc/storage.md`](doc/storage.md) | PrefsManager：最近播放、已下载歌曲 |
 
