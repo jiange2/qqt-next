@@ -1,6 +1,7 @@
 package com.qqt.music.ui.navigation
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
@@ -24,6 +25,7 @@ import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
 import com.qqt.music.ui.screens.latest.LatestScreen
 import com.qqt.music.ui.screens.mylist.MyListScreen
+import com.qqt.music.ui.screens.player.PlayerScreen
 import com.qqt.music.ui.screens.playlist.PlaylistScreen
 import com.qqt.music.ui.screens.recent.RecentScreen
 import com.qqt.music.ui.screens.settings.SettingsScreen
@@ -40,75 +42,95 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
 
     val showBottomNav = currentRoute in Screen.bottomNavRoutes
     val showBackButton = currentRoute == Screen.Settings.route
+    val isPlayerScreen = currentRoute == Screen.Player.route
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            DrawerContent(
-                navController = navController,
-                drawerState = drawerState,
-                currentRoute = currentRoute,
-            )
-        },
-        gesturesEnabled = currentRoute != Screen.Settings.route,
-    ) {
-        Scaffold(
-            topBar = {
-                MusicTopBar(
-                    title = Screen.titleOf(currentRoute),
-                    onMenuClick = { scope.launch { drawerState.open() } },
-                    onSearchClick = {},
-                    showBackButton = showBackButton,
-                    onBackClick = { navController.popBackStack() },
+    // If player screen, show it fullscreen without drawer/topbar/bottombar
+    if (isPlayerScreen) {
+        PlayerScreen(
+            playerViewModel = playerViewModel,
+            onBackClick = { navController.popBackStack() },
+        )
+    } else {
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                DrawerContent(
+                    navController = navController,
+                    drawerState = drawerState,
+                    currentRoute = currentRoute,
                 )
             },
-            bottomBar = {
-                Column {
-                    MiniPlayer(playerViewModel)
-                    if (showBottomNav) {
-                        MusicBottomBar(navController = navController, currentRoute = currentRoute)
+            gesturesEnabled = currentRoute != Screen.Settings.route,
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Scaffold(
+                    topBar = {
+                        MusicTopBar(
+                            title = Screen.titleOf(currentRoute),
+                            onMenuClick = { scope.launch { drawerState.open() } },
+                            onSearchClick = {},
+                            showBackButton = showBackButton,
+                            onBackClick = { navController.popBackStack() },
+                        )
+                    },
+                    bottomBar = {
+                        if (showBottomNav) {
+                            MusicBottomBar(navController = navController, currentRoute = currentRoute)
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { innerPadding ->
+                    NavHost(
+                        navController = navController,
+                        startDestination = Screen.Home.route,
+                        modifier = Modifier.padding(innerPadding),
+                    ) {
+                    composable(Screen.Home.route) {
+                        HomeScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.Recent.route) {
+                        RecentScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.Download.route) {
+                        DownloadScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.Category.route) {
+                        CategoryScreen()
+                    }
+                    composable(Screen.Latest.route) {
+                        LatestScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.Artist.route) {
+                        ArtistScreen()
+                    }
+                    composable(Screen.Album.route) {
+                        AlbumScreen()
+                    }
+                    composable(Screen.Playlist.route) {
+                        PlaylistScreen()
+                    }
+                    composable(Screen.MyList.route) {
+                        MyListScreen()
+                    }
+                    composable(Screen.Favorites.route) {
+                        FavoritesScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.Settings.route) {
+                        SettingsScreen()
+                    }
+                    composable(Screen.Player.route) {
+                        PlayerScreen(
+                            playerViewModel = playerViewModel,
+                            onBackClick = { navController.popBackStack() },
+                        )
                     }
                 }
-            },
-        ) { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = Screen.Home.route,
-                modifier = Modifier.padding(innerPadding),
-            ) {
-                composable(Screen.Home.route) {
-                    HomeScreen(playerViewModel = playerViewModel)
                 }
-                composable(Screen.Recent.route) {
-                    RecentScreen(playerViewModel = playerViewModel)
-                }
-                composable(Screen.Download.route) {
-                    DownloadScreen(playerViewModel = playerViewModel)
-                }
-                composable(Screen.Category.route) {
-                    CategoryScreen()
-                }
-                composable(Screen.Latest.route) {
-                    LatestScreen(playerViewModel = playerViewModel)
-                }
-                composable(Screen.Artist.route) {
-                    ArtistScreen()
-                }
-                composable(Screen.Album.route) {
-                    AlbumScreen()
-                }
-                composable(Screen.Playlist.route) {
-                    PlaylistScreen()
-                }
-                composable(Screen.MyList.route) {
-                    MyListScreen()
-                }
-                composable(Screen.Favorites.route) {
-                    FavoritesScreen(playerViewModel = playerViewModel)
-                }
-                composable(Screen.Settings.route) {
-                    SettingsScreen()
-                }
+                // Mini player below the scaffold
+                MiniPlayer(
+                    playerViewModel = playerViewModel,
+                    onPlayerClick = { navController.navigate(Screen.Player.route) },
+                )
             }
         }
     }

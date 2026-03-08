@@ -29,19 +29,22 @@ import com.qqt.music.viewmodel.PlayerViewModel
 fun MiniPlayer(
     playerViewModel: PlayerViewModel,
     modifier: Modifier = Modifier,
+    onPlayerClick: () -> Unit = {},
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
 
-    currentSong?.let { song ->
-        Surface(
-            modifier = modifier.fillMaxWidth(),
-            color = Color.White,
-            shadowElevation = 8.dp,
-            tonalElevation = 0.dp,
-        ) {
-            Column {
-                HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFEEEEEE))
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(enabled = currentSong != null) { onPlayerClick() },
+        color = Color.White,
+        shadowElevation = 8.dp,
+        tonalElevation = 0.dp,
+    ) {
+        Column(modifier = Modifier.padding(bottom = 8.dp)) {
+            HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFEEEEEE))
+            if (currentSong != null) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -51,7 +54,7 @@ fun MiniPlayer(
                 ) {
                     // Album art
                     AsyncImage(
-                        model = song.thumbnailSmall.ifBlank { song.thumbnailBig },
+                        model = currentSong!!.thumbnailSmall.ifBlank { currentSong!!.thumbnailBig },
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -63,14 +66,14 @@ fun MiniPlayer(
                     // Song info
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = song.title,
+                            text = currentSong!!.title,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = song.artist.ifBlank { "佚名" },
+                            text = currentSong!!.artist.ifBlank { "佚名" },
                             fontSize = 12.sp,
                             color = Color.Gray,
                             maxLines = 1,
@@ -94,6 +97,60 @@ fun MiniPlayer(
                     }
                     IconButton(onClick = { playerViewModel.skipNext() }) {
                         Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color(0xFF333333))
+                    }
+                }
+            } else {
+                // Placeholder when no song is selected
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Empty placeholder art
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEEEEEE)),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    // Empty state text
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "暂无播放歌曲",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "选择歌曲开始播放",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    // Disabled controls
+                    IconButton(onClick = { }, enabled = false) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "Prev", tint = Color(0xFFCCCCCC))
+                    }
+                    IconButton(
+                        onClick = { },
+                        modifier = Modifier.size(40.dp),
+                        enabled = false,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play/Pause",
+                            tint = Color(0xFFCCCCCC),
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    IconButton(onClick = { }, enabled = false) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color(0xFFCCCCCC))
                     }
                 }
             }

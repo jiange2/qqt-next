@@ -15,6 +15,9 @@ sealed class Screen(val route: String, val title: String) {
     object MyList : Screen("mylist", "我的列表")
     object Favorites : Screen("favorites", "歌曲收藏")
     object Settings : Screen("settings", "设置中心")
+    
+    // Full-screen player
+    object Player : Screen("player", "播放器")
 
     companion object {
         val bottomNavRoutes = setOf("home", "recent", "download", "category", "latest")
@@ -24,7 +27,7 @@ sealed class Screen(val route: String, val title: String) {
             "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
             "category" -> "音乐分类"; "latest" -> "最新歌曲"; "artist" -> "音乐歌手"
             "album" -> "音乐专辑"; "playlist" -> "播放列表"; "mylist" -> "我的列表"
-            "favorites" -> "歌曲收藏"; "settings" -> "设置中心"
+            "favorites" -> "歌曲收藏"; "settings" -> "设置中心"; "player" -> "播放器"
             else -> "倾轻听"
         }
     }

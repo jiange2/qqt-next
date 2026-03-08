@@ -51,7 +51,7 @@ app/src/main/java/com/qqt/music/
   ui/
     navigation/
       Screen.kt             # 所有页面路由与标题定义（bottomNavRoutes、drawerTopRoutes）
-      AppNavigation.kt      # NavHost + ModalNavigationDrawer + Scaffold（TopBar/BottomBar/MiniPlayer）
+      AppNavigation.kt      # ModalNavigationDrawer + Column（Scaffold + MiniPlayer），管理整体布局
     screens/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
@@ -64,6 +64,7 @@ app/src/main/java/com/qqt/music/
       mylist/               # 我的列表（本地，暂无后端支持）
       favorites/            # 收藏歌曲（需 user_id）
       settings/             # 设置（主题切换/关于/隐私政策）
+      player/               # 播放器（全屏播放器 UI：专辑封面、进度条、播放控制）
     components/
       BannerCarousel.kt     # HorizontalPager 轮播（3秒自动翻页 + 圆点指示器）
       BottomBar.kt          # 底部导航栏（5 Tab，中间下载为 FAB 样式）
