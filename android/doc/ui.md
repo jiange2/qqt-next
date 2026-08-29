@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：`ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符），5 个底部 Tab + 6 个抽屉项 + 1 个全屏播放器共 12 个页面目的地。
+App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：`ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符），5 个底部 Tab + 6 个抽屉项 + 1 个全屏播放器 + 2 个歌曲详情页（横幅歌曲/专辑歌曲）共 14 个页面目的地。
 
 ## 关键文件
 
@@ -36,6 +36,8 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `favorites` | 歌曲收藏 | 侧边抽屉 | 无（待实现） |
 | `settings` | 设置中心 | 侧边抽屉底部 | 无 |
 | `player` | 播放器 | 全屏（无 TopBar/BottomBar） | 无（使用 PlayerViewModel） |
+| `banner_songs/{bid}` | 歌曲（横幅标题） | 详情页：首页轮播点击 | 无（数据随首页接口内嵌，经 `BannerNav` 交接） |
+| `album_songs/{aid}` | 专辑（专辑名） | 详情页：首页最新专辑/抽屉专辑列表点击 | `AlbumSongsViewModel` |
 
 ## AppNavigation 关键逻辑
 
@@ -69,16 +71,17 @@ if (isPlayerScreen) {
 // 底部导航只在 5 个 Tab 路由显示
 val showBottomNav = currentRoute in Screen.bottomNavRoutes
 
-// Settings 页面：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
-gesturesEnabled = currentRoute != Screen.Settings.route
-showBackButton = currentRoute == Screen.Settings.route
+// Settings / 详情页：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
+gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs
+showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs
 ```
 
 ## 各页面说明
 
 ### HomeScreen / HomeViewModel
-- `HomeViewModel.loadHome()` 调用 `MusicRepository.getHome()` 获取首页聚合数据
+- `HomeViewModel.loadHome()` 调用 `MusicRepository.getHome()` 获取首页聚合数据（内部合并 `home` 与 `home_new` 两个接口，见 api.md）
 - UI：Banner 轮播→热门歌曲横向滚动列表→最新专辑（横向 2行网格）→艺术家横向列表
+- 点击最新专辑卡片 → `AlbumNav` 暂存专辑 → 跳转 `album_songs/{aid}`
 - `HomeUiState`：`isLoading`, `banners`, `trendingSongs`, `latestAlbums`, `latestArtists`, `error`
 
 ### RecentScreen / RecentViewModel
@@ -96,6 +99,13 @@ showBackButton = currentRoute == Screen.Settings.route
 
 ### ArtistScreen / AlbumScreen / PlaylistScreen
 - 2 列网格，封面卡片样式，分页加载
+- AlbumScreen 点击专辑卡片 → `AlbumNav` 暂存专辑 → 跳转 `album_songs/{aid}`（与首页最新专辑共用同一入口）
+
+### AlbumSongsScreen / AlbumSongsViewModel（专辑歌曲页）
+- 单列 `LazyColumn` 分页（后端每页固定 10 首），滚动到底自动加载下一页，行为同 LatestScreen
+- 顶栏标题取 `AlbumNav.album.name`，显示返回键、禁用抽屉手势（同 BannerSongsScreen）
+- 点击歌曲直接播放，播放队列 = 当前已加载的全部歌曲
+- `AlbumNav.album` 为空时显示“内容已失效”；专辑无歌曲时显示空态提示
 
 ### SettingsScreen
 - 主题 Switch（目前本地 state，未持久化到 PrefsManager）
@@ -121,7 +131,7 @@ showBackButton = currentRoute == Screen.Settings.route
 ## 注意事项
 
 - `PlayerViewModel` 通过 `by viewModels()` 在 `MainActivity` 创建，然后通过参数逐层传递给页面 Composable（非 Hilt inject）
-- Settings 页面的 `gesturesEnabled = false` 是为了防止侧滑手势与 Settings 内部滑动冲突
+- Settings 页面与两个歌曲详情页的 `gesturesEnabled = false` 是为了防止侧滑手势与页面内部滑动冲突
 - `Screen.titleOf(route)` 函数用于 `TopBar` 动态显示当前页面标题，新增路由时需同步更新此函数
 - **[坑] TopBar 文本溢出处理**：使用 `TextOverflow.Ellipsis` 时，**必须导入** `androidx.compose.ui.text.style.TextOverflow`（注意包含 `.style.`），而不是 `androidx.compose.ui.text.TextOverflow`。后者不存在，会导致编译错误。参考 `SongListItem.kt`、`MiniPlayer.kt` 等其他组件的导入方式。
 - **[坑] 播放器页面动画命名冲突**：自定义循环模式枚举不能用 `RepeatMode` 命名，因为 Compose 动画库已有同名枚举。应使用 `MusicRepeatMode` 等别名，避免冲突。

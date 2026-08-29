@@ -1,11 +1,14 @@
 package com.qqt.music.ui.screens.player
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -46,7 +49,7 @@ fun PlayerScreen(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 12000, easing = LinearEasing),
+            animation = tween(durationMillis = 20000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "rotation",
@@ -138,25 +141,25 @@ fun PlayerScreen(
         currentSong?.let { song ->
             Box(
                 modifier = Modifier
-                    .size(280.dp)
-                    .align(Alignment.CenterHorizontally)
+                    .fillMaxWidth()
                     .padding(vertical = 32.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                // Rotating circle background effect
-                Surface(
+                // Album art - clip to circle
+                Box(
                     modifier = Modifier
                         .size(280.dp)
-                        .clip(CircleShape)
-                        .rotate(if (isPlaying) rotation else 0f),
-                    color = Color(0xFFEEEEEE),
-                    shadowElevation = 8.dp,
+                        .border(BorderStroke(4.dp, OrangePrimary), CircleShape)
+                        .clip(CircleShape),
+                    contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
                         model = song.thumbnailBig,
                         contentDescription = song.title,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .rotate(if (isPlaying) rotation else 0f)
+                            .fillMaxSize(),
                     )
                 }
             }

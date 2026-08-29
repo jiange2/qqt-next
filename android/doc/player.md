@@ -195,7 +195,7 @@ MediaItem.Builder()
 
 - 存储：SharedPreferences（`last_played`）
 - 保存的数据：
-  - `albumId`：分类 ID（来自 `song.catId`）
+  - `categoryId`：分类 ID（来自 `song.catId`，用于恢复时重建队列）
   - `trackIndex`：队列中的曲目索引
   - `positionMs`：播放位置（毫秒）
 - 保存频率：每 5 秒一次（通过 PlayerViewModel 轮询）

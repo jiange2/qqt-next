@@ -34,7 +34,8 @@ class HomeViewModel : ViewModel() {
             if (home != null) {
                 _uiState.value = HomeUiState(
                     isLoading = false,
-                    banners = home.banners,
+                    // 无歌曲且无外链的横幅点击后无处可去，不在轮播中展示
+                    banners = home.banners.filter { it.songs.isNotEmpty() || it.link.isNotBlank() },
                     trendingSongs = home.trendingSongs,
                     latestAlbums = home.latestAlbums,
                     latestArtists = home.latestArtists,

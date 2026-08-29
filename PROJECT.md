@@ -1,6 +1,8 @@
 # QQT Music（倾轻听）
 
-> **这是 AI 导航入口**。读完此文件你会知道项目由哪些模块组成、各模块做什么、以及要修改某功能时应该去哪里。
+> **这是 AI 导航入口**。先读 [`CONTEXT-MAP.md`](CONTEXT-MAP.md) 了解上下文划分与领域词汇，再按需进入各上下文的文档。
+>
+> **领域词汇**：在代码/文档/沟通中统一使用各上下文 `CONTEXT.md` 中定义的术语（[backend/CONTEXT.md](backend/CONTEXT.md)、[android/CONTEXT.md](android/CONTEXT.md)）；重大决策的来龙去脉见 `docs/adr/` 下的 ADR。
 
 ## 项目概述
 
@@ -24,18 +26,28 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 
 | 模块 | 目录 | 技术栈 | 职责 |
 |------|------|--------|------|
-| 后端 | `backend/` | PHP 7.4, Apache, MySQL 8.0 | API 接口 + Web 管理面板 + 文件存储 |
+| 后端（旧） | `backend/` | PHP 7.4, Apache, MySQL 8.0 | API 接口 + Web 管理面板 + 文件存储（待割接下线） |
+| 后端（新） | `backend-next/` | Node.js 22, Fastify, Prisma, Vue 3 + Element Plus | 旧协议门面 + 新管理面板 + 文件存储（见 [backend-next/README.md](backend-next/README.md)） |
 | Android | `android/` | Kotlin, Jetpack Compose, ExoPlayer, Retrofit2 | 音乐播放客户端 |
 
 ## 导航指引
 
 根据要修改的内容，直接跳转：
 
+**领域模型与决策**
+- **上下文划分、跨上下文关系** → [`CONTEXT-MAP.md`](CONTEXT-MAP.md)
+- **Backend 领域词汇** → [`backend/CONTEXT.md`](backend/CONTEXT.md)；**Android 领域词汇** → [`android/CONTEXT.md`](android/CONTEXT.md)
+- **架构决策记录** → [`docs/adr/`](docs/adr/)（系统级）、[`backend/docs/adr/`](backend/docs/adr/)、[`android/docs/adr/`](android/docs/adr/)
+
+**后端（backend/）**
 - **API 接口逻辑**（新增/修改接口方法） → 阅读 [`backend/PROJECT.md`](backend/PROJECT.md)，再查 [`backend/doc/api.md`](backend/doc/api.md)
+- **API 接口契约（完整方法清单/请求响应示例）** → [`API.md`](API.md)
 - **管理后台**（管理员面板、内容管理页面） → 阅读 [`backend/doc/admin.md`](backend/doc/admin.md)
 - **数据库表结构** → 阅读 [`backend/doc/db.md`](backend/doc/db.md)
 - **后端登录/鉴权** → 阅读 [`backend/doc/auth.md`](backend/doc/auth.md)
 - **媒体文件上传/LRC歌词/缩略图** → 阅读 [`backend/doc/media.md`](backend/doc/media.md)
+
+**Android（android/）**
 - **Android API 请求逻辑/数据模型** → 阅读 [`android/doc/api.md`](android/doc/api.md)
 - **Android 音乐播放器（播放控制/队列/缓存/元数据）** → 阅读 [`android/doc/player.md`](android/doc/player.md)
 - **Android 后台保活/自启动**（前台服务/WiFi 锁/设备重启） → 阅读 [`android/doc/background.md`](android/doc/background.md)

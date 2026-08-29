@@ -19,16 +19,31 @@ sealed class Screen(val route: String, val title: String) {
     // Full-screen player
     object Player : Screen("player", "播放器")
 
+    // Banner songs detail page (title comes from the banner itself)
+    object BannerSongs : Screen("banner_songs/{bid}", "歌曲")
+
+    // Album songs detail page (title comes from the album itself)
+    object AlbumSongs : Screen("album_songs/{aid}", "专辑")
+
+    // Category songs detail page (title comes from the category itself)
+    object CategorySongs : Screen("category_songs/{cid}", "分类")
+
     companion object {
         val bottomNavRoutes = setOf("home", "recent", "download", "category", "latest")
         val drawerTopRoutes = setOf("artist", "album", "playlist", "mylist", "favorites")
 
-        fun titleOf(route: String?): String = when (route) {
-            "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
-            "category" -> "音乐分类"; "latest" -> "最新歌曲"; "artist" -> "音乐歌手"
-            "album" -> "音乐专辑"; "playlist" -> "播放列表"; "mylist" -> "我的列表"
-            "favorites" -> "歌曲收藏"; "settings" -> "设置中心"; "player" -> "播放器"
-            else -> "倾轻听"
+        fun titleOf(route: String?): String = when {
+            route == null -> "倾轻听"
+            route.startsWith("banner_songs") -> BannerNav.banner?.title ?: "歌曲"
+            route.startsWith("album_songs") -> AlbumNav.album?.name ?: "专辑"
+            route.startsWith("category_songs") -> CategoryNav.category?.name ?: "分类"
+            else -> when (route) {
+                "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
+                "category" -> "音乐分类"; "latest" -> "最新歌曲"; "artist" -> "音乐歌手"
+                "album" -> "音乐专辑"; "playlist" -> "播放列表"; "mylist" -> "我的列表"
+                "favorites" -> "歌曲收藏"; "settings" -> "设置中心"; "player" -> "播放器"
+                else -> "倾轻听"
+            }
         }
     }
 }

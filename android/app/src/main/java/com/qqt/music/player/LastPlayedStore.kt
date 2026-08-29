@@ -8,23 +8,23 @@ import android.content.Context
  * 在用户停止播放或 App 退出时保存，App 启动时恢复。
  */
 data class LastPlayed(
-    val albumId: Int = -1,           // 正在播放的专辑 ID
+    val categoryId: Int = -1,        // 正在播放歌曲所属的分类 ID（来自 Song.catId）
     val trackIndex: Int = 0,         // 队列中的曲目索引
     val positionMs: Long = 0L        // 播放进度（毫秒）
 )
 
 object LastPlayedStore {
     private const val PREFS_NAME = "last_played"
-    private const val KEY_ALBUM_ID = "album_id"
+    private const val KEY_CATEGORY_ID = "category_id"
     private const val KEY_TRACK_INDEX = "track_index"
     private const val KEY_POSITION_MS = "position_ms"
 
     /**
      * 保存当前播放进度
      */
-    fun save(context: Context, albumId: Int, trackIndex: Int, positionMs: Long = 0L) {
+    fun save(context: Context, categoryId: Int, trackIndex: Int, positionMs: Long = 0L) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
-            putInt(KEY_ALBUM_ID, albumId)
+            putInt(KEY_CATEGORY_ID, categoryId)
             putInt(KEY_TRACK_INDEX, trackIndex)
             putLong(KEY_POSITION_MS, positionMs)
             apply()
@@ -34,12 +34,12 @@ object LastPlayedStore {
     /**
      * 加载上次保存的播放进度
      *
-     * 如果没有保存过，返回默认值（albumId = -1）
+     * 如果没有保存过，返回默认值（categoryId = -1）
      */
     fun load(context: Context): LastPlayed {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return LastPlayed(
-            albumId = prefs.getInt(KEY_ALBUM_ID, -1),
+            categoryId = prefs.getInt(KEY_CATEGORY_ID, -1),
             trackIndex = prefs.getInt(KEY_TRACK_INDEX, 0),
             positionMs = prefs.getLong(KEY_POSITION_MS, 0L)
         )

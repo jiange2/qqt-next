@@ -1,0 +1,326 @@
+// Backend-Next 新库 Schema
+// 设计原则见 docs/adr/0003-nodejs-rewrite-with-legacy-facade.md：
+// - 关联全部规范化（不再使用逗号分隔字段）
+// - 时间戳一律 DATETIME
+// - 密码一律 bcrypt
+// - 迁移时保留原实体 ID（id 不设 autoincrement 由迁移显式写入，但新纪录仍需自增能力，
+//   因此保留 @default(autoincrement())，迁移脚本使用显式 id 插入即可）
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ 全局设置（单行，id=1） ============
+
+model Setting {
+  id                    Int     @id @default(1)
+  packageName           String  @map("package_name") @db.VarChar(255)
+  onesignalAppId        String  @map("onesignal_app_id") @db.VarChar(500)
+  onesignalRestKey      String  @map("onesignal_rest_key") @db.VarChar(500)
+  appName               String  @map("app_name") @db.VarChar(255)
+  appLogo               String  @map("app_logo") @db.VarChar(255)
+  appEmail              String  @map("app_email") @db.VarChar(255)
+  appVersion            String  @map("app_version") @db.VarChar(255)
+  appAuthor             String  @map("app_author") @db.VarChar(255)
+  appContact            String  @map("app_contact") @db.VarChar(255)
+  appWebsite            String  @map("app_website") @db.VarChar(255)
+  appDescription        String  @map("app_description") @db.Text
+  appDevelopedBy        String  @map("app_developed_by") @db.VarChar(255)
+  appPrivacyPolicy      String  @map("app_privacy_policy") @db.Text
+  apiLatestLimit        Int     @map("api_latest_limit")
+  apiCatOrderBy         String  @map("api_cat_order_by") @db.VarChar(255)
+  apiCatPostOrderBy     String  @map("api_cat_post_order_by") @db.VarChar(255)
+  publisherId           String  @map("publisher_id") @db.VarChar(500)
+  interstitalAd         String  @map("interstital_ad") @db.VarChar(500)
+  interstitalAdId       String  @map("interstital_ad_id") @db.VarChar(500)
+  interstitalAdClick    String  @map("interstital_ad_click") @db.VarChar(500)
+  bannerAd              String  @map("banner_ad") @db.VarChar(500)
+  bannerAdId            String  @map("banner_ad_id") @db.VarChar(500)
+  bannerAdType          String  @map("banner_ad_type") @default("admob") @db.VarChar(30)
+  bannerFacebookId      String  @map("banner_facebook_id") @db.Text
+  interstitalAdType     String  @map("interstital_ad_type") @default("admob") @db.VarChar(30)
+  interstitalFacebookId String  @map("interstital_facebook_id") @db.Text
+  nativeAd              String  @map("native_ad") @default("false") @db.VarChar(20)
+  nativeAdType          String  @map("native_ad_type") @default("admob") @db.VarChar(30)
+  nativeAdId            String  @map("native_ad_id") @db.Text
+  nativeFacebookId      String  @map("native_facebook_id") @db.Text
+  nativePosition        Int     @map("native_position") @default(5)
+  appUpdateStatus       String  @map("app_update_status") @default("false") @db.VarChar(10)
+  appNewVersion         Float   @map("app_new_version") @default(1)
+  appUpdateDesc         String  @map("app_update_desc") @db.Text
+  appRedirectUrl        String  @map("app_redirect_url") @db.Text
+  cancelUpdateStatus    String  @map("cancel_update_status") @default("false") @db.VarChar(10)
+  songDownload          String  @map("song_download") @default("true") @db.VarChar(255)
+
+  @@map("settings")
+}
+
+// ============ 内容实体 ============
+
+model Category {
+  id          Int      @id @default(autoincrement()) // 旧库 cid
+  name        String   @map("name") @db.VarChar(255)
+  image       String   @db.VarChar(255)
+  status      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  songs       Song[]
+
+  @@map("categories")
+}
+
+model Artist {
+  id        Int           @id @default(autoincrement()) // 旧库 id
+  name      String        @map("name") @db.VarChar(255)
+  image     String        @db.VarChar(255)
+  createdAt DateTime      @default(now()) @map("created_at")
+  songs     SongArtist[]
+  albums    AlbumArtist[]
+
+  @@map("artists")
+}
+
+model Album {
+  id        Int           @id @default(autoincrement()) // 旧库 aid
+  name      String        @map("name") @db.VarChar(255)
+  image     String        @db.VarChar(255)
+  status    Boolean       @default(true)
+  createdAt DateTime      @default(now()) @map("created_at")
+  artists   AlbumArtist[]
+  songs     Song[]
+
+  @@map("albums")
+}
+
+model Song {
+  id            Int        @id @default(autoincrement()) // 旧库 id
+  categoryId    Int        @map("category_id")
+  albumId       Int?       @map("album_id")
+  type          String     @db.VarChar(20) // local | youtube | external
+  title         String     @db.VarChar(255)
+  audioUrl      String     @map("audio_url") @db.VarChar(500) // local 存文件名，external/youtube 存完整 URL
+  thumbnail     String     @db.VarChar(255)
+  description   String     @db.Text
+  lrcText       String?    @map("lrc_text") @db.Text
+  lrcUrl        String?    @map("lrc_url") @db.VarChar(255) // local 存文件名
+  totalViews    Int        @default(0) @map("total_views")
+  totalDownload Int        @default(0) @map("total_download")
+  totalRate     Int        @default(0) @map("total_rate")
+  rateAvg       Int        @default(0) @map("rate_avg")
+  status        Boolean    @default(true)
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at")
+
+  category  Category      @relation(fields: [categoryId], references: [id])
+  album     Album?        @relation(fields: [albumId], references: [id])
+  artists   SongArtist[]
+  banners   BannerSong[]
+  playlists PlaylistSong[]
+  trending  TrendingSong?
+  ratings   Rating[]
+  reports   Report[]
+  favourites Favourite[]
+
+  @@index([categoryId])
+  @@index([albumId])
+  @@index([status, title])
+  @@map("songs")
+}
+
+// 歌曲 ↔ 艺术家（替代旧 tbl_mp3.mp3_artist 逗号串）
+model SongArtist {
+  songId   Int    @map("song_id")
+  artistId Int    @map("artist_id")
+  sort     Int    @default(0)
+
+  song   Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([songId, artistId])
+  @@map("song_artists")
+}
+
+// 专辑 ↔ 艺术家（替代旧 tbl_album.artist_ids 逗号串）
+model AlbumArtist {
+  albumId  Int @map("album_id")
+  artistId Int @map("artist_id")
+  sort     Int @default(0)
+
+  album  Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, artistId])
+  @@map("album_artists")
+}
+
+// ============ 运营位 ============
+
+model Banner {
+  id        Int          @id @default(autoincrement()) // 旧库 bid
+  title     String       @db.VarChar(255)
+  sortInfo  String       @map("sort_info") @db.VarChar(500)
+  image     String       @db.VarChar(255)
+  link      String?      @db.VarChar(500)
+  status    Boolean      @default(true)
+  createdAt DateTime     @default(now()) @map("created_at")
+  songs     BannerSong[]
+
+  @@map("banners")
+}
+
+// 横幅 ↔ 歌曲（替代旧 tbl_banner.banner_songs 逗号串），sort 保留挂接顺序
+model BannerSong {
+  bannerId Int @map("banner_id")
+  songId   Int @map("song_id")
+  sort     Int @default(0)
+
+  banner Banner @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  song   Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@id([bannerId, songId])
+  @@index([bannerId, sort])
+  @@map("banner_songs")
+}
+
+model Playlist {
+  id        Int            @id @default(autoincrement()) // 旧库 pid
+  name      String         @db.VarChar(255)
+  image     String         @db.VarChar(255)
+  status    Boolean        @default(true)
+  createdAt DateTime       @default(now()) @map("created_at")
+  songs     PlaylistSong[]
+
+  @@map("playlists")
+}
+
+// 播放列表 ↔ 歌曲（旧库实际存 tbl_playlist.playlist_songs 逗号字段，此处规范化）
+model PlaylistSong {
+  playlistId Int @map("playlist_id")
+  songId     Int @map("song_id")
+  sort       Int @default(0)
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  song     Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, songId])
+  @@index([playlistId, sort])
+  @@map("playlist_songs")
+}
+
+// 热门榜：管理员手工固定（ADR 0003 决定 4），播放量不再参与榜单
+model TrendingSong {
+  songId Int @map("song_id")
+  sort   Int @default(0)
+
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@id([songId])
+  @@map("trending_songs")
+}
+
+// ============ App 用户与行为 ============
+
+model AppUser {
+  id        Int      @id @default(autoincrement())
+  userType  String   @map("user_type") @db.VarChar(20) // Normal | Google | Facebook
+  name      String   @db.VarChar(255)
+  email     String   @db.VarChar(255)
+  password  String?  @db.VarChar(255) // bcrypt；社交登录用户可为空
+  phone     String?  @db.VarChar(50)
+  authId    String?  @map("auth_id") @db.VarChar(255)
+  verified  Boolean  @default(true) // 邮件功能已移除（ADR 0003 决定 5），注册即生效
+  status    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  favourites Favourite[]
+  ratings    Rating[]
+  reports    Report[]
+  suggestions SongSuggest[]
+  activeLog  UserActiveLog?
+
+  @@index([email])
+  @@index([authId])
+  @@map("app_users")
+}
+
+model Favourite {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  postId    Int      @map("post_id") // 歌曲 ID（type 目前仅 song）
+  type      String   @default("song") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song    @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId, type])
+  @@map("favourites")
+}
+
+// 旧库 tbl_rating 的 ip 字段实际存 user_id，此处正名为 user_id
+model Rating {
+  id        Int      @id @default(autoincrement())
+  postId    Int      @map("post_id")
+  userId    Int      @map("user_id")
+  rate      Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  song Song    @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@map("ratings")
+}
+
+model Report {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  songId    Int      @map("song_id")
+  report    String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song    @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@map("reports")
+}
+
+model SongSuggest {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  songTitle String   @map("song_title") @db.VarChar(255)
+  songImage String?  @map("song_image") @db.VarChar(255)
+  message   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("song_suggestions")
+}
+
+// 用户活跃日志（运行时写入；旧存量不迁移）
+model UserActiveLog {
+  userId       Int      @id @map("user_id")
+  lastActiveAt DateTime @default(now()) @map("last_active_at")
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_active_logs")
+}
+
+// ============ 管理员 ============
+
+model AdminUser {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique @db.VarChar(100)
+  password  String   @db.VarChar(255) // bcrypt
+  email     String?  @db.VarChar(255)
+  image     String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("admin_users")
+}

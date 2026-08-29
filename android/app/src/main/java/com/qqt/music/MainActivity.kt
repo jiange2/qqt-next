@@ -52,13 +52,13 @@ class MainActivity : ComponentActivity() {
     /**
      * 尝试恢复上次播放的进度
      *
-     * 如果有保存的播放记录，从 API 加载该专辑的歌曲列表，并设置起始播放位置。
+     * 如果有保存的播放记录，从 API 加载该分类的歌曲列表，并设置起始播放位置。
      */
     private fun tryRestoreLastPlayed() {
         val lastPlayed = LastPlayedStore.load(applicationContext)
-        if (lastPlayed.albumId != -1) {
-            Log.d(TAG, "🔄 Detected last played album ID: ${lastPlayed.albumId}")
-            // TODO: 异步加载该专辑的歌曲列表，然后调用 playerViewModel.restoreLastPlayed()
+        if (lastPlayed.categoryId != -1) {
+            Log.d(TAG, "🔄 Detected last played category ID: ${lastPlayed.categoryId}")
+            // TODO: 异步加载该分类的歌曲列表，然后调用 playerViewModel.restoreLastPlayed()
             // 由于目前没有 Repository 直接在 ViewModel 中注入，这里先保留注释
             // val tracks = /* load from API */ 
             // playerViewModel.restoreLastPlayed(tracks, lastPlayed.trackIndex, lastPlayed.positionMs)

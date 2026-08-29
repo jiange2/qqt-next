@@ -187,7 +187,7 @@ object ManufacturerCompat {
 ```kotlin
 LastPlayedStore.save(
     context,
-    albumId = currentAlbumId,
+    categoryId = currentCategoryId,
     trackIndex = player.currentMediaItemIndex,
     positionMs = player.currentPosition
 )
@@ -197,8 +197,8 @@ App 重启时，MainActivityzhu 的 `tryRestoreLastPlayed()` 加载进度：
 
 ```kotlin
 val lastPlayed = LastPlayedStore.load(context)
-if (lastPlayed.albumId != -1) {
-    // 异步加载该专辑歌曲列表，然后恢复播放位置
+if (lastPlayed.categoryId != -1) {
+    // 异步加载该分类的歌曲列表，然后恢复播放位置
     playerViewModel.restoreLastPlayed(tracks, lastPlayed.trackIndex, lastPlayed.positionMs)
 }
 ```

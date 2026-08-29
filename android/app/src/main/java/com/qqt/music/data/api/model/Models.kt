@@ -39,6 +39,7 @@ data class Banner(
     @SerializedName("bid") val id: String = "",
     @SerializedName("banner_title") val title: String = "",
     @SerializedName("banner_sort_info") val info: String = "",
+    @SerializedName("banner_link") val link: String = "",
     @SerializedName("banner_image") val image: String = "",
     @SerializedName("banner_image_thumb") val imageThumb: String = "",
     @SerializedName("total_songs") val totalSongs: Int = 0,

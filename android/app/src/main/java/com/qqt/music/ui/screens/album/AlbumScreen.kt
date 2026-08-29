@@ -20,10 +20,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.qqt.music.data.api.model.Album
 import com.qqt.music.ui.theme.OrangePrimary
 
 @Composable
-fun AlbumScreen(viewModel: AlbumViewModel = viewModel()) {
+fun AlbumScreen(
+    onAlbumClick: (Album) -> Unit = {},
+    viewModel: AlbumViewModel = viewModel(),
+) {
     val albums by viewModel.albums.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val gridState = rememberLazyGridState()
@@ -48,6 +52,7 @@ fun AlbumScreen(viewModel: AlbumViewModel = viewModel()) {
     ) {
         items(albums) { album ->
             Card(
+                onClick = { onAlbumClick(album) },
                 shape = RoundedCornerShape(8.dp),
                 elevation = CardDefaults.cardElevation(2.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),

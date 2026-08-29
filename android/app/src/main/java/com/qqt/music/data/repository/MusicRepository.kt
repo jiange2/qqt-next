@@ -21,10 +21,29 @@ object MusicRepository {
 
     suspend fun getHome(userId: Int = 0): HomeData? {
         return try {
+            // 横幅/专辑/歌手用 home 接口（home_new 不返回横幅挂接的歌曲详情，不可用）
+            val data = ApiClient.buildData(mapOf("method_name" to "home", "user_id" to userId))
+            val resp = service.callApi(data)
+            val mp3 = resp.get("ONLINE_MP3") ?: return null
+            val home = if (mp3.isJsonObject) gson.fromJson(mp3, HomeData::class.java) else null
+            if (home == null) return null
+
+            // home 的 trending_songs 在服务端有重复缺陷（同一首歌多条周播放记录霸榜），
+            // 改从 home_new 取近一个月无重复的热门榜（与老版 app 表现一致）；失败时兜底去重
+            val trending = getHomeNewTrending(userId)
+                ?: home.trendingSongs.distinctBy { it.id }
+            home.copy(trendingSongs = trending)
+        } catch (e: Exception) { null }
+    }
+
+    /** 取 home_new 接口的热门歌曲；请求失败或列表为空时返回 null，由调用方兜底 */
+    private suspend fun getHomeNewTrending(userId: Int): List<Song>? {
+        return try {
             val data = ApiClient.buildData(mapOf("method_name" to "home_new", "user_id" to userId))
             val resp = service.callApi(data)
             val mp3 = resp.get("ONLINE_MP3") ?: return null
-            if (mp3.isJsonObject) gson.fromJson(mp3, HomeData::class.java) else null
+            if (!mp3.isJsonObject) return null
+            gson.fromJson(mp3, HomeData::class.java).trendingSongs.takeIf { it.isNotEmpty() }
         } catch (e: Exception) { null }
     }
 

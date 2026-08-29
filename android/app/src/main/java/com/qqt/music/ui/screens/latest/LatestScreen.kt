@@ -47,7 +47,7 @@ fun LatestScreen(
         modifier = Modifier.fillMaxSize().background(Color.White),
     ) {
         items(songs) { song ->
-            SongListItem(song = song, onClick = { playerViewModel.playSong(song, songs) })
+            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
             HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFF0F0F0), modifier = Modifier.padding(start = 80.dp))
         }
         if (isLoading) {

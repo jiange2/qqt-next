@@ -18,10 +18,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.qqt.music.data.api.model.Category
 import com.qqt.music.ui.theme.OrangePrimary
 
 @Composable
-fun CategoryScreen(viewModel: CategoryViewModel = viewModel()) {
+fun CategoryScreen(
+    onCategoryClick: (Category) -> Unit,
+    viewModel: CategoryViewModel = viewModel(),
+) {
     val categories by viewModel.categories.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val gridState = rememberLazyGridState()
@@ -46,7 +50,7 @@ fun CategoryScreen(viewModel: CategoryViewModel = viewModel()) {
     ) {
         items(categories) { cat ->
             Card(
-                modifier = Modifier.clickable {},
+                modifier = Modifier.clickable { onCategoryClick(cat) },
                 shape = RoundedCornerShape(8.dp),
                 elevation = CardDefaults.cardElevation(2.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),

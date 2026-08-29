@@ -9,7 +9,19 @@
 
   require_once("thumbnail_images.class.php");
 
-  if(isset($_POST['submit']) and isset($_GET['add']))
+  // 校验：横幅必须挂接一组歌曲或填写一个跳转地址，二者至少其一
+  $banner_error='';
+  $selected_songs=array();
+  if(isset($_POST['submit']) and (isset($_GET['add']) or isset($_POST['banner_id'])))
+  {
+      $selected_songs=(isset($_POST['banner_songs']) and is_array($_POST['banner_songs'])) ? array_filter($_POST['banner_songs']) : array();
+      if(empty($selected_songs) and trim($_POST['link']) === '')
+      {
+          $banner_error='请至少选择一组歌曲或填写跳转地址';
+      }
+  }
+
+  if(isset($_POST['submit']) and isset($_GET['add']) and $banner_error === '')
   {
   
       $banner_image=rand(0,99999)."_".$_FILES['banner_image']['name'];
@@ -27,7 +39,7 @@
           'banner_title'  =>  cleanInput($_POST['banner_title']),
           'banner_sort_info'  =>  addslashes(trim($_POST['banner_sort_info'])),
           'banner_image'  =>  $banner_image,
-          'banner_songs'  =>  implode(',',$_POST['banner_songs']),
+          'banner_songs'  =>  implode(',',$selected_songs),
           'link'  =>  cleanInput($_POST['link'])
       );
 
@@ -49,7 +61,7 @@
 
   }
   
-  if(isset($_GET['banner_id'])){
+  if(isset($_GET['banner_id']) and trim($row['banner_songs']) !== ''){
       $mp3_qry="SELECT * FROM tbl_mp3 WHERE tbl_mp3.`id` IN (".$row['banner_songs'].") ORDER BY tbl_mp3.id DESC"; 
   }
   else{
@@ -58,7 +70,7 @@
         
   $mp3_result=mysqli_query($mysqli,$mp3_qry); 
   
-  if(isset($_POST['submit']) and isset($_POST['banner_id']))
+  if(isset($_POST['submit']) and isset($_POST['banner_id']) and $banner_error === '')
   {
      if($_FILES['banner_image']['name']!="")
      {
@@ -82,7 +94,7 @@
           'banner_title'  =>  cleanInput($_POST['banner_title']),
           'banner_sort_info'  =>  addslashes(trim($_POST['banner_sort_info'])),
           'banner_image'  =>  $banner_image,
-          'banner_songs'  =>  implode(',',$_POST['banner_songs']),
+          'banner_songs'  =>  implode(',',$selected_songs),
           'link'  =>  cleanInput($_POST['link'])
         );
 
@@ -94,7 +106,7 @@
         $data = array(
           'banner_title'  =>  cleanInput($_POST['banner_title']),
           'banner_sort_info'  =>  addslashes(trim($_POST['banner_sort_info'])),
-          'banner_songs'  =>  implode(',',$_POST['banner_songs']),
+          'banner_songs'  =>  implode(',',$selected_songs),
           'link'  =>  cleanInput($_POST['link'])
         );  
 
@@ -126,6 +138,9 @@
       </div>
       <div class="clearfix"></div>
       <div class="card-body mrg_bottom"> 
+        <?php if($banner_error){ ?>
+          <div class="alert alert-danger"><?=$banner_error?></div>
+        <?php } ?>
         <form action="" name="" method="post" class="form form-horizontal" enctype="multipart/form-data">
           <input  type="hidden" name="banner_id" value="<?php echo $_GET['banner_id'];?>" />
 
@@ -163,10 +178,11 @@
               <div class="form-group">
                 <label class="col-md-3 control-label">跳转地址 :-</label>
                 <div class="col-md-6">
-                     <input type="text" name="link" id="link" value="<?php if(isset($_GET['banner_id'])){echo $row['link'];}?>" class="form-control" required>
+                     <input type="text" name="link" id="link" value="<?php if(isset($_GET['banner_id'])){echo $row['link'];}?>" class="form-control">
+                     <p class="control-label-help">(可选，未选择歌曲时点击横幅跳转该地址)</p>
                 </div>
               </div>
-              <div class="form-group" style="display:none">
+              <div class="form-group">
                 <label class="col-md-3 control-label">歌曲 :-</label>
                 <div class="col-md-6">
                     <?php if(isset($_GET['banner_id'])){?>
@@ -181,10 +197,16 @@
                         while($mp3_row=mysqli_fetch_array($mp3_result))
                         {
                     ?>   
-                    <?php if(isset($_GET['banner_id'])){?>
-
-                       <option value="<?php echo $mp3_row['id'];?>" <?php $songs_list=explode(",", $row['banner_songs']);foreach($songs_list as $song_id){ if($mp3_row['id']==$song_id){ echo 'selected="selected"'; }}?>><?php echo $mp3_row['mp3_title'];?></option>
-
+                    <?php if(isset($_GET['banner_id'])){
+                    
+                       // 已选歌曲可能不在初始候选里，确保其选项存在且被选中，避免保存时丢失
+                       echo '<option value="'.$mp3_row['id'].'"';
+                       $songs_list=explode(",", $row['banner_songs']);
+                       foreach($songs_list as $song_id){ if($mp3_row['id']==$song_id){ echo ' selected="selected"'; }}
+                       echo '>'.$mp3_row['mp3_title'].'</option>';
+                    
+                    ?>
+                    
                     <?php }else{?>  
 
                       <option value="<?php echo $mp3_row['id'];?>"><?php echo $mp3_row['mp3_title'];?></option>
@@ -216,8 +238,18 @@
 <script type="text/javascript">
 
     $(function(){
-      $('.select2').select2({
-        ajax: {
+      // 提交前校验：歌曲与跳转地址至少填一项（与服务端校验一致）
+      $('form.form-horizontal').on('submit', function(e){
+        var songs = $('#banner_songs').val();
+        var hasSongs = songs && songs.length > 0 && !(songs.length === 1 && songs[0] === '');
+        var hasLink = $.trim($('#link').val()) !== '';
+        if(!hasSongs && !hasLink){
+          e.preventDefault();
+          alert('请至少选择一组歌曲或填写跳转地址');
+        }
+      });
+
+      $('.select2').select2({        ajax: {
           url: 'getData.php',
           dataType: 'json',
           delay: 250,

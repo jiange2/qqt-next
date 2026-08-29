@@ -1,0 +1,500 @@
+// Legacy 门面 —— 内容类 method（Q21：与 api.php 逐一对齐，共 20 个）
+// 每个函数与旧 api.php 对应分支语义等价；已知缺陷不复刻（ADR 0003 决定 1）
+import { prisma } from "../prisma.js";
+import type { Prisma } from "@prisma/client";
+import { getSettings, parseOrderBy } from "../services/settings.js";
+import {
+  albumToLegacy,
+  appendAlbumFields,
+  artistToLegacy,
+  bannerToLegacy,
+  playlistToLegacy,
+  songToLegacy,
+  type FavouriteSet,
+  type SongWithRelations,
+} from "./view.js";
+import { S } from "./shared.js";
+
+export type LegacyCtx = {
+  base: string;
+  data: Record<string, string>;
+  settings: Awaited<ReturnType<typeof getSettings>>;
+};
+
+const songInclude = {
+  category: { select: { id: true, name: true, image: true, status: true } },
+  album: true,
+  artists: {
+    orderBy: { sort: "asc" as const },
+    select: { sort: true, artist: { select: { id: true, name: true } } },
+  },
+} satisfies Prisma.SongInclude;
+
+export const songIncludeForQuery = songInclude;
+
+function pageOf(data: Record<string, string>): number {
+  const n = Number.parseInt(data["page"] ?? "1", 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function limitOffset(page: number, size: number) {
+  return { take: size, skip: (page - 1) * size };
+}
+
+/** 与旧 is_favourite() 一致：不校验 type 之外的语义，默认 song */
+export async function favouriteSetOf(userIdRaw?: string): Promise<FavouriteSet | undefined> {
+  if (!userIdRaw || userIdRaw === "0") return undefined;
+  const userId = Number(userIdRaw);
+  if (!Number.isFinite(userId) || userId <= 0) return undefined;
+  const favs = await prisma.favourite.findMany({
+    where: { userId, type: "song" },
+    select: { postId: true },
+  });
+  return new Set(favs.map((f) => f.postId));
+}
+
+const songStatusFilter = { status: true, category: { status: true } } as const;
+
+// ---------------------------------------------------------------- home / home_new
+
+/** home 与 home_new 统一实现（旧实现的 banner 空 songs_list / 播放量热门均为缺陷，不复刻） */
+export async function home(ctx: LegacyCtx): Promise<unknown> {
+  const { base, settings } = ctx;
+  const favourites = await favouriteSetOf(ctx.data["user_id"]);
+  const limit = settings.apiLatestLimit;
+
+  const banners = await prisma.banner.findMany({
+    where: { status: true },
+    orderBy: { id: "desc" },
+    include: {
+      songs: {
+        where: { song: songStatusFilter },
+        orderBy: { sort: "asc" },
+        include: { song: { include: songInclude } },
+      },
+    },
+  });
+
+  const albums = await prisma.album.findMany({
+    where: { status: true },
+    orderBy: { id: "desc" },
+    take: limit,
+  });
+
+  const artists = await prisma.artist.findMany({
+    orderBy: { id: "desc" },
+    take: limit,
+  });
+
+  const trending = await prisma.trendingSong.findMany({
+    // 1:1 嵌套 include 不支持 where（Prisma 6 类型限制），改在外层过滤下架歌曲
+    where: { song: songStatusFilter },
+    orderBy: { sort: "asc" },
+    take: 50,
+    include: { song: { include: songInclude } },
+  });
+
+  return {
+    home_banner: banners.map((b) => bannerToLegacy(b, base, true, favourites)),
+    latest_album: albums.map((a) => albumToLegacy(a, base)),
+    latest_artist: artists.map((a) => artistToLegacy(a, base)),
+    trending_songs: trending.map((t) => songToLegacy(t.song, { base, favourites })),
+  };
+}
+
+// ---------------------------------------------------------------- 列表类
+
+export async function allSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base } = ctx;
+  const favourites = await favouriteSetOf(ctx.data["user_id"]);
+  const total = await prisma.song.count({ where: songStatusFilter });
+  const rows = await prisma.song.findMany({
+    where: songStatusFilter,
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(ctx.data), 10),
+    include: songInclude,
+  });
+  return rows.map((s) => ({
+    total_songs: S(total),
+    ...songToLegacy(s, { base, favourites }),
+  }));
+}
+
+export async function latest(ctx: LegacyCtx): Promise<unknown> {
+  const { base, settings } = ctx;
+  const favourites = await favouriteSetOf(ctx.data["user_id"]);
+  const total = await prisma.song.count({ where: songStatusFilter });
+  const rows = await prisma.song.findMany({
+    where: songStatusFilter,
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(ctx.data), settings.apiLatestLimit),
+    include: songInclude,
+  });
+  return rows.map((s) => ({
+    total_records: S(total),
+    ...songToLegacy(s, { base, favourites }),
+  }));
+}
+
+// ---------------------------------------------------------------- banners
+
+export async function banners(ctx: LegacyCtx): Promise<unknown> {
+  const rows = await prisma.banner.findMany({
+    where: { status: true },
+    orderBy: { id: "desc" },
+    include: { songs: { orderBy: { sort: "asc" } } },
+  });
+  return rows.map((b) => bannerToLegacy(b, ctx.base, false));
+}
+
+export async function bannerSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data, settings } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const bannerId = Number(data["banner_id"]);
+  if (!Number.isFinite(bannerId)) return [];
+
+  const banner = await prisma.banner.findFirst({
+    where: { id: bannerId, status: true },
+    include: {
+      songs: {
+        where: { song: songStatusFilter },
+        orderBy: { sort: "asc" },
+        include: { song: { include: songInclude } },
+      },
+    },
+  });
+  if (!banner) return [];
+
+  const postOrderBy = parseOrderBy(`id ${settings.apiCatPostOrderBy.includes("desc") ? "DESC" : "ASC"}`, { id: "id" });
+  const dir = postOrderBy["id"] === "desc" ? -1 : 1;
+  const songs = banner.songs
+    .map((bs) => bs.song)
+    .sort((a, b) => dir * (a.id - b.id));
+
+  const total = songs.length;
+  const { skip, take } = limitOffset(pageOf(data), 10);
+  return songs.slice(skip, skip + take).map((s) => {
+    const row: Record<string, unknown> = {
+      total_records: S(total),
+      ...songToLegacy(s, { base, favourites }),
+    };
+    // 旧实现的 banner_songs 分支会把分类 id 写入 link 字段（无害怪癖，逐字复刻）
+    row.link = S(s.categoryId);
+    return row;
+  });
+}
+
+// ---------------------------------------------------------------- 分类
+
+export async function catList(ctx: LegacyCtx): Promise<unknown> {
+  const { base, settings } = ctx;
+  const total = await prisma.category.count({ where: { status: true } });
+  const orderBy = parseOrderBy(settings.apiCatOrderBy, { id: "id", name: "name" });
+  const rows = await prisma.category.findMany({
+    where: { status: true },
+    orderBy,
+    ...limitOffset(pageOf(ctx.data), 10),
+  });
+  return rows.map((c) => ({
+    total_records: S(total),
+    cid: S(c.id),
+    category_name: c.name,
+    category_image: `${base}images/${c.image}`,
+    category_image_thumb: `${base}images/thumbs/${c.image}`,
+  }));
+}
+
+export async function catSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data, settings } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const catId = Number(data["cat_id"]);
+  if (!Number.isFinite(catId)) return [];
+  const where: Prisma.SongWhereInput = { ...songStatusFilter, categoryId: catId };
+  const total = await prisma.song.count({ where });
+  const orderBy = parseOrderBy(`id ${settings.apiCatPostOrderBy.includes("desc") ? "DESC" : "ASC"}`, { id: "id" });
+  const rows = await prisma.song.findMany({
+    where,
+    orderBy,
+    ...limitOffset(pageOf(data), 10),
+    include: songInclude,
+  });
+  return rows.map((s) => ({
+    total_records: S(total),
+    ...songToLegacy(s, { base, favourites }),
+  }));
+}
+
+// ---------------------------------------------------------------- 艺术家
+
+export async function recentArtistList(ctx: LegacyCtx): Promise<unknown> {
+  const rows = await prisma.artist.findMany({ orderBy: { id: "desc" }, take: 10 });
+  return rows.map((a) => artistToLegacy(a, ctx.base));
+}
+
+export async function artistList(ctx: LegacyCtx): Promise<unknown> {
+  const total = await prisma.artist.count();
+  // 注意：旧实现 artist_list 为 id 升序（与其余列表相反），复刻
+  const rows = await prisma.artist.findMany({
+    orderBy: { id: "asc" },
+    ...limitOffset(pageOf(ctx.data), 10),
+  });
+  return rows.map((a) => ({
+    total_records: S(total),
+    ...artistToLegacy(a, ctx.base),
+  }));
+}
+
+export async function artistAlbumList(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data } = ctx;
+  const artistId = Number(data["artist_id"]);
+  if (!Number.isFinite(artistId)) return [];
+  const where: Prisma.AlbumWhereInput = { status: true, artists: { some: { artistId } } };
+  const total = await prisma.album.count({ where });
+  const rows = await prisma.album.findMany({
+    where,
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(data), 10),
+    include: { artists: { orderBy: { sort: "asc" } } },
+  });
+  return rows.map((a) => ({
+    total_records: S(total),
+    aid: S(a.id),
+    artist_ids: a.artists.map((aa) => aa.artistId).join(","),
+    album_name: a.name,
+    album_image: `${base}images/${a.image}`,
+    album_image_thumb: `${base}images/thumbs/${a.image}`,
+  }));
+}
+
+export async function artistNameSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const artistName = data["artist_name"] ?? "";
+  const where: Prisma.SongWhereInput = {
+    ...songStatusFilter,
+    artists: { some: { artist: { name: artistName } } },
+  };
+  const total = await prisma.song.count({ where });
+  const rows = await prisma.song.findMany({
+    where,
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(data), 10),
+    include: songInclude,
+  });
+  return rows.map((s) => ({
+    total_records: S(total),
+    ...songToLegacy(s, { base, favourites }),
+  }));
+}
+
+// ---------------------------------------------------------------- 专辑
+
+export async function albumList(ctx: LegacyCtx): Promise<unknown> {
+  const total = await prisma.album.count({ where: { status: true } });
+  const rows = await prisma.album.findMany({
+    where: { status: true },
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(ctx.data), 10),
+  });
+  return rows.map((a) => ({
+    total_records: S(total),
+    aid: S(a.id),
+    album_name: a.name,
+    album_image: `${ctx.base}images/${a.image}`,
+    album_image_thumb: `${ctx.base}images/thumbs/${a.image}`,
+  }));
+}
+
+export async function albumSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data, settings } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const albumId = Number(data["album_id"]);
+  if (!Number.isFinite(albumId)) return [];
+  const where: Prisma.SongWhereInput = {
+    ...songStatusFilter,
+    albumId,
+    album: { status: true },
+  };
+  const total = await prisma.song.count({ where });
+  const dir = settings.apiCatPostOrderBy.includes("desc") ? "desc" : "asc";
+  const rows = await prisma.song.findMany({
+    where,
+    orderBy: { title: dir }, // 旧实现 album_songs 按歌名排序
+    ...limitOffset(pageOf(data), 10),
+    include: songInclude,
+  });
+  return rows.map((s) => {
+    const row = { total_records: S(total), ...songToLegacy(s, { base, favourites }) };
+    appendAlbumFields(row, s.album, base);
+    return row;
+  });
+}
+
+// ---------------------------------------------------------------- 播放列表
+
+export async function playlist(ctx: LegacyCtx): Promise<unknown> {
+  const total = await prisma.playlist.count({ where: { status: true } });
+  const rows = await prisma.playlist.findMany({
+    where: { status: true },
+    orderBy: { id: "desc" },
+    ...limitOffset(pageOf(ctx.data), 10),
+  });
+  return rows.map((p) => ({
+    total_records: S(total),
+    ...playlistToLegacy(p, ctx.base),
+  }));
+}
+
+export async function playlistSongs(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const playlistId = Number(data["playlist_id"]);
+  if (!Number.isFinite(playlistId)) return [];
+  const playlist = await prisma.playlist.findFirst({
+    where: { id: playlistId, status: true },
+    include: {
+      songs: {
+        where: { song: songStatusFilter },
+        orderBy: { sort: "asc" },
+        include: { song: { include: songInclude } },
+      },
+    },
+  });
+  if (!playlist) return [];
+  const all = playlist.songs.map((ps) => ps.song);
+  const total = all.length;
+  const { skip, take } = limitOffset(pageOf(data), 10);
+  return [
+    {
+      ...playlistToLegacy(playlist, base),
+      songs_list: all.slice(skip, skip + take).map((s) => ({
+        total_records: S(total),
+        ...songToLegacy(s, { base, favourites }),
+      })),
+    },
+  ];
+}
+
+// ---------------------------------------------------------------- 歌曲详情
+
+export async function songDetail(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data } = ctx;
+  const songId = Number(data["song_id"]);
+  if (!Number.isFinite(songId)) return [];
+  const song = await prisma.song.findFirst({
+    where: { id: songId, ...songStatusFilter },
+    include: songInclude,
+  });
+  if (!song) return [];
+
+  // 详情请求计一次播放（旧实现同时维护 tbl_mp3_views，按 ADR 0003 决定 4 移除）
+  await prisma.song.update({ where: { id: songId }, data: { totalViews: { increment: 1 } } });
+
+  let userRate: number | undefined;
+  const userIdRaw = data["user_id"];
+  if (userIdRaw) {
+    const rating = await prisma.rating.findUnique({
+      where: { postId_userId: { postId: songId, userId: Number(userIdRaw) } },
+      select: { rate: true },
+    });
+    userRate = rating?.rate ?? 0;
+  }
+
+  return [songToLegacy(song, { base, detail: true, userRate })];
+}
+
+export async function songDownload(ctx: LegacyCtx): Promise<unknown> {
+  const songId = Number(ctx.data["song_id"]);
+  if (!Number.isFinite(songId)) return [];
+  const song = await prisma.song.update({
+    where: { id: songId },
+    data: { totalDownload: { increment: 1 } },
+    select: { totalDownload: true },
+  });
+  return [{ total_download: S(song.totalDownload) }];
+}
+
+// ---------------------------------------------------------------- 搜索
+
+export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data, settings } = ctx;
+  const favourites = await favouriteSetOf(data["user_id"]);
+  const text = data["search_text"] ?? "";
+  const type = data["search_type"] ?? "";
+  const page = pageOf(data);
+
+  if (type === "songs") {
+    const where: Prisma.SongWhereInput = { ...songStatusFilter, title: { contains: text } };
+    const total = await prisma.song.count({ where });
+    const rows = await prisma.song.findMany({
+      where,
+      orderBy: { title: "asc" },
+      ...limitOffset(page, 10),
+      include: songInclude,
+    });
+    return rows.map((s) => ({ total_data: S(total), ...songToLegacy(s, { base, favourites }) }));
+  }
+
+  if (type === "artist") {
+    const where: Prisma.ArtistWhereInput = { name: { contains: text } };
+    const total = await prisma.artist.count({ where });
+    const rows = await prisma.artist.findMany({
+      where,
+      orderBy: { name: "asc" },
+      ...limitOffset(page, 10),
+    });
+    return rows.map((a) => ({ total_data: S(total), ...artistToLegacy(a, base) }));
+  }
+
+  if (type === "album") {
+    const where: Prisma.AlbumWhereInput = { status: true, name: { contains: text } };
+    const total = await prisma.album.count({ where });
+    const rows = await prisma.album.findMany({
+      where,
+      orderBy: { name: "asc" },
+      ...limitOffset(page, 10),
+      include: { artists: { orderBy: { sort: "asc" } } },
+    });
+    return rows.map((a) => ({
+      total_data: S(total),
+      aid: S(a.id),
+      artist_ids: a.artists.map((aa) => aa.artistId).join(","),
+      album_name: a.name,
+      album_image: `${base}images/${a.image}`,
+      album_image_thumb: `${base}images/thumbs/${a.image}`,
+    }));
+  }
+
+  // 组合搜索（旧实现的 else 分支）
+  const [songs, albums, artists] = await Promise.all([
+    prisma.song.findMany({
+      where: songStatusFilter,
+      orderBy: { title: "asc" },
+      ...limitOffset(page, 10),
+      include: songInclude,
+    }),
+    prisma.album.findMany({
+      where: { status: true, name: { contains: text } },
+      orderBy: { name: "asc" },
+      take: 20,
+      include: { artists: { orderBy: { sort: "asc" } } },
+    }),
+    prisma.artist.findMany({
+      where: { name: { contains: text } },
+      orderBy: { name: "asc" },
+      take: 20,
+    }),
+  ]);
+  void settings;
+  return {
+    search_songs: songs.map((s) => songToLegacy(s, { base, favourites })),
+    search_album: albums.map((a) => ({
+      aid: S(a.id),
+      artist_ids: a.artists.map((aa) => aa.artistId).join(","),
+      album_name: a.name,
+      album_image: `${base}images/${a.image}`,
+      album_image_thumb: `${base}images/thumbs/${a.image}`,
+    })),
+    search_artist: artists.map((a) => artistToLegacy(a, base)),
+  };
+}

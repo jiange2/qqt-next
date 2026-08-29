@@ -1,5 +1,7 @@
 package com.qqt.music.ui.navigation
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -9,6 +11,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -18,8 +21,11 @@ import com.qqt.music.ui.components.MiniPlayer
 import com.qqt.music.ui.components.MusicBottomBar
 import com.qqt.music.ui.components.MusicTopBar
 import com.qqt.music.ui.screens.album.AlbumScreen
+import com.qqt.music.ui.screens.albumsongs.AlbumSongsScreen
 import com.qqt.music.ui.screens.artist.ArtistScreen
+import com.qqt.music.ui.screens.bannersongs.BannerSongsScreen
 import com.qqt.music.ui.screens.category.CategoryScreen
+import com.qqt.music.ui.screens.categorysongs.CategorySongsScreen
 import com.qqt.music.ui.screens.download.DownloadScreen
 import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
@@ -37,11 +43,15 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
     val showBottomNav = currentRoute in Screen.bottomNavRoutes
-    val showBackButton = currentRoute == Screen.Settings.route
+    val isBannerSongs = currentRoute?.startsWith("banner_songs") == true
+    val isAlbumSongs = currentRoute?.startsWith("album_songs") == true
+    val isCategorySongs = currentRoute?.startsWith("category_songs") == true
+    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategorySongs
     val isPlayerScreen = currentRoute == Screen.Player.route
 
     // If player screen, show it fullscreen without drawer/topbar/bottombar
@@ -60,7 +70,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = currentRoute != Screen.Settings.route,
+            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategorySongs,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -86,7 +96,26 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         modifier = Modifier.padding(innerPadding),
                     ) {
                     composable(Screen.Home.route) {
-                        HomeScreen(playerViewModel = playerViewModel)
+                        HomeScreen(
+                            playerViewModel = playerViewModel,
+                            onAlbumClick = { album ->
+                                AlbumNav.album = album
+                                navController.navigate("album_songs/${album.id}")
+                            },
+                            onBannerClick = { banner ->
+                                when {
+                                    banner.songs.isNotEmpty() -> {
+                                        BannerNav.banner = banner
+                                        navController.navigate("banner_songs/${banner.id}")
+                                    }
+                                    banner.link.isNotBlank() -> {
+                                        runCatching {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(banner.link)))
+                                        }
+                                    }
+                                }
+                            },
+                        )
                     }
                     composable(Screen.Recent.route) {
                         RecentScreen(playerViewModel = playerViewModel)
@@ -95,7 +124,12 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         DownloadScreen(playerViewModel = playerViewModel)
                     }
                     composable(Screen.Category.route) {
-                        CategoryScreen()
+                        CategoryScreen(
+                            onCategoryClick = { cat ->
+                                CategoryNav.category = cat
+                                navController.navigate("category_songs/${cat.id}")
+                            },
+                        )
                     }
                     composable(Screen.Latest.route) {
                         LatestScreen(playerViewModel = playerViewModel)
@@ -104,7 +138,12 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         ArtistScreen()
                     }
                     composable(Screen.Album.route) {
-                        AlbumScreen()
+                        AlbumScreen(
+                            onAlbumClick = { album ->
+                                AlbumNav.album = album
+                                navController.navigate("album_songs/${album.id}")
+                            },
+                        )
                     }
                     composable(Screen.Playlist.route) {
                         PlaylistScreen()
@@ -117,6 +156,15 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     }
                     composable(Screen.Settings.route) {
                         SettingsScreen()
+                    }
+                    composable(Screen.BannerSongs.route) {
+                        BannerSongsScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.AlbumSongs.route) {
+                        AlbumSongsScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.CategorySongs.route) {
+                        CategorySongsScreen(playerViewModel = playerViewModel)
                     }
                     composable(Screen.Player.route) {
                         PlayerScreen(

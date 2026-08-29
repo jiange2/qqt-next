@@ -58,7 +58,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
     private var mediaController: MediaController? = null
-    private var currentAlbumId: Int = -1
+    private var currentCategoryId: Int = -1
     private var currentQueue: List<Song> = emptyList()
 
     init {
@@ -128,7 +128,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     _duration.value = controller.duration.coerceAtLeast(0L)
 
                     // 每 10 个周期（5秒）保存一次进度
-                    if (pollCount++ % 10 == 0 && currentAlbumId != -1) {
+                    if (pollCount++ % 10 == 0 && currentCategoryId != -1) {
                         saveCurrentProgress(controller)
                     }
                 }
@@ -141,11 +141,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private fun saveCurrentProgress(controller: MediaController) {
         LastPlayedStore.save(
             application,
-            albumId = currentAlbumId,
+            categoryId = currentCategoryId,
             trackIndex = controller.currentMediaItemIndex.coerceAtLeast(0),
             positionMs = controller.currentPosition
         )
-        Log.d(TAG, "💾 saved progress: albumId=$currentAlbumId, idx=${controller.currentMediaItemIndex}, pos=${controller.currentPosition}ms")
+        Log.d(TAG, "💾 saved progress: categoryId=$currentCategoryId, idx=${controller.currentMediaItemIndex}, pos=${controller.currentPosition}ms")
     }
 
     // ========== 播放控制 ==========
@@ -160,8 +160,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         }
 
         val startIndex = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-        // 使用 catId 作为分类 ID（代替 albumId）
-        currentAlbumId = song.catId.toIntOrNull() ?: -1
+        // 记录歌曲所属分类 ID，用于进度恢复时重建队列
+        currentCategoryId = song.catId.toIntOrNull() ?: -1
         currentQueue = queue
 
         _queue.value = queue
@@ -198,7 +198,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         }
 
         val song = tracks.getOrNull(startIndex) ?: return
-        currentAlbumId = song.catId.toIntOrNull() ?: -1
+        currentCategoryId = song.catId.toIntOrNull() ?: -1
         currentQueue = tracks
 
         _queue.value = tracks

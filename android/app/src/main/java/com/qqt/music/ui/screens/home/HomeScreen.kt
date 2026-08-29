@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Album
+import com.qqt.music.data.api.model.Banner
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.ui.components.BannerCarousel
 import com.qqt.music.ui.components.SongListItem
@@ -36,6 +37,7 @@ fun HomeScreen(
     playerViewModel: PlayerViewModel,
     onSeeAllSongs: () -> Unit = {},
     onAlbumClick: (Album) -> Unit = {},
+    onBannerClick: (Banner) -> Unit = {},
     viewModel: HomeViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -51,7 +53,7 @@ fun HomeScreen(
             item {
                 BannerCarousel(
                     banners = state.banners,
-                    onBannerClick = {},
+                    onBannerClick = onBannerClick,
                     modifier = Modifier.padding(8.dp),
                 )
             }

@@ -35,7 +35,7 @@ return Base64.encodeToString(urlEncoded.toByteArray(), Base64.NO_WRAP)
 
 | 方法 | method_name | 返回类型 | 关键参数 |
 |------|-------------|---------|---------|
-| `getHome(userId)` | `home_new` | `HomeData?` | `user_id` |
+| `getHome(userId)` | `home` + `home_new` | `HomeData?` | `user_id`，见下方说明 |
 | `getArtists(page)` | `artist_list` | `List<Artist>` | `page` |
 | `getAlbums(page)` | `album_list` | `List<Album>` | `page` |
 | `getPlaylists(page)` | `playlist` | `List<Playlist>` | `page` |
@@ -77,10 +77,14 @@ data class HomeData(
     val banners: List<Banner>,         // 首页横幅列表（含歌曲列表）
     val latestAlbums: List<Album>,
     val latestArtists: List<Artist>,
-    val trendingSongs: List<Song>,     // 热门歌曲
+    val trendingSongs: List<Song>,     // 热门歌曲（实际取自 home_new，见注意事项）
     val recentSongs: List<Song>,
 )
 ```
+
+### getHome 的双接口合并
+
+`getHome()` 先发 `home` 请求（横幅/最新专辑/歌手必须用它，`home_new` 的横幅 `songs_list` 为空），再发 `home_new` 请求取 `trending_songs` 覆盖 `home` 的热门榜：服务端 `home` 的热门查询有缺陷（同一首歌多条周播放记录霸榜且只取老歌），而 `home_new` 返回近一个月无重复的榜单，与老版 App 表现一致。`home_new` 请求失败或榜单为空时，兜底用 `home` 的 trending 按歌曲 id 去重。
 
 ## 错误处理
 
@@ -91,4 +95,4 @@ data class HomeData(
 - `BooleanAdapter` 处理后端返回 `"0"`/`"1"` 整数字符串作为 Boolean 的情况，**必须**在 Gson 实例构建时注册（`ApiClient` 中已配置）
 - 后端所有数值字段（`id`、`total_views` 等）均以字符串形式返回，`Song.totalCount()` 提供了一个统一取条数的辅助方法
 - 修改 `AppConfig.BASE_URL` 后不需要任何其他代码改动（所有请求都通过 `ApiClient.retrofit` 发出）
-- `page` 参数从 `1` 开始（非 0-based），每页条数由后端 `tbl_settings.api_latest_limit` 控制
+- `page` 参数从 `1` 开始（非 0-based）；列表页每页条数由后端 `tbl_settings.api_latest_limit` 控制，但 `album_songs` 每页固定 10 首（后端硬编码，不可调）
