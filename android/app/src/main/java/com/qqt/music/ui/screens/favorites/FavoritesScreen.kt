@@ -5,25 +5,22 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.repository.MusicRepository
+import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -64,30 +61,12 @@ fun FavoritesScreen(
     val isLoading by viewModel.isLoading.collectAsState()
 
     if (!isLoading && songs.isEmpty()) {
-        // Empty state
-        Column(
-            modifier = Modifier.fillMaxSize().background(Color(0xFFF5F5F5)),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFEEEEEE)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Default.Search, null, tint = Color(0xFFCCAAAA), modifier = Modifier.size(44.dp))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text("没有发现歌曲", color = Color.Gray, fontSize = 15.sp)
-            Spacer(Modifier.height(12.dp))
-            Button(
-                onClick = { viewModel.load() },
-                colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
-                modifier = Modifier.width(160.dp),
-            ) { Text("刷新") }
-        }
+        EmptyState(
+            icon = Icons.Outlined.FavoriteBorder,
+            title = "没有发现歌曲",
+            actionText = "刷新",
+            onAction = { viewModel.load() },
+        )
         return
     }
 
@@ -105,15 +84,15 @@ fun FavoritesScreen(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().background(Color.White),
+        contentPadding = PaddingValues(vertical = 6.dp),
     ) {
         items(songs) { song ->
             SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
-            HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFF0F0F0), modifier = Modifier.padding(start = 80.dp))
         }
         if (isLoading) {
             item {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary, modifier = Modifier.size(32.dp))
+                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
                 }
             }
         }

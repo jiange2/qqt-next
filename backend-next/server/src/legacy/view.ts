@@ -3,9 +3,9 @@
 import type { Album, Artist, Banner, Playlist, Song } from "@prisma/client";
 import { audioUrl, imageUrl, lrcUrl, thumbUrl } from "../media/urls.js";
 
-/** 带关联的歌曲模型（handlers 查询时 include） */
+/** 带关联的歌曲模型（handlers 查询时 include）；category 可空（backend-next ADR 0007，App 端已被 songStatusFilter 过滤） */
 export type SongWithRelations = Song & {
-  category: { id: number; name: string; image: string };
+  category: { id: number; name: string; image: string } | null;
   album?: Album | null;
   artists: { sort: number; artist: Pick<Artist, "id" | "name"> }[];
 };
@@ -23,6 +23,8 @@ type SongCtx = {
 const S = (v: number | string | null | undefined) => String(v ?? "");
 
 export function songToLegacy(song: SongWithRelations, ctx: SongCtx): Record<string, unknown> {
+  // 未分类歌曲不会进入任何 App 列表（songStatusFilter），此处空值回退仅为类型层防御
+  const cat = song.category;
   const row: Record<string, unknown> = {
     id: S(song.id),
     cat_id: S(song.categoryId),
@@ -42,10 +44,10 @@ export function songToLegacy(song: SongWithRelations, ctx: SongCtx): Record<stri
     total_views: S(song.totalViews),
     total_download: S(song.totalDownload),
     is_favourite: ctx.favourites ? ctx.favourites.has(song.id) : false,
-    cid: S(song.category.id),
-    category_name: song.category.name,
-    category_image: imageUrl(ctx.base, song.category.image),
-    category_image_thumb: thumbUrl(ctx.base, song.category.image),
+    cid: S(cat?.id),
+    category_name: cat?.name ?? "",
+    category_image: cat ? imageUrl(ctx.base, cat.image) : "",
+    category_image_thumb: cat ? thumbUrl(ctx.base, cat.image) : "",
   };
 
   if (song.albumId != null) row.album_id = S(song.albumId);

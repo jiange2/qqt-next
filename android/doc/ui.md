@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：`ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符），5 个底部 Tab + 6 个抽屉项 + 1 个全屏播放器 + 2 个歌曲详情页（横幅歌曲/专辑歌曲）共 14 个页面目的地。
+App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：`ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符），5 个底部 Tab + 6 个抽屉项 + 1 个全屏播放器 + 3 个详情页（横幅歌曲/专辑歌曲/分类专辑）共 15 个页面目的地。
 
 ## 关键文件
 
@@ -37,7 +37,8 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `settings` | 设置中心 | 侧边抽屉底部 | 无 |
 | `player` | 播放器 | 全屏（无 TopBar/BottomBar） | 无（使用 PlayerViewModel） |
 | `banner_songs/{bid}` | 歌曲（横幅标题） | 详情页：首页轮播点击 | 无（数据随首页接口内嵌，经 `BannerNav` 交接） |
-| `album_songs/{aid}` | 专辑（专辑名） | 详情页：首页最新专辑/抽屉专辑列表点击 | `AlbumSongsViewModel` |
+| `album_songs/{aid}` | 专辑（专辑名） | 详情页：首页最新专辑/抽屉专辑列表/分类专辑页点击 | `AlbumSongsViewModel` |
+| `category_albums/{cid}` | 分类（分类名） | 详情页：分类列表页点击（backend-next ADR 0009） | `CategoryAlbumsViewModel` |
 
 ## AppNavigation 关键逻辑
 
@@ -93,6 +94,13 @@ showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlb
 
 ### CategoryScreen / CategoryViewModel
 - 2 列 `LazyVerticalGrid`，滚动到底部自动加载下一页（无限分页）
+- 点击分类卡片 → `CategoryNav` 暂存分类 → 跳转 `category_albums/{cid}`
+
+### CategoryAlbumsScreen / CategoryAlbumsViewModel（分类专辑页）
+- 2 列专辑网格（后端每页固定 10 张），滚动到底自动加载下一页；顶栏标题取 `CategoryNav.category.name`
+- 点击专辑卡片 → `AlbumNav` 暂存专辑 → 跳转 `album_songs/{aid}`
+- **单专辑直跳**：首页加载完成后若该分类仅 1 张专辑（按 `total_records` 判定，解析失败时首页恰 1 条也认定），经 `onAutoOpen` 直跳专辑歌曲页，并用 `popUpTo(category_albums, inclusive)` 替换当前栈条目——返回时直接回到分类列表页，不经过分类专辑页
+- 空分类显示“该分类暂无专辑”；接口异常按空态处理，不会误触发直跳
 
 ### LatestScreen / LatestViewModel
 - 单列 `LazyColumn` 分页，滚动底部自动下一页

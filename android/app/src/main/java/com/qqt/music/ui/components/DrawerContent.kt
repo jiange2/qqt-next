@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,13 +15,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.qqt.music.ui.navigation.Screen
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.BrandOrangeDeep
+import com.qqt.music.ui.theme.BrandOrangeSoft
+import com.qqt.music.ui.theme.BrandOrangeTint
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.InkSecondary
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,23 +48,38 @@ fun DrawerContent(
         drawerContainerColor = Color.White,
         modifier = Modifier.width(280.dp),
     ) {
-        // Header
+        // Header：品牌渐变 + 装饰圆，营造层次
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(160.dp)
                 .background(
-                    Brush.horizontalGradient(
-                        listOf(OrangePrimary, Color(0xFFFF7955))
-                    )
+                    Brush.linearGradient(listOf(BrandOrangeTint, BrandOrange, BrandOrangeDeep))
                 )
                 .padding(20.dp),
             contentAlignment = Alignment.BottomStart,
         ) {
+            // 装饰性半透明圆
+            Box(
+                modifier = Modifier
+                    .size(120.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = 30.dp, y = (-30).dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f)),
+            )
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-10).dp, y = 50.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.10f)),
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(60.dp)
+                        .size(56.dp)
                         .clip(CircleShape)
                         .background(Color.White),
                     contentAlignment = Alignment.Center,
@@ -67,19 +87,19 @@ fun DrawerContent(
                     Icon(
                         Icons.Default.MusicNote,
                         contentDescription = null,
-                        tint = OrangePrimary,
-                        modifier = Modifier.size(36.dp),
+                        tint = BrandOrange,
+                        modifier = Modifier.size(32.dp),
                     )
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("倾轻听", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    Text("播放你收藏的歌曲", fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f))
+                    Text("播放你收藏的歌曲", fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f))
                 }
             }
         }
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
 
         val items = listOf(
             Triple(Icons.Default.Home, "首页", Screen.Home.route),
@@ -101,21 +121,24 @@ fun DrawerContent(
                 icon = {
                     Icon(
                         icon, contentDescription = null,
-                        tint = if (selected) OrangePrimary else Color(0xFF888888),
+                        tint = if (selected) BrandOrange else InkSecondary,
+                        modifier = Modifier.size(22.dp),
                     )
                 },
                 label = {
                     Text(
                         label,
-                        fontSize = 15.sp,
-                        color = if (selected) OrangePrimary else Color(0xFF333333),
+                        fontSize = 14.sp,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (selected) BrandOrange else InkPrimary,
                     )
                 },
                 selected = selected,
                 onClick = { navigate(route) },
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
                 colors = NavigationDrawerItemDefaults.colors(
-                    selectedContainerColor = OrangePrimary.copy(alpha = 0.1f),
+                    selectedContainerColor = BrandOrangeSoft,
                     unselectedContainerColor = Color.Transparent,
                 ),
             )

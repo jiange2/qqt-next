@@ -1,5 +1,8 @@
 package com.qqt.music.ui.components
 
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -9,7 +12,6 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,7 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Banner
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkFaint
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -60,8 +63,8 @@ fun BannerCarousel(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clickable { onBannerClick(banner) }
-                        .clip(RoundedCornerShape(8.dp)),
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { onBannerClick(banner) },
                 ) {
                     AsyncImage(
                         model = banner.image.ifBlank { banner.imageThumb },
@@ -69,13 +72,15 @@ fun BannerCarousel(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    // Gradient overlay
+                    // Gradient overlay：加强底部层次，保证文字可读
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f))
+                                    0f to Color.Transparent,
+                                    0.55f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.65f),
                                 )
                             )
                     )
@@ -83,17 +88,22 @@ fun BannerCarousel(
                     Row(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .padding(12.dp),
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(OrangePrimary),
+                                .background(Color.White.copy(alpha = 0.92f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
+                            Icon(
+                                Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = BrandOrange,
+                                modifier = Modifier.size(22.dp),
+                            )
                         }
                         Spacer(Modifier.width(10.dp))
                         Column {
@@ -111,29 +121,31 @@ fun BannerCarousel(
                                 fontSize = 12.sp,
                             )
                         }
-                        Spacer(Modifier.weight(1f))
-                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.White)
                     }
                 }
             }
         }
-        // Dots indicator
+        // Dots indicator：选中态伸长为胶囊
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 8.dp),
+                .padding(top = 10.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
             repeat(banners.size) { i ->
+                val selected = i == pagerState.currentPage
+                val width by animateDpAsState(
+                    targetValue = if (selected) 16.dp else 6.dp,
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                    label = "dotWidth",
+                )
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 3.dp)
-                        .size(if (i == pagerState.currentPage) 10.dp else 7.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (i == pagerState.currentPage) OrangePrimary
-                            else Color(0xFFCCCCCC)
-                        )
+                        .height(6.dp)
+                        .width(width)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(if (selected) BrandOrange else InkFaint)
                 )
             }
         }

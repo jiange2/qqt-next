@@ -69,6 +69,7 @@ model Category {
   status      Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
   songs       Song[]
+  albums      Album[]  // 分类-专辑层级（backend-next ADR 0009）：分类下放专辑而非歌曲
 
   @@map("categories")
 }
@@ -84,29 +85,40 @@ model Artist {
   @@map("artists")
 }
 
+// 专辑是分类与歌曲之间的层级（backend-next ADR 0009）：categoryId 可空，
+// 为空即「未分类专辑」，仅存在于后台，App 端经归属链过滤不可见
 model Album {
-  id        Int           @id @default(autoincrement()) // 旧库 aid
-  name      String        @map("name") @db.VarChar(255)
-  image     String        @db.VarChar(255)
-  status    Boolean       @default(true)
-  createdAt DateTime      @default(now()) @map("created_at")
-  artists   AlbumArtist[]
-  songs     Song[]
+  id           Int           @id @default(autoincrement()) // 旧库 aid
+  categoryId   Int?          @map("category_id")
+  categorySort Int           @default(0) @map("category_sort") // 维度顺序：分类内专辑手动排序（ADR 0009）
+  name         String        @map("name") @db.VarChar(255)
+  image        String        @db.VarChar(255)
+  status       Boolean       @default(true)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  artists      AlbumArtist[]
+  songs        Song[]
+  category     Category?     @relation(fields: [categoryId], references: [id])
 
+  @@index([categoryId])
+  @@index([categoryId, categorySort])
   @@map("albums")
 }
 
 model Song {
+  // categoryId 可空（backend-next ADR 0007）：未分类歌曲仅存在于后台，
+  // App 端经 songStatusFilter 的关系过滤天然不可见
   id            Int        @id @default(autoincrement()) // 旧库 id
-  categoryId    Int        @map("category_id")
+  categoryId    Int?       @map("category_id")
   albumId       Int?       @map("album_id")
-  type          String     @db.VarChar(20) // local | youtube | external
+  categorySort  Int        @default(0) @map("category_sort") // 维度顺序：分类内手动排序（ADR 0007）
+  albumSort     Int        @default(0) @map("album_sort") // 维度顺序：专辑内手动排序
+  type          String     @db.VarChar(20) // local | external（youtube 已移除）
   title         String     @db.VarChar(255)
-  audioUrl      String     @map("audio_url") @db.VarChar(500) // local 存文件名，external/youtube 存完整 URL
+  audioUrl      String     @map("audio_url") @db.VarChar(500) // local 存 rand 前缀文件名，external 存完整 URL
   thumbnail     String     @db.VarChar(255)
   description   String     @db.Text
   lrcText       String?    @map("lrc_text") @db.Text
-  lrcUrl        String?    @map("lrc_url") @db.VarChar(255) // local 存文件名
+  lrcUrl        String?    @map("lrc_url") @db.VarChar(255) // local 存 rand 前缀文件名
   totalViews    Int        @default(0) @map("total_views")
   totalDownload Int        @default(0) @map("total_download")
   totalRate     Int        @default(0) @map("total_rate")
@@ -115,7 +127,7 @@ model Song {
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at")
 
-  category  Category      @relation(fields: [categoryId], references: [id])
+  category  Category?     @relation(fields: [categoryId], references: [id])
   album     Album?        @relation(fields: [albumId], references: [id])
   artists   SongArtist[]
   banners   BannerSong[]
@@ -127,6 +139,8 @@ model Song {
 
   @@index([categoryId])
   @@index([albumId])
+  @@index([categoryId, categorySort])
+  @@index([albumId, albumSort])
   @@index([status, title])
   @@map("songs")
 }

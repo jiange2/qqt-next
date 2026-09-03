@@ -2,6 +2,11 @@ package com.qqt.music.ui.navigation
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -25,7 +30,7 @@ import com.qqt.music.ui.screens.albumsongs.AlbumSongsScreen
 import com.qqt.music.ui.screens.artist.ArtistScreen
 import com.qqt.music.ui.screens.bannersongs.BannerSongsScreen
 import com.qqt.music.ui.screens.category.CategoryScreen
-import com.qqt.music.ui.screens.categorysongs.CategorySongsScreen
+import com.qqt.music.ui.screens.categoryalbums.CategoryAlbumsScreen
 import com.qqt.music.ui.screens.download.DownloadScreen
 import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
@@ -50,8 +55,8 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val showBottomNav = currentRoute in Screen.bottomNavRoutes
     val isBannerSongs = currentRoute?.startsWith("banner_songs") == true
     val isAlbumSongs = currentRoute?.startsWith("album_songs") == true
-    val isCategorySongs = currentRoute?.startsWith("category_songs") == true
-    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategorySongs
+    val isCategoryAlbums = currentRoute?.startsWith("category_albums") == true
+    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums
     val isPlayerScreen = currentRoute == Screen.Player.route
 
     // If player screen, show it fullscreen without drawer/topbar/bottombar
@@ -70,7 +75,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategorySongs,
+            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -94,6 +99,15 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         navController = navController,
                         startDestination = Screen.Home.route,
                         modifier = Modifier.padding(innerPadding),
+                        // 页面过渡：轻微滑动 + 淡入淡出，避免生硬跳变
+                        enterTransition = {
+                            fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 14 }
+                        },
+                        exitTransition = { fadeOut(tween(160)) },
+                        popEnterTransition = { fadeIn(tween(220)) },
+                        popExitTransition = {
+                            fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 14 }
+                        },
                     ) {
                     composable(Screen.Home.route) {
                         HomeScreen(
@@ -127,7 +141,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         CategoryScreen(
                             onCategoryClick = { cat ->
                                 CategoryNav.category = cat
-                                navController.navigate("category_songs/${cat.id}")
+                                navController.navigate("category_albums/${cat.id}")
                             },
                         )
                     }
@@ -163,8 +177,20 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.AlbumSongs.route) {
                         AlbumSongsScreen(playerViewModel = playerViewModel)
                     }
-                    composable(Screen.CategorySongs.route) {
-                        CategorySongsScreen(playerViewModel = playerViewModel)
+                    composable(Screen.CategoryAlbums.route) {
+                        CategoryAlbumsScreen(
+                            onAlbumClick = { album ->
+                                AlbumNav.album = album
+                                navController.navigate("album_songs/${album.id}")
+                            },
+                            onAutoOpen = { album ->
+                                // 分类下仅一张专辑：直跳专辑歌曲页并替换当前栈条目，返回时直接回到分类列表页
+                                AlbumNav.album = album
+                                navController.navigate("album_songs/${album.id}") {
+                                    popUpTo(Screen.CategoryAlbums.route) { inclusive = true }
+                                }
+                            },
+                        )
                     }
                     composable(Screen.Player.route) {
                         PlayerScreen(

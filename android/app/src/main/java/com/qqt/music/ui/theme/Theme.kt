@@ -7,26 +7,33 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val LightColorScheme = lightColorScheme(
-    primary = OrangePrimary,
-    onPrimary = OnOrange,
-    primaryContainer = OrangePrimaryLight,
-    onPrimaryContainer = OnOrange,
-    secondary = OrangePrimaryDark,
-    onSecondary = OnOrange,
-    background = BackgroundLight,
-    surface = SurfaceLight,
-    onSurfaceVariant = OnSurfaceVariantLight,
+    primary = BrandOrange,
+    onPrimary = Color.White,
+    primaryContainer = BrandOrangeSoft,
+    onPrimaryContainer = BrandOrangeDeep,
+    secondary = BrandOrangeDeep,
+    onSecondary = Color.White,
+    background = WarmBackground,
+    onBackground = InkPrimary,
+    surface = WarmSurface,
+    onSurface = InkPrimary,
+    surfaceVariant = PlaceholderBg,
+    onSurfaceVariant = InkSecondary,
+    outline = Hairline,
 )
 
 private val DarkColorScheme = darkColorScheme(
-    primary = OrangePrimary,
-    onPrimary = OnOrange,
-    primaryContainer = OrangePrimaryDark,
-    secondary = OrangePrimaryLight,
+    primary = BrandOrangeTint,
+    onPrimary = Color.White,
+    primaryContainer = BrandOrangeDeep,
+    onPrimaryContainer = Color.White,
+    secondary = BrandOrange,
+    onSecondary = Color.White,
 )
 
 @Composable

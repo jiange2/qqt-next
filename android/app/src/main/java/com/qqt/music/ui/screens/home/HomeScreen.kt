@@ -28,8 +28,12 @@ import com.qqt.music.data.api.model.Album
 import com.qqt.music.data.api.model.Banner
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.ui.components.BannerCarousel
-import com.qqt.music.ui.components.SongListItem
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.InkSecondary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.WarmBackground
+import com.qqt.music.ui.theme.brandBrush
 import com.qqt.music.viewmodel.PlayerViewModel
 
 @Composable
@@ -45,8 +49,8 @@ fun HomeScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5)),
-        contentPadding = PaddingValues(bottom = 8.dp),
+            .background(WarmBackground),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
     ) {
         // Banner carousel
         if (state.banners.isNotEmpty()) {
@@ -54,7 +58,7 @@ fun HomeScreen(
                 BannerCarousel(
                     banners = state.banners,
                     onBannerClick = onBannerClick,
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
         }
@@ -63,7 +67,7 @@ fun HomeScreen(
         if (state.isLoading) {
             item {
                 Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary)
+                    CircularProgressIndicator(color = BrandOrange)
                 }
             }
         }
@@ -75,11 +79,12 @@ fun HomeScreen(
                     Modifier.fillMaxWidth().padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(err, color = Color.Gray)
+                    Text(err, color = InkSecondary)
                     Spacer(Modifier.height(12.dp))
                     Button(
                         onClick = { viewModel.loadHome() },
-                        colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+                        shape = RoundedCornerShape(20.dp),
                     ) { Text("重试") }
                 }
             }
@@ -92,15 +97,15 @@ fun HomeScreen(
             }
             item {
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(state.trendingSongs) { song ->
                         SongCard(song) { playerViewModel.playSong(song, state.trendingSongs) }
                     }
                 }
             }
-            item { Spacer(Modifier.height(16.dp)) }
+            item { Spacer(Modifier.height(20.dp)) }
         }
 
         // Recent songs
@@ -110,15 +115,15 @@ fun HomeScreen(
             }
             item {
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(state.recentSongs) { song ->
                         SongCard(song) { playerViewModel.playSong(song, state.recentSongs) }
                     }
                 }
             }
-            item { Spacer(Modifier.height(16.dp)) }
+            item { Spacer(Modifier.height(20.dp)) }
         }
 
         // Latest albums
@@ -126,15 +131,14 @@ fun HomeScreen(
             item { SectionHeader("最新专辑") }
             item {
                 LazyRow(
-                    contentPadding = PaddingValues(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(state.latestAlbums) { album ->
                         AlbumCard(album) { onAlbumClick(album) }
                     }
                 }
             }
-            item { Spacer(Modifier.height(16.dp)) }
         }
     }
 }
@@ -144,25 +148,29 @@ private fun SectionHeader(title: String, onSeeAll: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .width(4.dp)
-                .height(18.dp)
-                .background(OrangePrimary, RoundedCornerShape(2.dp))
+                .height(16.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(brandBrush())
         )
         Spacer(Modifier.width(8.dp))
-        Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text(title, fontWeight = FontWeight.Bold, fontSize = 17.sp, color = InkPrimary)
         Spacer(Modifier.weight(1f))
         if (onSeeAll != null) {
             Row(
-                modifier = Modifier.clickable(onClick = onSeeAll),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onSeeAll)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("查看所有", color = OrangePrimary, fontSize = 13.sp)
-                Icon(Icons.Default.ChevronRight, null, tint = OrangePrimary, modifier = Modifier.size(16.dp))
+                Text("查看所有", color = BrandOrange, fontSize = 12.sp)
+                Icon(Icons.Default.ChevronRight, null, tint = BrandOrange, modifier = Modifier.size(15.dp))
             }
         }
     }
@@ -174,27 +182,37 @@ private fun SongCard(song: Song, onClick: () -> Unit) {
         modifier = Modifier
             .width(130.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(2.dp),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) {
         Column {
-            Box {
-                AsyncImage(
-                    model = song.thumbnailBig.ifBlank { song.thumbnailSmall },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(90.dp)
-                        .background(Color(0xFFEEEEEE)),
+            AsyncImage(
+                model = song.thumbnailBig.ifBlank { song.thumbnailSmall },
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(PlaceholderBg),
+            )
+            Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                Text(
+                    song.title,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = InkPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            }
-            Column(Modifier.padding(8.dp)) {
-                Text(song.title, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(1.dp))
                 Text(
                     song.artist.ifBlank { song.categoryName.ifBlank { "佚名" } },
-                    fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis
+                    fontSize = 11.sp,
+                    color = InkSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -204,34 +222,45 @@ private fun SongCard(song: Song, onClick: () -> Unit) {
 @Composable
 private fun AlbumCard(album: Album, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.width(130.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(2.dp),
+        modifier = Modifier
+            .width(130.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) {
         Column {
             Box {
                 AsyncImage(
-                    model = album.image.ifBlank { album.imageThumb },
+                    model = album.imageThumb.ifBlank { album.image },
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(90.dp)
-                        .background(Color(0xFFEEEEEE)),
+                        .height(100.dp)
+                        .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                        .background(PlaceholderBg),
                 )
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .size(32.dp)
+                        .size(34.dp)
                         .clip(CircleShape)
-                        .background(OrangePrimary),
+                        .background(Color.White.copy(alpha = 0.92f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.PlayArrow, null, tint = BrandOrange, modifier = Modifier.size(20.dp))
                 }
             }
-            Text(album.name, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 2, modifier = Modifier.padding(8.dp))
+            Text(
+                album.name,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = InkPrimary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            )
         }
     }
 }

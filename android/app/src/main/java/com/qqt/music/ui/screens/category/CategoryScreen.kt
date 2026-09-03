@@ -19,7 +19,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Category
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.WarmBackground
 
 @Composable
 fun CategoryScreen(
@@ -43,16 +46,16 @@ fun CategoryScreen(
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         state = gridState,
-        contentPadding = PaddingValues(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF5F5F5)),
+        contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize().background(WarmBackground),
     ) {
         items(categories) { cat ->
             Card(
                 modifier = Modifier.clickable { onCategoryClick(cat) },
-                shape = RoundedCornerShape(8.dp),
-                elevation = CardDefaults.cardElevation(2.dp),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
             ) {
                 Column {
@@ -63,16 +66,18 @@ fun CategoryScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1.6f)
-                            .background(Color(0xFFEEEEEE)),
+                            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                            .background(PlaceholderBg),
                     )
                     Text(
                         text = cat.name,
                         fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = InkPrimary,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(8.dp),
+                            .padding(vertical = 10.dp),
                     )
                 }
             }
@@ -80,7 +85,7 @@ fun CategoryScreen(
         if (isLoading) {
             item(span = { GridItemSpan(2) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary, modifier = Modifier.size(32.dp))
+                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
                 }
             }
         }

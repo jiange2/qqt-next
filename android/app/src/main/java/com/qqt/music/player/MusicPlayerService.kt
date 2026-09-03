@@ -11,12 +11,13 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.qqt.music.MEDIA_REFERER
 import com.qqt.music.MainActivity
 import com.qqt.music.R
 
@@ -51,7 +52,11 @@ class MusicPlayerService : MediaSessionService() {
         // 2. 构建缓存数据源
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(AudioCache.get(this))
-            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(this))
+            // CDN 防盗链：音频请求携带约定 Referer（仓库级 ADR 0006；媒体 URL 均为 http(s)，无需 file/本地数据源）
+            .setUpstreamDataSourceFactory(
+                DefaultHttpDataSource.Factory()
+                    .setDefaultRequestProperties(mapOf("Referer" to MEDIA_REFERER))
+            )
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
         // 3. 创建 ExoPlayer

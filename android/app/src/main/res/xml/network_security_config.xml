@@ -9,6 +9,11 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">10.0.2.2</domain>
         <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">101.132.159.145</domain>
+    </domain-config>
+    <!-- 媒体分发：CDN 加速域名长期明文 HTTP（ADR 0005）；旧 prod IP 供 external 遗留歌曲拉流 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">cdn.qqt.yunshangzhiai7.top</domain>
         <domain includeSubdomains="true">47.111.25.157</domain>
     </domain-config>
 </network-security-config>

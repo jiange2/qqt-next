@@ -5,27 +5,21 @@
 //      （song_id / cat_id / album_id / aid / bid / pid / type 等）。
 import crypto from "node:crypto";
 import "dotenv/config";
-import mysql from "mysql2/promise";
+import { PrismaClient } from "@prisma/client";
 
 const baseArg = process.argv.find((a) => a.startsWith("--base="));
 const BASE = baseArg ? baseArg.split("=")[1] : "http://127.0.0.1:8000/api.php";
 
-// 旧库仅用于取 package_name 与实体样本 id（契约参数名与旧 api.php 一致）
-const legacyUrl = process.env.LEGACY_DB_URL ?? "mysql://root:password@localhost:3306/qqt";
-const db = await mysql.createConnection(legacyUrl);
-const q = async <T>(sql: string) => {
-  const [rows] = await db.query<mysql.RowDataPacket[]>(sql);
-  return rows as T[];
-};
-const [row] = await q<{ package_name: string }>("SELECT package_name FROM tbl_settings WHERE id=1");
-const packageName = row.package_name;
-const [cat] = await q<{ cid: number }>("SELECT cid FROM tbl_category ORDER BY cid LIMIT 1");
-const [song] = await q<{ id: number }>("SELECT id FROM tbl_mp3 ORDER BY id LIMIT 1");
-const [artist] = await q<{ id: number; artist_name: string }>("SELECT id, artist_name FROM tbl_artist ORDER BY id LIMIT 1");
-const [album] = await q<{ aid: number }>("SELECT aid FROM tbl_album ORDER BY aid LIMIT 1");
-const [banner] = await q<{ bid: number }>("SELECT bid FROM tbl_banner ORDER BY bid LIMIT 1");
-const [pl] = await q<{ pid: number }>("SELECT pid FROM tbl_playlist ORDER BY pid LIMIT 1");
-await db.end();
+// 样本 id 取自新库（legacy 库已清空/不可依赖，见 ADR 0006 后的现状）
+const prisma = new PrismaClient();
+const packageName = (await prisma.setting.findUnique({ where: { id: 1 } }))?.packageName ?? "";
+const cat = await prisma.category.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+const song = await prisma.song.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+const artist = await prisma.artist.findFirst({ orderBy: { id: "asc" }, select: { id: true, name: true } });
+const album = await prisma.album.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+const banner = await prisma.banner.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+const pl = await prisma.playlist.findFirst({ orderBy: { id: "asc" }, select: { id: true } });
+await prisma.$disconnect();
 
 function encode(data: unknown): string {
   return Buffer.from(encodeURIComponent(JSON.stringify(data)), "utf8").toString("base64");
@@ -79,19 +73,19 @@ const readCases: [string, Record<string, unknown>][] = [
   ["all_songs", { post_id: 1 }],
   ["latest", {}],
   ["banners", {}],
-  ["banner_songs", { banner_id: String(banner.bid) }],
+  ["banner_songs", { banner_id: String(banner?.id) }],
   ["cat_list", {}],
-  ["cat_songs", { cat_id: String(cat.cid), order_by: "id", order: "ASC" }],
+  ["cat_songs", { cat_id: String(cat?.id), order_by: "id", order: "ASC" }],
   ["recent_artist_list", {}],
   ["artist_list", { order_by: "id", search_value: "" }],
-  ["artist_album_list", { artist_id: String(artist.id) }],
-  ["artist_name_songs", { artist_name: String(artist.artist_name) }],
+  ["artist_album_list", { artist_id: String(artist?.id) }],
+  ["artist_name_songs", { artist_name: String(artist?.name) }],
   ["album_list", { order_by: "id" }],
-  ["album_songs", { album_id: String(album.aid) }],
+  ["album_songs", { album_id: String(album?.id) }],
   ["playlist", {}],
-  ["playlist_songs", { playlist_id: String(pl.pid) }],
-  ["song_info", { song_id: String(song.id) }],
-  ["single_song", { song_id: String(song.id) }],
+  ["playlist_songs", { playlist_id: String(pl?.id) }],
+  ["song_info", { song_id: String(song?.id) }],
+  ["single_song", { song_id: String(song?.id) }],
   ["song_search", { search_value: "a" }],
   ["app_details", {}],
 ];
@@ -110,13 +104,13 @@ console.log("[user_login]", summarize(login.json));
 const uid = (login.json as { ONLINE_MP3: [{ user_id?: string }] }).ONLINE_MP3[0]?.user_id;
 if (uid) {
   console.log("[user_profile]", summarize((await call("user_profile", { user_id: uid })).json));
-  console.log("[song_rating]", summarize((await call("song_rating", { post_id: String(song.id), rate: "5", user_id: uid, ip: "10.0.0.9" })).json));
-  console.log("[song_rating-dup]", summarize((await call("song_rating", { post_id: String(song.id), rate: "3", user_id: uid, ip: "10.0.0.9" })).json));
-  console.log("[favourite_post]", summarize((await call("favourite_post", { user_id: uid, post_id: String(song.id) })).json));
+  console.log("[song_rating]", summarize((await call("song_rating", { post_id: String(song?.id), rate: "5", user_id: uid, ip: "10.0.0.9" })).json));
+  console.log("[song_rating-dup]", summarize((await call("song_rating", { post_id: String(song?.id), rate: "3", user_id: uid, ip: "10.0.0.9" })).json));
+  console.log("[favourite_post]", summarize((await call("favourite_post", { user_id: uid, post_id: String(song?.id) })).json));
   console.log("[get_favourite_post]", summarize((await call("get_favourite_post", { user_id: uid })).json));
-  console.log("[get_recent_songs]", summarize((await call("get_recent_songs", { user_id: uid, songs_ids: String(song.id) })).json));
+  console.log("[get_recent_songs]", summarize((await call("get_recent_songs", { user_id: uid, songs_ids: String(song?.id) })).json));
 }
-console.log("[song_download]", summarize((await call("song_download", { song_id: String(song.id) })).json));
+console.log("[song_download]", summarize((await call("song_download", { song_id: String(song?.id) })).json));
 
 // 5) user_id 无效 → -2
-console.log("[bad-user]", summarize((await call("favourite_post", { user_id: "999999", post_id: String(song.id) })).json));
+console.log("[bad-user]", summarize((await call("favourite_post", { user_id: "999999", post_id: String(song?.id) })).json));

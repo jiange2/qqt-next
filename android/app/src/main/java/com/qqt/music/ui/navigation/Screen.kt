@@ -25,8 +25,8 @@ sealed class Screen(val route: String, val title: String) {
     // Album songs detail page (title comes from the album itself)
     object AlbumSongs : Screen("album_songs/{aid}", "专辑")
 
-    // Category songs detail page (title comes from the category itself)
-    object CategorySongs : Screen("category_songs/{cid}", "分类")
+    // Category albums detail page (title comes from the category itself, backend-next ADR 0009)
+    object CategoryAlbums : Screen("category_albums/{cid}", "分类")
 
     companion object {
         val bottomNavRoutes = setOf("home", "recent", "download", "category", "latest")
@@ -36,7 +36,7 @@ sealed class Screen(val route: String, val title: String) {
             route == null -> "倾轻听"
             route.startsWith("banner_songs") -> BannerNav.banner?.title ?: "歌曲"
             route.startsWith("album_songs") -> AlbumNav.album?.name ?: "专辑"
-            route.startsWith("category_songs") -> CategoryNav.category?.name ?: "分类"
+            route.startsWith("category_albums") -> CategoryNav.category?.name ?: "分类"
             else -> when (route) {
                 "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
                 "category" -> "音乐分类"; "latest" -> "最新歌曲"; "artist" -> "音乐歌手"

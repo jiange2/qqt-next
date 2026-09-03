@@ -53,3 +53,20 @@ data class HomeData(
     @SerializedName("trending_songs") val trendingSongs: List<Song> = emptyList(),
     @SerializedName("recent_songs") val recentSongs: List<Song> = emptyList(),
 )
+
+/** app_details 返回的 App 信息与更新配置 */
+data class AppUpdateInfo(
+    @SerializedName("app_name") val appName: String = "",
+    @SerializedName("app_version") val appVersion: String = "",
+    @SerializedName("app_update_status") val updateStatus: String = "false",
+    @SerializedName("app_new_version") val newVersion: Double = 0.0,
+    @SerializedName("app_update_desc") val updateDesc: String = "",
+    @SerializedName("app_redirect_url") val redirectUrl: String = "",
+    @SerializedName("cancel_update_status") val cancelUpdateStatus: String = "false",
+) {
+    /** 后台是否已开启更新提醒 */
+    val isUpdateEnabled: Boolean get() = updateStatus == "true"
+
+    /** 弹窗是否允许用户取消（false = 强制更新） */
+    val isCancelable: Boolean get() = cancelUpdateStatus == "true"
+}

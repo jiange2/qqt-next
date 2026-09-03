@@ -13,7 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.ui.components.SongListItem
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.viewmodel.PlayerViewModel
 
 @Composable
@@ -37,7 +37,7 @@ fun LatestScreen(
 
     if (isLoading && songs.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = OrangePrimary)
+            CircularProgressIndicator(color = BrandOrange)
         }
         return
     }
@@ -45,15 +45,15 @@ fun LatestScreen(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().background(Color.White),
+        contentPadding = PaddingValues(vertical = 6.dp),
     ) {
         items(songs) { song ->
             SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
-            HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFF0F0F0), modifier = Modifier.padding(start = 80.dp))
         }
         if (isLoading) {
             item {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary, modifier = Modifier.size(32.dp))
+                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
                 }
             }
         }

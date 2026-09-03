@@ -1,7 +1,6 @@
 package com.qqt.music.ui.screens.playlist
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
@@ -15,12 +14,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.WarmBackground
 
 @Composable
 fun PlaylistScreen(viewModel: PlaylistViewModel = viewModel()) {
@@ -41,15 +44,15 @@ fun PlaylistScreen(viewModel: PlaylistViewModel = viewModel()) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         state = gridState,
-        contentPadding = PaddingValues(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF5F5F5)),
+        contentPadding = PaddingValues(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize().background(WarmBackground),
     ) {
         items(playlists) { playlist ->
             Card(
-                shape = RoundedCornerShape(8.dp),
-                elevation = CardDefaults.cardElevation(2.dp),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
             ) {
                 Column {
@@ -57,7 +60,8 @@ fun PlaylistScreen(viewModel: PlaylistViewModel = viewModel()) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f)
-                            .background(Color(0xFFEEEEEE)),
+                            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                            .background(PlaceholderBg),
                         contentAlignment = Alignment.Center,
                     ) {
                         AsyncImage(
@@ -68,20 +72,22 @@ fun PlaylistScreen(viewModel: PlaylistViewModel = viewModel()) {
                         )
                         Box(
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(42.dp)
                                 .clip(CircleShape)
-                                .background(OrangePrimary),
+                                .background(Color.White.copy(alpha = 0.92f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                            Icon(Icons.Default.PlayArrow, null, tint = BrandOrange, modifier = Modifier.size(24.dp))
                         }
                     }
                     Text(
                         text = playlist.name,
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = InkPrimary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     )
                 }
             }
@@ -89,7 +95,7 @@ fun PlaylistScreen(viewModel: PlaylistViewModel = viewModel()) {
         if (isLoading) {
             item(span = { GridItemSpan(2) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary, modifier = Modifier.size(32.dp))
+                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
                 }
             }
         }

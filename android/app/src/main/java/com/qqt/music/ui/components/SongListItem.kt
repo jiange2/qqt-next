@@ -14,7 +14,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -30,7 +31,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Song
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkFaint
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.InkSecondary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.StarGold
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlin.math.PI
 import kotlin.math.sin
@@ -50,15 +56,15 @@ fun SongListItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Thumbnail (with playing overlay for the current song)
         Box(
             modifier = Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFFEEEEEE)),
+                .size(54.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(PlaceholderBg),
         ) {
             AsyncImage(
                 model = song.thumbnailSmall.ifBlank { song.thumbnailBig },
@@ -71,9 +77,9 @@ fun SongListItem(
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(OrangePrimary),
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BrandOrange),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (isPlaying) {
@@ -88,59 +94,64 @@ fun SongListItem(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = song.title,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isCurrent) BrandOrange else InkPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.height(1.dp))
             Text(
                 text = song.artist.ifBlank { song.categoryName.ifBlank { "佚名" } },
                 fontSize = 12.sp,
-                color = Color.Gray,
+                color = InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(5.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Star rating
                 val avg = song.rateAvg.toFloatOrNull() ?: 0f
                 repeat(5) { i ->
                     Icon(
-                        imageVector = if (i < avg) Icons.Default.Star else Icons.Default.StarBorder,
+                        imageVector = Icons.Default.Star,
                         contentDescription = null,
-                        tint = if (i < avg) Color(0xFFFFB300) else Color(0xFFCCCCCC),
-                        modifier = Modifier.size(12.dp),
+                        tint = if (i < avg) StarGold else Color(0xFFE8E2DB),
+                        modifier = Modifier.size(11.dp),
                     )
                 }
-                Spacer(Modifier.width(6.dp))
-                // Rating count badge
-                Surface(
-                    color = Color(0xFF4CAF50),
-                    shape = RoundedCornerShape(3.dp),
-                ) {
-                    Text(
-                        text = formatCount(song.totalRate),
-                        fontSize = 10.sp,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(5.dp))
                 Text(
-                    text = "👁 ${formatCount(song.totalViews)}",
+                    text = formatCount(song.totalRate),
                     fontSize = 11.sp,
-                    color = Color.Gray,
+                    color = InkFaint,
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(10.dp))
+                Icon(
+                    Icons.Outlined.Visibility, contentDescription = null,
+                    tint = InkFaint, modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(3.dp))
                 Text(
-                    text = "⬇ ${formatCount(song.totalDownload)}",
+                    text = formatCount(song.totalViews),
                     fontSize = 11.sp,
-                    color = OrangePrimary.copy(alpha = 0.8f),
+                    color = InkSecondary,
+                )
+                Spacer(Modifier.width(10.dp))
+                Icon(
+                    Icons.Outlined.FileDownload, contentDescription = null,
+                    tint = InkFaint, modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(3.dp))
+                Text(
+                    text = formatCount(song.totalDownload),
+                    fontSize = 11.sp,
+                    color = InkSecondary,
                 )
             }
         }
         IconButton(onClick = onMoreClick, modifier = Modifier.size(32.dp)) {
-            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color.Gray, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = InkFaint, modifier = Modifier.size(20.dp))
         }
     }
 }

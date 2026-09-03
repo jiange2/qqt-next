@@ -22,6 +22,7 @@ export const router = createRouter({
         { path: "suggestions", component: () => import("./views/Suggestions.vue") },
         { path: "notifications", component: () => import("./views/Notifications.vue") },
         { path: "settings", component: () => import("./views/Settings.vue") },
+        { path: "oss", component: () => import("./views/Oss.vue") },
       ],
     },
   ],

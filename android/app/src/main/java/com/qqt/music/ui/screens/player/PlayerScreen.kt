@@ -1,7 +1,8 @@
 package com.qqt.music.ui.screens.player
 
+import android.app.Activity
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,17 +20,34 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.BrandOrangeDeep
+import com.qqt.music.ui.theme.PlayerBgBottom
+import com.qqt.music.ui.theme.PlayerBgTop
+import com.qqt.music.ui.theme.PlayerOnDark
+import com.qqt.music.ui.theme.PlayerOnDarkFaint
+import com.qqt.music.ui.theme.PlayerOnDarkSub
+import com.qqt.music.ui.theme.PlayerTrack
+import com.qqt.music.ui.theme.brandBrush
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlin.math.abs
 
+/**
+ * 全屏播放器：深色沉浸氛围（暖黑渐变），黑胶唱片封面随播放旋转，
+ * 播放键为品牌渐变光晕大圆钮。状态栏图标在进入本页时切换为浅色。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerScreen(
@@ -42,6 +60,18 @@ fun PlayerScreen(
     val duration by playerViewModel.duration.collectAsState()
     var isFavorite by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
+
+    // 深色页面上状态栏图标切为浅色，离开时还原
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        DisposableEffect(Unit) {
+            val window = (view.context as Activity).window
+            val controller = WindowCompat.getInsetsController(window, view)
+            val previous = controller.isAppearanceLightStatusBars
+            controller.isAppearanceLightStatusBars = false
+            onDispose { controller.isAppearanceLightStatusBars = previous }
+        }
+    }
 
     // 旋转动画
     val infiniteTransition = rememberInfiniteTransition(label = "album-rotation")
@@ -58,7 +88,7 @@ fun PlayerScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White),
+            .background(Brush.verticalGradient(listOf(PlayerBgTop, PlayerBgBottom))),
     ) {
         // Top bar with song info
         TopAppBar(
@@ -71,14 +101,14 @@ fun PlayerScreen(
                             text = song.title,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = Color.White,
+                            color = PlayerOnDark,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
                             text = song.artist.ifBlank { "佚名" },
                             fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.8f),
+                            color = PlayerOnDarkSub,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -90,7 +120,7 @@ fun PlayerScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
-                        tint = Color.White,
+                        tint = PlayerOnDark,
                     )
                 }
             },
@@ -99,12 +129,12 @@ fun PlayerScreen(
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "Favorite",
-                        tint = Color.White,
+                        tint = if (isFavorite) BrandOrange else PlayerOnDark,
                     )
                 }
                 Box {
                     IconButton(onClick = { showMenu = !showMenu }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = Color.White)
+                        Icon(Icons.Default.MoreVert, contentDescription = "More", tint = PlayerOnDark)
                     }
                     DropdownMenu(
                         expanded = showMenu,
@@ -126,7 +156,7 @@ fun PlayerScreen(
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = OrangePrimary,
+                containerColor = Color.Transparent,
             ),
         )
 
@@ -137,20 +167,20 @@ fun PlayerScreen(
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
 
-        // Album art with rotation
+        // Album art：黑胶唱片（外圈唱片 + 旋转封面 + 中心纸标签）
         currentSong?.let { song ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 32.dp),
+                    .padding(vertical = 28.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                // Album art - clip to circle
                 Box(
                     modifier = Modifier
                         .size(280.dp)
-                        .border(BorderStroke(4.dp, OrangePrimary), CircleShape)
-                        .clip(CircleShape),
+                        .clip(CircleShape)
+                        .background(Color(0xFF0C0906))
+                        .border(1.dp, Color.White.copy(alpha = 0.10f), CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
@@ -158,9 +188,26 @@ fun PlayerScreen(
                         contentDescription = song.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
+                            .size(238.dp)
                             .rotate(if (isPlaying) rotation else 0f)
-                            .fillMaxSize(),
+                            .clip(CircleShape),
                     )
+                    // 黑胶中心纸标签
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(PlayerBgTop)
+                            .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(BrandOrange),
+                        )
+                    }
                 }
             }
         }
@@ -170,19 +217,21 @@ fun PlayerScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 24.dp),
             ) {
                 Text(
                     text = song.title,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
+                    color = PlayerOnDark,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     text = song.artist.ifBlank { "佚名" },
                     fontSize = 14.sp,
-                    color = Color.Gray,
+                    color = PlayerOnDarkSub,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -194,7 +243,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(top = 16.dp),
+                .padding(top = 12.dp),
         ) {
             Slider(
                 value = if (duration > 0) currentPosition.toFloat() else 0f,
@@ -202,25 +251,26 @@ fun PlayerScreen(
                 valueRange = 0f..maxOf(duration.toFloat(), 1f),
                 modifier = Modifier.fillMaxWidth(),
                 colors = SliderDefaults.colors(
-                    thumbColor = OrangePrimary,
-                    activeTrackColor = OrangePrimary,
+                    thumbColor = BrandOrange,
+                    activeTrackColor = BrandOrange,
+                    inactiveTrackColor = PlayerTrack,
                 ),
             )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .padding(horizontal = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
                     text = formatTime(currentPosition),
                     fontSize = 12.sp,
-                    color = Color.Gray,
+                    color = PlayerOnDarkFaint,
                 )
                 Text(
                     text = formatTime(duration),
                     fontSize = 12.sp,
-                    color = Color.Gray,
+                    color = PlayerOnDarkFaint,
                 )
             }
         }
@@ -230,7 +280,7 @@ fun PlayerScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .padding(top = 24.dp, bottom = 16.dp),
+                .padding(top = 20.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -245,8 +295,8 @@ fun PlayerScreen(
                 Icon(
                     Icons.Default.Shuffle,
                     contentDescription = "Shuffle",
-                    tint = if (isShuffleActive) OrangePrimary else Color(0xFF333333),
-                    modifier = Modifier.size(24.dp),
+                    tint = if (isShuffleActive) BrandOrange else PlayerOnDarkSub,
+                    modifier = Modifier.size(22.dp),
                 )
             }
 
@@ -258,28 +308,32 @@ fun PlayerScreen(
                 Icon(
                     Icons.Default.SkipPrevious,
                     contentDescription = "Previous",
-                    tint = Color(0xFF333333),
-                    modifier = Modifier.size(28.dp),
+                    tint = PlayerOnDark,
+                    modifier = Modifier.size(30.dp),
                 )
             }
 
-            // Play/Pause
-            Surface(
+            // Play/Pause：品牌渐变 + 橙色光晕
+            Box(
                 modifier = Modifier
                     .size(72.dp)
-                    .clip(CircleShape),
-                color = OrangePrimary,
-                shadowElevation = 4.dp,
+                    .shadow(
+                        elevation = 14.dp,
+                        shape = CircleShape,
+                        ambientColor = BrandOrangeDeep.copy(alpha = 0.55f),
+                        spotColor = BrandOrangeDeep.copy(alpha = 0.55f),
+                    )
+                    .clip(CircleShape)
+                    .background(brandBrush())
+                    .clickable { playerViewModel.togglePlayPause() },
+                contentAlignment = Alignment.Center,
             ) {
-                IconButton(
-                    onClick = { playerViewModel.togglePlayPause() },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
+                Crossfade(targetState = isPlaying, label = "playPause") { playing ->
                     Icon(
-                        imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        imageVector = if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = "Play/Pause",
                         tint = Color.White,
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(36.dp),
                     )
                 }
             }
@@ -292,8 +346,8 @@ fun PlayerScreen(
                 Icon(
                     Icons.Default.SkipNext,
                     contentDescription = "Next",
-                    tint = Color(0xFF333333),
-                    modifier = Modifier.size(28.dp),
+                    tint = PlayerOnDark,
+                    modifier = Modifier.size(30.dp),
                 )
             }
 
@@ -309,15 +363,15 @@ fun PlayerScreen(
                 modifier = Modifier.size(48.dp),
             ) {
                 val (icon, color) = when (repeatMode) {
-                    MusicRepeatMode.NONE -> Icons.Default.Repeat to Color(0xFF333333)
-                    MusicRepeatMode.ALL -> Icons.Default.Repeat to OrangePrimary
-                    MusicRepeatMode.ONE -> Icons.Default.RepeatOne to OrangePrimary
+                    MusicRepeatMode.NONE -> Icons.Default.Repeat to PlayerOnDarkSub
+                    MusicRepeatMode.ALL -> Icons.Default.Repeat to BrandOrange
+                    MusicRepeatMode.ONE -> Icons.Default.RepeatOne to BrandOrange
                 }
                 Icon(
                     icon,
                     contentDescription = "Repeat",
                     tint = color,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }
@@ -335,114 +389,44 @@ fun PlayerScreen(
             var volumeLevel by remember { mutableStateOf(80f) }
 
             // Add to playlist
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { }
-                    .padding(8.dp),
-            ) {
-                Icon(
-                    Icons.Default.AddCircle,
-                    contentDescription = "Add to Playlist",
-                    tint = Color(0xFF666666),
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    "播放列表",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+            PlayerActionItem(
+                icon = Icons.Default.AddCircle,
+                label = "播放列表",
+                onClick = {},
+                modifier = Modifier.weight(1f),
+            )
 
             // Share
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { }
-                    .padding(8.dp),
-            ) {
-                Icon(
-                    Icons.Default.Share,
-                    contentDescription = "Share",
-                    tint = Color(0xFF666666),
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    "分享",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+            PlayerActionItem(
+                icon = Icons.Default.Share,
+                label = "分享",
+                onClick = {},
+                modifier = Modifier.weight(1f),
+            )
 
             // Download
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { }
-                    .padding(8.dp),
-            ) {
-                Icon(
-                    Icons.Default.FileDownload,
-                    contentDescription = "Download",
-                    tint = Color(0xFF666666),
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    "下载",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+            PlayerActionItem(
+                icon = Icons.Default.FileDownload,
+                label = "下载",
+                onClick = {},
+                modifier = Modifier.weight(1f),
+            )
 
             // Rate
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { }
-                    .padding(8.dp),
-            ) {
-                Icon(
-                    Icons.Default.Star,
-                    contentDescription = "Rate",
-                    tint = Color(0xFF666666),
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    "评分",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+            PlayerActionItem(
+                icon = Icons.Default.Star,
+                label = "评分",
+                onClick = {},
+                modifier = Modifier.weight(1f),
+            )
 
             // Volume control
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { showVolumeSlider = !showVolumeSlider }
-                    .padding(8.dp),
-            ) {
-                Icon(
-                    Icons.Default.VolumeUp,
-                    contentDescription = "Volume",
-                    tint = Color(0xFF666666),
-                    modifier = Modifier.size(28.dp),
-                )
-                Text(
-                    "音量",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
+            PlayerActionItem(
+                icon = Icons.Default.VolumeUp,
+                label = "音量",
+                onClick = { showVolumeSlider = !showVolumeSlider },
+                modifier = Modifier.weight(1f),
+            )
 
             if (showVolumeSlider) {
                 Slider(
@@ -453,13 +437,43 @@ fun PlayerScreen(
                         .width(100.dp)
                         .padding(8.dp),
                     colors = SliderDefaults.colors(
-                        thumbColor = OrangePrimary,
-                        activeTrackColor = OrangePrimary,
+                        thumbColor = BrandOrange,
+                        activeTrackColor = BrandOrange,
+                        inactiveTrackColor = PlayerTrack,
                     ),
                 )
             }
         }
         }
+    }
+}
+
+@Composable
+private fun PlayerActionItem(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(8.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = PlayerOnDarkSub,
+            modifier = Modifier.size(26.dp),
+        )
+        Text(
+            label,
+            fontSize = 11.sp,
+            color = PlayerOnDarkFaint,
+            modifier = Modifier.padding(top = 5.dp),
+        )
     }
 }
 

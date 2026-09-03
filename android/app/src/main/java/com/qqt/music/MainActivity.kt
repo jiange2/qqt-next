@@ -1,20 +1,28 @@
 package com.qqt.music
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.service.KeepAliveService
 import com.qqt.music.player.MusicPlayerService
+import com.qqt.music.ui.components.AppUpdateDialog
 import com.qqt.music.ui.navigation.AppNavigation
 import com.qqt.music.ui.theme.QQTMusicTheme
+import com.qqt.music.update.AppUpdateChecker
 import com.qqt.music.viewmodel.PlayerViewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -23,6 +31,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private val playerViewModel: PlayerViewModel by viewModels()
+
+    /** 非空时显示更新弹窗 */
+    private var updateResult by mutableStateOf<AppUpdateChecker.Result?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,7 +56,31 @@ class MainActivity : ComponentActivity() {
         setContent {
             QQTMusicTheme {
                 AppNavigation(playerViewModel = playerViewModel)
+
+                updateResult?.let { result ->
+                    AppUpdateDialog(
+                        info = result.info,
+                        forceUpdate = result.forceUpdate,
+                        onUpdate = { openUpdateUrl(result.info.redirectUrl) },
+                        onDismiss = { updateResult = null },
+                    )
+                }
             }
+        }
+
+        // 3. 异步检查 App 更新（失败/已最新时静默跳过；仅本次创建时检查一次）
+        lifecycleScope.launch {
+            updateResult = AppUpdateChecker.check(this@MainActivity)
+        }
+    }
+
+    /** 跳转后台配置的下载地址（appRedirectUrl） */
+    private fun openUpdateUrl(url: String) {
+        if (url.isBlank()) return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Failed to open update url: $url", e)
         }
     }
 

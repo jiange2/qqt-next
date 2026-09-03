@@ -1,16 +1,17 @@
 package com.qqt.music.ui.screens.bannersongs
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.navigation.BannerNav
 import com.qqt.music.viewmodel.PlayerViewModel
@@ -25,9 +26,7 @@ fun BannerSongsScreen(playerViewModel: PlayerViewModel) {
     val banner = BannerNav.banner
 
     if (banner == null || banner.songs.isEmpty()) {
-        Box(Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
-            Text("内容已失效", color = Color.Gray)
-        }
+        EmptyState(icon = Icons.Outlined.BrokenImage, title = "内容已失效")
         return
     }
 
@@ -35,6 +34,7 @@ fun BannerSongsScreen(playerViewModel: PlayerViewModel) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(Color.White),
+        contentPadding = PaddingValues(vertical = 6.dp),
     ) {
         items(songs) { song ->
             SongListItem(
@@ -42,7 +42,6 @@ fun BannerSongsScreen(playerViewModel: PlayerViewModel) {
                 playerViewModel = playerViewModel,
                 onClick = { playerViewModel.playSong(song, songs) },
             )
-            HorizontalDivider(thickness = 0.5.dp, color = Color(0xFFF0F0F0), modifier = Modifier.padding(start = 80.dp))
         }
     }
 }

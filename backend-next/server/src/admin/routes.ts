@@ -1,7 +1,5 @@
 // Admin API —— REST 端点（Q6：内容 CRUD + 设置 + 热门榜 + 用户 + OneSignal 推送）
 // 砍除：Envato 验证、RichFileManager（Q4）；邮件相关全部不设（Q27）
-import crypto from "node:crypto";
-import path from "node:path";
 import bcrypt from "bcryptjs";
 import {
   type FastifyInstance,
@@ -9,12 +7,15 @@ import {
   type FastifyRequest,
 } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../prisma.js";
 import { invalidateSettingsCache } from "../services/settings.js";
-import { saveImage } from "../media/save.js";
+import { resolveName, saveImage } from "../media/save.js";
+import { decryptFilename, nameStem } from "../media/crypt.js";
 import { mediaBase } from "../media/urls.js";
-import { putObject, putStream } from "../media/oss.js";
+import { deleteObject, listObjects, putObject, putStream } from "../media/oss.js";
+import { transferExternalToOss } from "../media/external.js";
 import { requireAdmin, signAdminToken } from "./auth.js";
 
 // ---------------------------------------------------------------- 工具
@@ -52,7 +53,11 @@ type FormData = {
  */
 async function parseForm(
   req: FastifyRequest,
-  streamHandler?: (fieldname: string, part: MultipartFile) => Promise<string | null>,
+  opts: {
+    streamHandler?: (fieldname: string, part: MultipartFile) => Promise<string | null>;
+    /** 图片固定标签：传给 resolveName 生成 rand_<label><ext>；不传则保留原名 */
+    imageLabel?: string;
+  } = {},
 ): Promise<FormData> {
   const fields: Record<string, string> = {};
   const saved: Record<string, string> = {};
@@ -60,8 +65,8 @@ async function parseForm(
 
   for await (const part of req.parts()) {
     if (part.type === "file") {
-      if (streamHandler) {
-        const name = await streamHandler(part.fieldname, part);
+      if (opts.streamHandler) {
+        const name = await opts.streamHandler(part.fieldname, part);
         if (name) {
           saved[part.fieldname] = name;
           continue;
@@ -79,25 +84,58 @@ async function parseForm(
     }
     saved[fieldname] = fieldname === "lrc_file" || fieldname === "lrc"
       ? await saveTextFile(f.buffer, f.name)
-      : await saveImage(f.buffer, f.name);
+      : await saveImage(f.buffer, f.name, 80, opts.imageLabel);
   }
   return { fields, saved };
 }
 
-/** 小文本文件（lrc）上传到 OSS（key = lrc/<name>） */
+/** LRC 文本上传 OSS（key = lrc/<rand>_lrc.<ext>；旧逻辑误用缩略图标签 _mp3_thumb，已修正） */
 async function saveTextFile(buffer: Buffer, originalName: string): Promise<string> {
-  const ext = path.extname(originalName).toLowerCase() || ".lrc";
-  const name = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+  const name = await resolveName("lrc", originalName, "lrc");
   await putObject(`lrc/${name}`, buffer);
   return name;
 }
 
-/** 音频流式直传 OSS（ADR 0004；Q19：≤500MB，limits 由 app 层 multipart 配置控制） */
+/** 音频流式直传 OSS（ADR 0004；Q19：≤500MB；key = uploads/<rand>_原名） */
 async function saveAudioStream(part: MultipartFile): Promise<string> {
-  const ext = path.extname(part.filename || "").toLowerCase() || ".mp3";
-  const name = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}${ext}`;
+  const name = await resolveName("uploads", part.filename || "");
   await putStream(`uploads/${name}`, part.file);
   return name;
+}
+
+/**
+ * 图片类字段取值：新上传文件优先，其次接受绑定已有 OSS key 的文本字段 image。
+ * 分类/艺术家/专辑/横幅/播放列表共用；歌曲的 thumbnail/lrc_url/audio_url 原生支持文本回填。
+ */
+function boundImage(saved: Record<string, string>, fields: Record<string, string>): string | undefined {
+  return saved["image"] ?? (str(fields["image"]) || undefined);
+}
+
+/**
+ * upsert 分流 id：PUT /:id 路由以 URL 参数为权威（编辑必须命中既有记录，杜绝"编辑变新增"），
+ * POST 无路由参数则回落表单字段 id。URL 参数存在但非法时返回 null，由调用方拒绝。
+ */
+function upsertId(req: FastifyRequest, fields: Record<string, string>): number | null {
+  const param = (req.params as { id?: string }).id;
+  if (param === undefined) return intOr(fields["id"], 0);
+  const n = intOr(param, 0);
+  return n > 0 ? n : null;
+}
+
+/** 专辑在分类内的维度顺序插入最前（backend-next ADR 0009，与歌曲维度顺序范式对称） */
+async function nextAlbumCategorySort(categoryId: number): Promise<number> {
+  const agg = await prisma.album.aggregate({ where: { categoryId }, _min: { categorySort: true } });
+  return (agg._min.categorySort ?? 0) - 1;
+}
+
+/** 维度顺序插入最前（backend-next ADR 0007，用户修订）：新归属写入 min(sort)-1，排在最前（新歌在前） */
+async function nextDimensionSort(kind: "category" | "album", refId: number): Promise<number> {
+  if (kind === "category") {
+    const agg = await prisma.song.aggregate({ where: { categoryId: refId }, _min: { categorySort: true } });
+    return (agg._min.categorySort ?? 0) - 1;
+  }
+  const agg = await prisma.song.aggregate({ where: { albumId: refId }, _min: { albumSort: true } });
+  return (agg._min.albumSort ?? 0) - 1;
 }
 
 // ---------------------------------------------------------------- 登录 / 账户
@@ -145,15 +183,16 @@ async function changePassword(req: FastifyRequest, reply: FastifyReply): Promise
 // ---------------------------------------------------------------- 分类 / 艺术家
 
 async function upsertCategory(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { fields, saved } = await parseForm(req);
+  const { fields, saved } = await parseForm(req, { imageLabel: "category" });
   const name = str(fields["name"]);
   if (!name) return void bad(reply, "name required");
   const data = {
     name,
     status: fields["status"] !== "0" && fields["status"] !== "false",
-    ...(saved["image"] ? { image: saved["image"] } : {}),
+    ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
-  const id = intOr(fields["id"], 0);
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
   reply.send(
     id > 0
       ? await prisma.category.update({ where: { id }, data })
@@ -162,11 +201,12 @@ async function upsertCategory(req: FastifyRequest, reply: FastifyReply): Promise
 }
 
 async function upsertArtist(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { fields, saved } = await parseForm(req);
+  const { fields, saved } = await parseForm(req, { imageLabel: "artist" });
   const name = str(fields["name"]);
   if (!name) return void bad(reply, "name required");
-  const data = { name, ...(saved["image"] ? { image: saved["image"] } : {}) };
-  const id = intOr(fields["id"], 0);
+  const data = { name, ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}) };
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
   reply.send(
     id > 0
       ? await prisma.artist.update({ where: { id }, data })
@@ -177,9 +217,15 @@ async function upsertArtist(req: FastifyRequest, reply: FastifyReply): Promise<v
 // ---------------------------------------------------------------- 专辑
 
 async function upsertAlbum(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { fields, saved } = await parseForm(req);
+  const { fields, saved } = await parseForm(req, { imageLabel: "album" });
   const name = str(fields["name"]);
   if (!name) return void bad(reply, "name required");
+  // 分类可空（backend-next ADR 0009）：category_id 为 0/缺省表示未分类专辑
+  const categoryRaw = intOr(fields["category_id"], 0);
+  if (categoryRaw > 0 && !(await prisma.category.findUnique({ where: { id: categoryRaw } }))) {
+    return void bad(reply, "category not found");
+  }
+  const categoryId = categoryRaw > 0 ? categoryRaw : null;
   const artistIds = parseIds(str(fields["artist_ids"]));
   for (const artistId of artistIds) {
     if (!(await prisma.artist.findUnique({ where: { id: artistId } }))) {
@@ -188,13 +234,24 @@ async function upsertAlbum(req: FastifyRequest, reply: FastifyReply): Promise<vo
   }
   const data = {
     name,
+    categoryId,
     status: fields["status"] !== "0" && fields["status"] !== "false",
-    ...(saved["image"] ? { image: saved["image"] } : {}),
+    ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
-  const id = intOr(fields["id"], 0);
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
+  // 维度顺序（ADR 0009）：新建/换分类时插入最前（min(sort)-1），移入未分类归零；未变动保留原序
+  const existing = id > 0 ? await prisma.album.findUnique({ where: { id } }) : null;
+  const categoryChanged = !!existing && existing.categoryId !== categoryId;
+  const categorySort = categoryId ? await nextAlbumCategorySort(categoryId) : 0;
   const album = id > 0
-    ? await prisma.album.update({ where: { id }, data })
-    : await prisma.album.create({ data: { ...data, image: data.image ?? "" } });
+    ? await prisma.album.update({
+        where: { id },
+        data: { ...data, ...(categoryChanged ? { categorySort } : {}) },
+      })
+    : await prisma.album.create({
+        data: { ...data, image: data.image ?? "", ...(categoryId ? { categorySort } : {}) },
+      });
 
   if (fields["artist_ids"] !== undefined) {
     await prisma.albumArtist.deleteMany({ where: { albumId: album.id } });
@@ -207,29 +264,34 @@ async function upsertAlbum(req: FastifyRequest, reply: FastifyReply): Promise<vo
 
 // ---------------------------------------------------------------- 歌曲
 
-const songTypes = new Set(["local", "youtube", "external"]);
+const songTypes = new Set(["local", "external"]);
 
 async function upsertSong(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   let form: FormData;
   try {
-    form = await parseForm(req, (fieldname, part) =>
-      fieldname === "audio" ? saveAudioStream(part) : Promise.resolve(null),
-    );
+    form = await parseForm(req, {
+      streamHandler: (fieldname, part) =>
+        fieldname === "audio" ? saveAudioStream(part) : Promise.resolve(null),
+      imageLabel: "mp3_thumb", // 歌曲缩略图沿用旧逻辑固定标签
+    });
   } catch (e) {
     return void bad(reply, e instanceof Error ? e.message : "upload failed");
   }
   const { fields, saved } = form;
 
   const type = str(fields["type"]) || "local";
-  if (!songTypes.has(type)) return void bad(reply, "type must be local | youtube | external");
-  const categoryId = intOr(fields["category_id"], 0);
-  if (!(await prisma.category.findUnique({ where: { id: categoryId } }))) {
+  if (!songTypes.has(type)) return void bad(reply, "type must be local | external");
+  // 分类可空（backend-next ADR 0007）：category_id 为 0/缺省表示未分类； album 须先有分类
+  const categoryRaw = intOr(fields["category_id"], 0);
+  if (categoryRaw > 0 && !(await prisma.category.findUnique({ where: { id: categoryRaw } }))) {
     return void bad(reply, "category not found");
   }
+  const categoryId = categoryRaw > 0 ? categoryRaw : null;
   const title = str(fields["title"]);
   if (!title) return void bad(reply, "title required");
 
   const albumRaw = intOr(fields["album_id"], 0);
+  // ADR 0007「先有分类才能进专辑」约束已废弃（ADR 0009）：歌曲可见性由专辑归属链推导
   const albumId =
     albumRaw > 0 && (await prisma.album.findUnique({ where: { id: albumRaw } })) ? albumRaw : null;
 
@@ -240,25 +302,47 @@ async function upsertSong(req: FastifyRequest, reply: FastifyReply): Promise<voi
     }
   }
 
-  const data = {
+  // local 用上传文件名，external 用地址字段；编辑时留空则保留原值（不覆盖为空）
+  const audioUrl =
+    type === "local" ? saved["audio"] ?? str(fields["audio_url"]) : str(fields["audio_url"]);
+  const thumbnail = saved["thumbnail"] ?? (str(fields["thumbnail"]) || undefined);
+  const lrcUrl = saved["lrc"] ?? (fields["lrc_url"] ? str(fields["lrc_url"]) : undefined);
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
+  if (!audioUrl && id <= 0) return void bad(reply, "audio file or audio_url required");
+
+  // 维度顺序（ADR 0007）：新建/换归属时追加到该维度末尾，未变动则保留原序
+  const existing = id > 0 ? await prisma.song.findUnique({ where: { id } }) : null;
+  const categoryChanged = !!existing && existing.categoryId !== categoryId;
+  const albumChanged = !!existing && existing.albumId !== albumId;
+  const categorySort = categoryId ? await nextDimensionSort("category", categoryId) : 0;
+  const albumSort = albumId ? await nextDimensionSort("album", albumId) : 0;
+
+  const common = {
     categoryId,
     albumId,
     type,
     title,
-    // local 用上传文件名；youtube/external 用地址字段
-    audioUrl: type === "local" ? saved["audio"] ?? str(fields["audio_url"]) : str(fields["audio_url"]),
-    thumbnail: saved["thumbnail"] ?? str(fields["thumbnail"]),
     description: fields["description"] ?? "",
     lrcText: fields["lrc_text"] ? str(fields["lrc_text"]) : null,
-    lrcUrl: saved["lrc"] ?? (fields["lrc_url"] ? str(fields["lrc_url"]) : null),
     status: fields["status"] !== "0" && fields["status"] !== "false",
   };
-  if (type === "local" && !data.audioUrl) return void bad(reply, "audio file or audio_url required");
-
-  const id = intOr(fields["id"], 0);
-  const song = id > 0
-    ? await prisma.song.update({ where: { id }, data })
-    : await prisma.song.create({ data });
+  // 编辑：留空的文件字段不进 data（Prisma 忽略 undefined，保留原值）；新建：audioUrl 必填、thumbnail 落空串（列无默认值）
+  const song = existing
+    ? await prisma.song.update({
+        where: { id },
+        data: {
+          ...common,
+          ...(audioUrl ? { audioUrl } : {}),
+          ...(thumbnail ? { thumbnail } : {}),
+          ...(lrcUrl ? { lrcUrl } : {}),
+          ...(categoryChanged ? { categorySort } : {}),
+          ...(albumChanged ? { albumSort } : {}),
+        },
+      })
+    : await prisma.song.create({
+        data: { ...common, audioUrl: audioUrl || "", thumbnail: thumbnail ?? "", ...(lrcUrl ? { lrcUrl } : {}) },
+      });
 
   if (fields["artist_ids"] !== undefined) {
     await prisma.songArtist.deleteMany({ where: { songId: song.id } });
@@ -267,6 +351,258 @@ async function upsertSong(req: FastifyRequest, reply: FastifyReply): Promise<voi
     });
   }
   reply.send(song);
+}
+
+// ---------------------------------------------------------------- 歌曲批量操作
+
+// 传什么改什么；thumbnail 为共享引用语义（多首歌指向同一 media key，不复制文件）
+const songBatchSchema = z.object({
+  ids: z.array(z.number().int().positive()).min(1),
+  thumbnail: z.string().min(1).optional(),
+  categoryId: z.number().int().nullable().optional(),
+  albumId: z.number().int().nullable().optional(),
+});
+
+async function batchSong(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const parsed = songBatchSchema.safeParse(req.body);
+  if (!parsed.success) return void bad(reply, "ids required; thumbnail/categoryId optional");
+  const { ids, thumbnail, categoryId, albumId } = parsed.data;
+  if (thumbnail === undefined && categoryId === undefined && albumId === undefined) {
+    return void bad(reply, "nothing to update");
+  }
+  // ADR 0007「专辑歌曲须先有分类」约束已废弃（ADR 0009），仅保留存在性校验
+  if (categoryId !== undefined && categoryId !== null && !(await prisma.category.findUnique({ where: { id: categoryId } }))) {
+    return void bad(reply, "category not found");
+  }
+  if (albumId != null && !(await prisma.album.findUnique({ where: { id: albumId } }))) {
+    return void bad(reply, "album not found");
+  }
+  const data: Prisma.SongUncheckedUpdateManyInput = {};
+  if (thumbnail !== undefined) data.thumbnail = thumbnail;
+  if (categoryId !== undefined) {
+    data.categoryId = categoryId;
+    // 换分类插入最前（与单首编辑一致，ADR 0007，用户修订：min(sort)-1）；移入未分类时归零。同一 sort 值由 id 兜底保持相对顺序
+    data.categorySort = categoryId === null ? 0 : await nextDimensionSort("category", categoryId);
+  }
+  if (albumId !== undefined) {
+    data.albumId = albumId;
+    // 同分类：换专辑插入最前（min(sort)-1）；移出专辑时归零
+    data.albumSort = albumId === null ? 0 : await nextDimensionSort("album", albumId);
+  }
+  const r = await prisma.song.updateMany({ where: { id: { in: ids } }, data });
+  reply.send({ count: r.count });
+}
+
+// ---------------------------------------------------------------- 维度顺序（backend-next ADR 0007）
+
+/**
+ * 分类/专辑两维度共用的歌曲管理端点：列表（按维度顺序）、拖拽排序、认领孤儿、移除。
+ * 维度顺序存于 Song.category_sort / album_sort，展示按 sort ASC, id ASC 兜底。
+ */
+function registerDimensionSongs(app: FastifyInstance, key: "categories" | "albums"): void {
+  const fk = key === "categories" ? ("categoryId" as const) : ("albumId" as const);
+  const sortKey = key === "categories" ? ("categorySort" as const) : ("albumSort" as const);
+  const label = key === "categories" ? "分类" : "专辑";
+  const base = `/admin/${key}/:id/songs`;
+  const songSelect = {
+    id: true, title: true, thumbnail: true, type: true, status: true,
+    totalViews: true, album: { select: { id: true, name: true } },
+  } as const satisfies Prisma.SongSelect;
+
+  app.get(base, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const items = await prisma.song.findMany({
+      where: { [fk]: parentId } as Prisma.SongWhereInput,
+      // sort ASC 展示；id DESC 兕底：未手动排序过的存量歌新歌在前
+      orderBy: [{ [sortKey]: "asc" }, { id: "desc" }] as Prisma.SongOrderByWithRelationInput[],
+      select: songSelect,
+    });
+    reply.send({ items });
+  });
+
+  // 候选列表：分类认领只列未分类歌曲；专辑认领只列无专辑且有分类的歌曲（先有分类才能进专辑）
+  app.get(`${base}/available`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const { page, size, skip } = paging(req);
+    const keyword = str((req.query as Record<string, string | undefined>)["keyword"] ?? "");
+    const where: Prisma.SongWhereInput = {
+      ...(keyword ? { title: { contains: keyword } } : {}),
+      ...({ [fk]: null } as Prisma.SongWhereInput),
+      ...(key === "albums" ? ({ categoryId: { not: null } } as Prisma.SongWhereInput) : {}),
+    };
+    const [total, items] = await Promise.all([
+      prisma.song.count({ where }),
+      prisma.song.findMany({ where, orderBy: { id: "desc" }, take: size, skip, select: songSelect }),
+    ]);
+    reply.send({ items, total, page, size });
+  });
+
+  app.put(`${base}/order`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const results = await prisma.$transaction(
+      parsed.data.ids.map((songId, index) =>
+        prisma.song.updateMany({
+          where: { id: songId, [fk]: parentId } as Prisma.SongWhereInput,
+          data: { [sortKey]: index },
+        }),
+      ),
+    );
+    if (results.some((r) => r.count === 0)) return void bad(reply, `存在不属于该${label}的歌曲`);
+    reply.send({ ok: true });
+  });
+
+  // 认领：把孤儿歌曲批量加入当前维度，插入最前（新歌在前）
+  app.post(base, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const orphans = await prisma.song.findMany({
+      where: {
+        id: { in: parsed.data.ids },
+        ...({ [fk]: null } as Prisma.SongWhereInput),
+        ...(key === "albums" ? ({ categoryId: { not: null } } as Prisma.SongWhereInput) : {}),
+      } as Prisma.SongWhereInput,
+      select: { id: true },
+    });
+    if (orphans.length !== parsed.data.ids.length) {
+      return void bad(reply, `部分歌曲不满足认领条件（须未归属${label}${key === "albums" ? "且已有分类" : ""}）`);
+    }
+    const maxAgg = await prisma.song.aggregate({
+      where: { [fk]: parentId } as Prisma.SongWhereInput,
+      _min: { [sortKey]: true } as never,
+    });
+    const baseSort = ((maxAgg._min as Record<string, number | null>)[sortKey] ?? 0) - 1;
+    await prisma.$transaction(
+      orphans.map((s, index) =>
+        prisma.song.update({
+          where: { id: s.id },
+          data: { [fk]: parentId, [sortKey]: baseSort + 1 + index } as Prisma.SongUpdateInput,
+        }),
+      ),
+    );
+    reply.send({ ok: true });
+  });
+
+  // 移除：置空归属（歌曲不删除），顺序值归零待下次认领重排
+  app.delete(`${base}/:songId`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    const songId = intOr((req.params as { songId: string }).songId, 0);
+    if (parentId <= 0 || songId <= 0) return void bad(reply, "invalid id");
+    const r = await prisma.song.updateMany({
+      where: { id: songId, [fk]: parentId } as Prisma.SongWhereInput,
+      data: { [fk]: null, [sortKey]: 0 } as Prisma.SongUncheckedUpdateInput,
+    });
+    if (r.count === 0) return void bad(reply, `歌曲不属于该${label}`);
+    reply.send({ ok: true });
+  });
+}
+
+// ---------------------------------------------------------------- 分类内专辑（backend-next ADR 0009）
+
+/** 分类维度专辑管理端点：列表（维度顺序）、未分类专辑认领、拖拽排序、移出分类。与歌曲维度端点范式对称 */
+function registerCategoryAlbums(app: FastifyInstance): void {
+  const base = "/admin/categories/:id/albums";
+  const albumSelect = {
+    id: true,
+    name: true,
+    image: true,
+    status: true,
+    _count: { select: { songs: true } },
+  } as const satisfies Prisma.AlbumSelect;
+
+  app.get(base, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const items = await prisma.album.findMany({
+      where: { categoryId: parentId },
+      // 维度顺序：sort ASC 展示；id DESC 兕底（未手动排序的存量专辑新专辑在前）
+      orderBy: [{ categorySort: "asc" }, { id: "desc" }] as Prisma.AlbumOrderByWithRelationInput[],
+      select: albumSelect,
+    });
+    reply.send({ items });
+  });
+
+  // 候选列表：认领只列未分类专辑
+  app.get(`${base}/available`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const { page, size, skip } = paging(req);
+    const keyword = str((req.query as Record<string, string | undefined>)["keyword"] ?? "");
+    const where: Prisma.AlbumWhereInput = {
+      ...(keyword ? { name: { contains: keyword } } : {}),
+      categoryId: null,
+    };
+    const [total, items] = await Promise.all([
+      prisma.album.count({ where }),
+      prisma.album.findMany({ where, orderBy: { id: "desc" }, take: size, skip, select: albumSelect }),
+    ]);
+    reply.send({ items, total, page, size });
+  });
+
+  app.put(`${base}/order`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const results = await prisma.$transaction(
+      parsed.data.ids.map((albumId, index) =>
+        prisma.album.updateMany({
+          where: { id: albumId, categoryId: parentId },
+          data: { categorySort: index },
+        }),
+      ),
+    );
+    if (results.some((r) => r.count === 0)) return void bad(reply, "存在不属于该分类的专辑");
+    reply.send({ ok: true });
+  });
+
+  // 认领：把未分类专辑批量加入当前分类，插入最前（新专辑在前）
+  app.post(base, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const orphans = await prisma.album.findMany({
+      where: { id: { in: parsed.data.ids }, categoryId: null },
+      select: { id: true },
+    });
+    if (orphans.length !== parsed.data.ids.length) {
+      return void bad(reply, "部分专辑不满足认领条件（须未分类）");
+    }
+    const minAgg = await prisma.album.aggregate({
+      where: { categoryId: parentId },
+      _min: { categorySort: true },
+    });
+    const baseSort = (minAgg._min?.categorySort ?? 0) - 1;
+    await prisma.$transaction(
+      orphans.map((a, index) =>
+        prisma.album.update({
+          where: { id: a.id },
+          data: { categoryId: parentId, categorySort: baseSort + 1 + index },
+        }),
+      ),
+    );
+    reply.send({ ok: true });
+  });
+
+  // 移出分类：置空归属（专辑不删除），顺序值归零待下次认领重排
+  app.delete(`${base}/:albumId`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    const albumId = intOr((req.params as { albumId: string }).albumId, 0);
+    if (parentId <= 0 || albumId <= 0) return void bad(reply, "invalid id");
+    const r = await prisma.album.updateMany({
+      where: { id: albumId, categoryId: parentId },
+      data: { categoryId: null, categorySort: 0 },
+    });
+    if (r.count === 0) return void bad(reply, "专辑不属于该分类");
+    reply.send({ ok: true });
+  });
 }
 
 // ---------------------------------------------------------------- 横幅 / 播放列表
@@ -286,9 +622,10 @@ async function upsertBanner(req: FastifyRequest, reply: FastifyReply): Promise<v
     sortInfo: fields["sort_info"] ?? "",
     link: fields["link"] ? str(fields["link"]) : null,
     status: fields["status"] !== "0" && fields["status"] !== "false",
-    ...(saved["image"] ? { image: saved["image"] } : {}),
+    ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
-  const id = intOr(fields["id"], 0);
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
   const banner = id > 0
     ? await prisma.banner.update({ where: { id }, data })
     : await prisma.banner.create({ data: { ...data, image: data.image ?? "" } });
@@ -310,9 +647,10 @@ async function upsertPlaylist(req: FastifyRequest, reply: FastifyReply): Promise
   const data = {
     name,
     status: fields["status"] !== "0" && fields["status"] !== "false",
-    ...(saved["image"] ? { image: saved["image"] } : {}),
+    ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
-  const id = intOr(fields["id"], 0);
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
   const playlist = id > 0
     ? await prisma.playlist.update({ where: { id }, data })
     : await prisma.playlist.create({ data: { ...data, image: data.image ?? "" } });
@@ -460,6 +798,10 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     async handler(req, reply) {
       const { id } = req.params as { id: string };
       const idNum = Number.parseInt(id, 10);
+      // ADR 0009：分类下仍有专辑即阻止删除（原为“仍有歌曲”）
+      const albumCount = await prisma.album.count({ where: { categoryId: idNum } });
+      if (albumCount > 0) return void bad(reply, `Category has ${albumCount} albums`);
+      // 过渡期保留（二期随 Song.categoryId 拆除）：存量歌曲仍挂分类且 FK 为 RESTRICT，避免直接 500
       const songCount = await prisma.song.count({ where: { categoryId: idNum } });
       if (songCount > 0) return void bad(reply, `Category has ${songCount} songs`);
       await prisma.category.delete({ where: { id: idNum } });
@@ -497,15 +839,27 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: requireAdmin },
     async (req, reply) => {
       const { page, size, skip } = paging(req);
-      const where = {};
+      // category_id=0 表示未分类专辑（backend-next ADR 0009，与歌曲过滤哨兵对称）
+      const q = req.query as Record<string, string | undefined>;
+      const catRaw = q["category_id"];
+      const catFilter =
+        catRaw == null || catRaw === ""
+          ? {}
+          : catRaw === "0"
+            ? { categoryId: null }
+            : { categoryId: intOr(catRaw, 0) };
       const [total, items] = await Promise.all([
-        prisma.album.count({ where }),
+        prisma.album.count({ where: catFilter }),
         prisma.album.findMany({
-          where,
+          where: catFilter,
           orderBy: { id: "desc" },
           take: size,
           skip,
-          include: { artists: { orderBy: { sort: "asc" } } },
+          include: {
+            artists: { orderBy: { sort: "asc" } },
+            category: { select: { id: true, name: true } },
+            _count: { select: { songs: true } },
+          },
         }),
       ]);
       reply.send({ items, total, page, size });
@@ -529,9 +883,26 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       const { page, size, skip } = paging(req);
       const q = req.query as Record<string, string | undefined>;
       const keyword = str(q["keyword"] ?? "");
+      // category_id=0 表示未分类（backend-next ADR 0007）
+      const catRaw = q["category_id"];
+      const catFilter =
+        catRaw == null || catRaw === ""
+          ? {}
+          : catRaw === "0"
+            ? { categoryId: null }
+            : { categoryId: intOr(catRaw, 0) };
+      // album_id=0 表示未归专辑（与 category_id=0 对称）
+      const albRaw = q["album_id"];
+      const albFilter =
+        albRaw == null || albRaw === ""
+          ? {}
+          : albRaw === "0"
+            ? { albumId: null }
+            : { albumId: intOr(albRaw, 0) };
       const where = {
         ...(keyword ? { title: { contains: keyword } } : {}),
-        ...(q["category_id"] ? { categoryId: Number.parseInt(q["category_id"]!, 10) } : {}),
+        ...catFilter,
+        ...albFilter,
       };
       const [total, items] = await Promise.all([
         prisma.song.count({ where }),
@@ -552,6 +923,22 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   );
   app.post("/admin/songs", { preHandler: requireAdmin }, upsertSong);
   app.put("/admin/songs/:id", { preHandler: requireAdmin }, upsertSong);
+  // 批量操作：多选歌曲统一绑定封面（共享 media key）或修改分类
+  app.patch("/admin/songs/batch", { preHandler: requireAdmin }, batchSong);
+  // 外链转入 OSS（ADR 0006）：单首端点；列表多选批量由前端逐首调用驱动（进度可见、失败隔离）
+  app.post(
+    "/admin/songs/:id/to-oss",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const song = await prisma.song.findUnique({ where: { id: Number.parseInt(id, 10) } });
+      if (!song) return void reply.code(404).send({ error: "song not found" });
+      if (song.type !== "external") return void bad(reply, "仅 external 歌曲可转入 OSS");
+      const r = await transferExternalToOss(song.audioUrl, song.title);
+      if (!r.ok) return void reply.code(502).send({ error: r.error });
+      reply.send(await prisma.song.update({ where: { id: song.id }, data: { type: "local", audioUrl: r.name } }));
+    },
+  );
   app.delete("/admin/songs/:id", {
     preHandler: requireAdmin,
     async handler(req, reply) {
@@ -560,6 +947,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       reply.send({ ok: true });
     },
   });
+  // 专辑维度歌曲端点（backend-next ADR 0007）；分类维度已改专辑（ADR 0009）
+  registerDimensionSongs(app, "albums");
+  registerCategoryAlbums(app);
 
   app.get(
     "/admin/banners",
@@ -716,6 +1106,96 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       await prisma.songSuggest.delete({ where: { id: Number.parseInt(id, 10) } });
       reply.send({ ok: true });
     },
+  });
+
+  // OSS 管理（面板直管对象）；目录白名单与媒体目录约定一致（uploads/ images/ lrc/，ADR 0004）
+  const ossDirs = new Set(["uploads", "images", "lrc"]);
+  const ossPrefixes = new Set(["", "uploads", "images", "images/thumbs", "lrc"]);
+
+  // 全量列举 + 服务端解密原名（ADR 0008）；keyword 过滤与分页均在前端做
+  app.get(
+    "/admin/oss/objects",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const q = req.query as Record<string, string | undefined>;
+      const prefix = str(q["prefix"] ?? "uploads").replace(/\/+$/, "");
+      if (!ossPrefixes.has(prefix)) return void bad(reply, "invalid prefix");
+      const { items, truncated } = await listObjects({
+        prefix: prefix ? `${prefix}/` : undefined,
+      });
+      reply.send({ items, truncated });
+    },
+  );
+
+  // 单条解密：编辑表单绑定值显示原名用（ADR 0008）；name 为文件名尾段，解不开返回空对象由前端回退
+  app.get("/admin/oss/decode", { preHandler: requireAdmin }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const filename = str(q["name"] ?? "");
+    const original = filename ? decryptFilename(nameStem(filename)) : null;
+    reply.send(original ? { originalName: original } : {});
+  });
+
+  // 直传到指定目录：uploads 走流式（大文件），images 复用 saveImage（同时出缩略图），lrc 存文本
+  app.post("/admin/oss/upload", { preHandler: requireAdmin }, async (req, reply) => {
+    const dir = str((req.query as Record<string, string | undefined>)["dir"] ?? "");
+    if (!ossDirs.has(dir)) return void bad(reply, "dir must be uploads | images | lrc");
+    let name: string | undefined;
+    try {
+      for await (const part of req.parts()) {
+        if (part.type !== "file") continue;
+        if (dir === "uploads") {
+          name = await saveAudioStream(part);
+        } else {
+          const buffer = await part.toBuffer();
+          if (buffer.length > 20 * 1024 * 1024) throw new Error("File too large (max 20MB)");
+          name = dir === "lrc"
+            ? await saveTextFile(buffer, part.filename || "file")
+            : await saveImage(buffer, part.filename || "file");
+        }
+        break;
+      }
+    } catch (e) {
+      return void bad(reply, e instanceof Error ? e.message : "upload failed");
+    }
+    if (!name) return void bad(reply, "file required");
+    reply.send({ name });
+  });
+
+  // 删除对象：默认拒绝被业务数据引用的 key（列明引用处数），force=1 强制删除
+  app.delete("/admin/oss/objects", { preHandler: requireAdmin }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const key = str(q["key"] ?? "");
+    const dir = key.split("/")[0] ?? "";
+    if (!key || !ossDirs.has(dir)) return void bad(reply, "key 必须位于 uploads/ images/ lrc/ 下");
+    const name = key.split("/").pop()!;
+
+    const usage: string[] = [];
+    if (dir === "uploads") {
+      const n = await prisma.song.count({ where: { type: "local", audioUrl: name } });
+      if (n) usage.push(`歌曲音频 ${n} 处`);
+    } else if (dir === "lrc") {
+      const n = await prisma.song.count({ where: { lrcUrl: name } });
+      if (n) usage.push(`歌曲歌词 ${n} 处`);
+    } else {
+      // images/ 与 images/thumbs/ 同名同源（DB 只存文件名，缩略图由原图同名派生），按名查引用
+      const counts: number[] = await Promise.all([
+        prisma.song.count({ where: { thumbnail: name } }),
+        prisma.category.count({ where: { image: name } }),
+        prisma.artist.count({ where: { image: name } }),
+        prisma.album.count({ where: { image: name } }),
+        prisma.banner.count({ where: { image: name } }),
+        prisma.playlist.count({ where: { image: name } }),
+      ]);
+      const labels = ["歌曲缩略图", "分类", "艺术家", "专辑", "横幅", "播放列表"];
+      counts.forEach((n, i) => {
+        if (n) usage.push(`${labels[i]} ${n} 处`);
+      });
+    }
+    if (usage.length && q["force"] !== "1") {
+      return void bad(reply, `对象被引用：${usage.join("、")}；确认请加 force=1`);
+    }
+    await deleteObject(key);
+    reply.send({ ok: true });
   });
 
   // OneSignal 推送

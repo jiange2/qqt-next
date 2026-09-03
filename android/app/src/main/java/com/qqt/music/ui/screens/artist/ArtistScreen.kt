@@ -1,6 +1,7 @@
 package com.qqt.music.ui.screens.artist
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
@@ -9,14 +10,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.WarmBackground
 
 @Composable
 fun ArtistScreen(viewModel: ArtistViewModel = viewModel()) {
@@ -38,18 +44,20 @@ fun ArtistScreen(viewModel: ArtistViewModel = viewModel()) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         state = gridState,
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF5F5F5)),
+        verticalArrangement = Arrangement.spacedBy(22.dp),
+        modifier = Modifier.fillMaxSize().background(WarmBackground),
     ) {
         items(artists) { artist ->
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(
                     modifier = Modifier
-                        .size(130.dp)
+                        .size(126.dp)
+                        .shadow(3.dp, CircleShape)
                         .clip(CircleShape)
-                        .background(Color(0xFFDDDDDD)),
+                        .background(PlaceholderBg)
+                        .border(3.dp, Color.White, CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     AsyncImage(
@@ -59,14 +67,20 @@ fun ArtistScreen(viewModel: ArtistViewModel = viewModel()) {
                         modifier = Modifier.fillMaxSize().clip(CircleShape),
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(artist.name, fontSize = 13.sp, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    artist.name,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = InkPrimary,
+                    textAlign = TextAlign.Center,
+                )
             }
         }
         if (isLoading) {
             item(span = { GridItemSpan(2) }) {
                 Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = OrangePrimary, modifier = Modifier.size(32.dp))
+                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
                 }
             }
         }

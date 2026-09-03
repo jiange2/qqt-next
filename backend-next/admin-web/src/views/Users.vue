@@ -36,7 +36,7 @@
       </el-table-column>
     </el-table>
 
-    <el-pagination v-model:current-page="page" :total="total" layout="total, prev, pager, next" @current-change="load" style="margin-top: 12px" />
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @load="load" />
   </div>
 </template>
 
@@ -44,13 +44,14 @@
 import { ElMessageBox, ElMessage } from "element-plus";
 import { api } from "../api";
 import { usePagedList } from "../useList";
+import AppPagination from "../components/AppPagination.vue";
 
 type Row = {
   id: number; userType: string; name: string; email: string;
   phone: string | null; status: boolean; createdAt: string;
 };
 
-const { items, total, page, keyword, loading, load } = usePagedList<Row>("/admin/users");
+const { items, total, page, size, keyword, loading, load } = usePagedList<Row>("/admin/users");
 
 function onSearch() {
   page.value = 1;

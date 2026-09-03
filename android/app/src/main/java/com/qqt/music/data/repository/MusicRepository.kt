@@ -47,6 +47,17 @@ object MusicRepository {
         } catch (e: Exception) { null }
     }
 
+    /** 取 app_details 接口的 App 信息与更新配置；请求失败返回 null */
+    suspend fun getAppDetails(): AppUpdateInfo? {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "app_details"))
+            val resp = service.callApi(data)
+            val mp3 = resp.get("ONLINE_MP3") ?: return null
+            if (!mp3.isJsonObject) return null
+            gson.fromJson(mp3, AppUpdateInfo::class.java)
+        } catch (e: Exception) { null }
+    }
+
     suspend fun getArtists(page: Int): List<Artist> {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "artist_list", "page" to page))
@@ -61,6 +72,17 @@ object MusicRepository {
             val resp = service.callApi(data)
             parseArray(resp.get("ONLINE_MP3"))
         } catch (e: Exception) { emptyList() }
+    }
+
+    /** 分类专辑列表（backend-next ADR 0009）：分类下放专辑而非歌曲，行结构与 album_list 一致；
+     *  返回 (专辑列表, total_records)，total 解析失败时为 -1 */
+    suspend fun getCategoryAlbums(catId: String, page: Int): Pair<List<Album>, Int> {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "cat_albums", "cat_id" to catId, "page" to page))
+            val resp = service.callApi(data)
+            val total = resp.get("total_records")?.takeIf { it.isJsonPrimitive }?.asString?.toIntOrNull() ?: -1
+            parseArray<Album>(resp.get("ONLINE_MP3")) to total
+        } catch (e: Exception) { emptyList<Album>() to -1 }
     }
 
     suspend fun getPlaylists(page: Int): List<Playlist> {
@@ -90,14 +112,6 @@ object MusicRepository {
     suspend fun getAllSongs(page: Int, userId: Int = 0): List<Song> {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "all_songs", "page" to page, "user_id" to userId))
-            val resp = service.callApi(data)
-            parseArray(resp.get("ONLINE_MP3"))
-        } catch (e: Exception) { emptyList() }
-    }
-
-    suspend fun getCategorySongs(catId: String, page: Int, userId: Int = 0): List<Song> {
-        return try {
-            val data = ApiClient.buildData(mapOf("method_name" to "cat_songs", "cat_id" to catId, "page" to page, "user_id" to userId))
             val resp = service.callApi(data)
             parseArray(resp.get("ONLINE_MP3"))
         } catch (e: Exception) { emptyList() }

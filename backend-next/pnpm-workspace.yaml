@@ -1,3 +1,12 @@
 packages:
   - server
   - admin-web
+
+# pnpm 10 默认禁止依赖包跑安装脚本，白名单需写在 workspace 配置里
+# （package.json 的 pnpm.onlyBuiltDependencies 在 monorepo 中会被忽略）
+onlyBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - esbuild
+  - prisma
+  - sharp

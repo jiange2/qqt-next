@@ -226,7 +226,7 @@ export async function getFavouritePost(ctx: LegacyCtx): Promise<unknown> {
     orderBy: { id: "desc" },
     include: { song: { include: songInclude } },
   });
-  const valid = favs.filter((f) => f.song && f.song.status && f.song.category.status);
+  const valid = favs.filter((f) => f.song && f.song.status && f.song.category?.status);
   const favourites = new Set(valid.map((f) => f.postId));
   return valid.slice((page - 1) * 10, page * 10).map((f) => ({
     total_songs: S(valid.length),

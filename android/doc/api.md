@@ -49,6 +49,7 @@ return Base64.encodeToString(urlEncoded.toByteArray(), Base64.NO_WRAP)
 | `getRecentSongs(songIds, page, userId)` | `get_recent_songs` | `List<Song>` | `songs_ids`(逗号串), `page`, `user_id` |
 | `searchSongs(query, page, userId)` | `song_search` | `List<Song>` | `search_text`, `search_type`="songs", `page`, `user_id` |
 | `toggleFavourite(songId, userId)` | `favourite_post` | `Boolean` | `post_id`, `user_id`, `type`="song" |
+| `getAppDetails()` | `app_details` | `AppUpdateInfo?` | 无（更新检查用，见下方说明） |
 
 ## 数据模型关键字段
 
@@ -85,6 +86,10 @@ data class HomeData(
 ### getHome 的双接口合并
 
 `getHome()` 先发 `home` 请求（横幅/最新专辑/歌手必须用它，`home_new` 的横幅 `songs_list` 为空），再发 `home_new` 请求取 `trending_songs` 覆盖 `home` 的热门榜：服务端 `home` 的热门查询有缺陷（同一首歌多条周播放记录霸榜且只取老歌），而 `home_new` 返回近一个月无重复的榜单，与老版 App 表现一致。`home_new` 请求失败或榜单为空时，兜底用 `home` 的 trending 按歌曲 id 去重。
+
+## App 更新检查
+
+`MusicRepository.getAppDetails()` 调 `app_details` 拿后台的更新配置（`AppUpdateInfo`：`app_update_status`/`app_new_version`/`app_update_desc`/`app_redirect_url`/`cancel_update_status`）。`update/AppUpdateChecker.check()` 在 `MainActivity.onCreate` 中异步执行：后台开启更新开关、且后台 `app_new_version`（Double，按版本段比较）大于本机 versionName 时返回结果，由 `ui/components/AppUpdateDialog` 弹窗；`cancel_update_status` 非 `"true"` 时为强制更新（弹窗不可关闭）；点击更新用 `ACTION_VIEW` 打开 `app_redirect_url`。注意：`app_new_version` 是 Double，无法区分 1.1 与 1.10，后台发版避免用两位修订号。
 
 ## 错误处理
 

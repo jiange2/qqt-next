@@ -15,6 +15,7 @@
         <el-menu-item index="/suggestions">歌曲建议</el-menu-item>
         <el-menu-item index="/notifications">消息推送</el-menu-item>
         <el-menu-item index="/settings">应用设置</el-menu-item>
+        <el-menu-item index="/oss">OSS 管理</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

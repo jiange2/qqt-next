@@ -65,9 +65,8 @@
 
       <el-tab-pane label="API / OneSignal">
         <el-form label-width="140px">
+          <!-- 分类排序/分类歌曲排序两个死配置已从表单移除（backend-next ADR 0007/0009），settings 表列保留 -->
           <el-form-item label="最新歌曲条数"><el-input-number v-model="f.apiLatestLimit" :min="1" /></el-form-item>
-          <el-form-item label="分类排序"><el-input v-model="f.apiCatOrderBy" placeholder="id / name" /></el-form-item>
-          <el-form-item label="分类歌曲排序"><el-input v-model="f.apiCatPostOrderBy" placeholder="id / title / ..." /></el-form-item>
           <el-form-item label="OneSignal App ID"><el-input v-model="f.onesignalAppId" /></el-form-item>
           <el-form-item label="OneSignal REST Key"><el-input v-model="f.onesignalRestKey" show-password /></el-form-item>
         </el-form>
@@ -90,7 +89,7 @@ type Settings = {
   appName: string; appLogo: string; appEmail: string; appVersion: string;
   appAuthor: string; appContact: string; appWebsite: string;
   appDescription: string; appDevelopedBy: string; appPrivacyPolicy: string;
-  apiLatestLimit: number; apiCatOrderBy: string; apiCatPostOrderBy: string;
+  apiLatestLimit: number;
   publisherId: string; interstitalAd: string; interstitalAdId: string;
   interstitalAdClick: string; bannerAd: string; bannerAdId: string;
   bannerAdType: string; bannerFacebookId: string; interstitalAdType: string;
@@ -104,7 +103,7 @@ const empty: Settings = {
   packageName: "", onesignalAppId: "", onesignalRestKey: "", appName: "", appLogo: "",
   appEmail: "", appVersion: "", appAuthor: "", appContact: "", appWebsite: "",
   appDescription: "", appDevelopedBy: "", appPrivacyPolicy: "",
-  apiLatestLimit: 10, apiCatOrderBy: "id", apiCatPostOrderBy: "id",
+  apiLatestLimit: 10,
   publisherId: "", interstitalAd: "false", interstitalAdId: "", interstitalAdClick: "",
   bannerAd: "false", bannerAdId: "", bannerAdType: "admob", bannerFacebookId: "",
   interstitalAdType: "admob", interstitalFacebookId: "", nativeAd: "false",

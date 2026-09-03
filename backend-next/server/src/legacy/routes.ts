@@ -13,8 +13,8 @@ import {
   artistNameSongs,
   bannerSongs,
   banners,
+  catAlbums,
   catList,
-  catSongs,
   home,
   latest,
   playlist,
@@ -51,7 +51,7 @@ const methods: Record<string, Handler> = {
   banners,
   banner_songs: bannerSongs,
   cat_list: catList,
-  cat_songs: catSongs,
+  cat_albums: catAlbums, // 分类专辑列表（backend-next ADR 0009，替代已删除的 cat_songs）
   recent_artist_list: recentArtistList,
   artist_list: artistList,
   artist_album_list: artistAlbumList,

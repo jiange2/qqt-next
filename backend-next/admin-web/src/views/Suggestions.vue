@@ -17,7 +17,7 @@
       </el-table-column>
     </el-table>
 
-    <el-pagination v-model:current-page="page" :total="total" layout="total, prev, pager, next" @current-change="load" style="margin-top: 12px" />
+    <AppPagination v-model:page="page" v-model:size="size" :total="total" @load="load" />
   </div>
 </template>
 
@@ -25,13 +25,14 @@
 import { ElMessageBox } from "element-plus";
 import { api } from "../api";
 import { usePagedList } from "../useList";
+import AppPagination from "../components/AppPagination.vue";
 
 type Row = {
   id: number; songTitle: string; message: string; createdAt: string;
   user?: { id: number; name: string; email: string } | null;
 };
 
-const { items, total, page, loading, load } = usePagedList<Row>("/admin/suggestions");
+const { items, total, page, size, loading, load } = usePagedList<Row>("/admin/suggestions");
 
 async function remove(row: Row) {
   await ElMessageBox.confirm(`确认删除求歌「${row.songTitle}」？`, "删除", { type: "warning" });

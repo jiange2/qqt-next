@@ -24,7 +24,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.api.model.Playlist
 import com.qqt.music.data.repository.MusicRepository
-import com.qqt.music.ui.theme.OrangePrimary
+import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.InkFaint
+import com.qqt.music.ui.theme.InkPrimary
+import com.qqt.music.ui.theme.PlaceholderBg
+import com.qqt.music.ui.theme.WarmBackground
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -53,7 +57,7 @@ fun MyListScreen(viewModel: MyListViewModel = viewModel()) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5)),
+            .background(WarmBackground),
     ) {
         // Add playlist button
         Button(
@@ -62,26 +66,27 @@ fun MyListScreen(viewModel: MyListViewModel = viewModel()) {
                 .padding(16.dp)
                 .fillMaxWidth(0.55f)
                 .align(Alignment.CenterHorizontally),
-            colors = ButtonDefaults.buttonColors(containerColor = OrangePrimary),
+            colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
             shape = RoundedCornerShape(24.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
         ) {
             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(4.dp))
-            Text("添加播放列表", fontSize = 14.sp)
+            Text("添加播放列表", fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
 
         if (isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = OrangePrimary)
+                CircularProgressIndicator(color = BrandOrange)
             }
             return@Column
         }
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(playlists) { playlist ->
                 MyListCard(playlist)
@@ -93,8 +98,8 @@ fun MyListScreen(viewModel: MyListViewModel = viewModel()) {
 @Composable
 private fun MyListCard(playlist: Playlist) {
     Card(
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(2.dp),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
     ) {
         Column {
@@ -103,7 +108,8 @@ private fun MyListCard(playlist: Playlist) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .background(Color(0xFFF0F0F0)),
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(PlaceholderBg),
                 contentAlignment = Alignment.Center,
             ) {
                 val songs = playlist.songsList.take(4)
@@ -117,17 +123,17 @@ private fun MyListCard(playlist: Playlist) {
                                         modifier = Modifier
                                             .weight(1f)
                                             .aspectRatio(1f)
-                                            .background(Color(0xFFEEEEEE)),
+                                            .background(PlaceholderBg),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .size(32.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFFD0D0D0)),
+                                                .background(Color(0xFFE3DCD4)),
                                             contentAlignment = Alignment.Center,
                                         ) {
-                                            Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                            Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.size(18.dp))
                                         }
                                     }
                                 }
@@ -139,29 +145,30 @@ private fun MyListCard(playlist: Playlist) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .size(44.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
-                        .background(OrangePrimary),
+                        .background(Color.White.copy(alpha = 0.92f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(Icons.Default.PlayArrow, null, tint = Color.White)
+                    Icon(Icons.Default.PlayArrow, null, tint = BrandOrange, modifier = Modifier.size(24.dp))
                 }
             }
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = playlist.name,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
+                    color = InkPrimary,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                 )
-                Icon(Icons.Default.MoreVert, null, tint = Color.Gray, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.MoreVert, null, tint = InkFaint, modifier = Modifier.size(18.dp))
             }
         }
     }
