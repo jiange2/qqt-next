@@ -1,11 +1,5 @@
 package com.qqt.music.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,16 +16,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.Hairline
 import com.qqt.music.ui.theme.InkFaint
 import com.qqt.music.ui.theme.InkPrimary
@@ -41,42 +33,37 @@ import com.qqt.music.ui.theme.brandBrush
 import com.qqt.music.viewmodel.PlayerViewModel
 
 /**
- * 迷你播放器：悬浮胶囊卡片，顶部嵌入实时进度细条，
- * 封面随播放旋转，播放键为品牌渐变圆钮。
+ * 迷你播放器：与底部导航栏连成一体的扁平长条（无圆角，带轻微投影拉开层次），
+ * 顶部嵌入实时进度细条（2 物理像素），播放键为品牌渐变圆钮；
+ * 白色底延伸至屏幕底部，内容自动抬升到系统手势区之上。
  */
 @Composable
 fun MiniPlayer(
     playerViewModel: PlayerViewModel,
     modifier: Modifier = Modifier,
     onPlayerClick: () -> Unit = {},
+    showTopDivider: Boolean = false,
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
     val currentPosition by playerViewModel.currentPosition.collectAsState()
     val duration by playerViewModel.duration.collectAsState()
 
-    // 封面旋转（仅播放时）
-    val rotationTransition = rememberInfiniteTransition(label = "miniDisc")
-    val discRotation by rotationTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 16000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "miniDiscRotation",
-    )
-
+    // 细线宽 = 2 物理像素：1px 偏纤细，加粗 1px 保证任何密度下清晰可见
+    val hairlineThickness = with(LocalDensity.current) { (2f / density).dp }
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .shadow(6.dp, RoundedCornerShape(18.dp), ambientColor = Color(0x33211D19), spotColor = Color(0x33211D19))
             .clickable(enabled = currentSong != null) { onPlayerClick() },
-        shape = RoundedCornerShape(18.dp),
         color = Color.White,
+        shadowElevation = 8.dp,
     ) {
         Column {
+            // 无底部导航的页面（设置/详情页）：加一条上边线与内容分隔
+            if (showTopDivider) {
+                HorizontalDivider(thickness = hairlineThickness, color = Hairline)
+            }
+
             // 顶部实时进度细条
             val progress = if (currentSong != null && duration > 0) {
                 (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
@@ -84,7 +71,7 @@ fun MiniPlayer(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.dp)
+                    .height(hairlineThickness)
                     .background(Hairline),
             ) {
                 Box(
@@ -100,18 +87,17 @@ fun MiniPlayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(60.dp)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Album art：旋转唱片
+                    // Album art：圆角方形封面
                     AsyncImage(
                         model = currentSong!!.thumbnailSmall.ifBlank { currentSong!!.thumbnailBig },
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .size(42.dp)
-                            .rotate(if (isPlaying) discRotation else 0f)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(PlaceholderBg),
                     )
                     Spacer(Modifier.width(10.dp))
@@ -162,14 +148,14 @@ fun MiniPlayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(60.dp)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // Empty placeholder art
                     Box(
                         modifier = Modifier
                             .size(42.dp)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(PlaceholderBg),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -217,6 +203,9 @@ fun MiniPlayer(
                     }
                 }
             }
+
+            // 系统导航栏/手势区：白底延伸至屏幕底部，内容抬升到其上方
+            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
         }
     }
 }

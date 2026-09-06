@@ -2,29 +2,12 @@ package com.qqt.music.data.api.model
 
 import com.google.gson.annotations.SerializedName
 
-data class Artist(
-    @SerializedName("id") val id: String = "",
-    @SerializedName("artist_name") val name: String = "",
-    @SerializedName("artist_image") val image: String = "",
-    @SerializedName("artist_image_thumb") val imageThumb: String = "",
-    @SerializedName("total_records") val totalRecords: String = "0",
-)
-
 data class Album(
     @SerializedName("aid") val id: String = "",
     @SerializedName("album_name") val name: String = "",
     @SerializedName("album_image") val image: String = "",
     @SerializedName("album_image_thumb") val imageThumb: String = "",
     @SerializedName("total_records") val totalRecords: String = "0",
-)
-
-data class Playlist(
-    @SerializedName("pid") val id: String = "",
-    @SerializedName("playlist_name") val name: String = "",
-    @SerializedName("playlist_image") val image: String = "",
-    @SerializedName("playlist_image_thumb") val imageThumb: String = "",
-    @SerializedName("total_records") val totalRecords: String = "0",
-    @SerializedName("songs_list") val songsList: List<Song> = emptyList(),
 )
 
 data class Category(
@@ -49,7 +32,6 @@ data class Banner(
 data class HomeData(
     @SerializedName("home_banner") val banners: List<Banner> = emptyList(),
     @SerializedName("latest_album") val latestAlbums: List<Album> = emptyList(),
-    @SerializedName("latest_artist") val latestArtists: List<Artist> = emptyList(),
     @SerializedName("trending_songs") val trendingSongs: List<Song> = emptyList(),
     @SerializedName("recent_songs") val recentSongs: List<Song> = emptyList(),
 )

@@ -4,17 +4,25 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.qqt.music.data.local.FavoriteStore
+import com.qqt.music.data.local.LocalPlaylistStore
 import com.qqt.music.data.local.PrefsManager
+import com.qqt.music.data.local.RatingStore
+import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.LastPlayedStore
+import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.service.KeepAliveService
 import com.qqt.music.player.MusicPlayerService
 import com.qqt.music.ui.components.AppUpdateDialog
@@ -38,6 +46,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PrefsManager.init(applicationContext)
+        FavoriteStore.init()
+        LocalPlaylistStore.init()
+        RatingStore.init()
+        DownloadManager.init(applicationContext)
+        PlayerSettingsManager.init(applicationContext)
 
         // 1. 启动双层前台服务保活
         //    MusicPlayerService 中的 ExoPlayer 将被所有 UI 使用
@@ -55,6 +68,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             QQTMusicTheme {
+                // 下载失败等全局轻提示
+                val toastContext = LocalContext.current
+                LaunchedEffect(Unit) {
+                    DownloadManager.errors.collect { message ->
+                        Toast.makeText(toastContext, message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+
                 AppNavigation(playerViewModel = playerViewModel)
 
                 updateResult?.let { result ->

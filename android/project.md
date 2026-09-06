@@ -38,7 +38,7 @@ app/src/main/java/com/qqt/music/
   player/
     MusicPlayerService.kt   # 前台服务：持有 ExoPlayer + MediaSession + WiFi 锁 + 缓存
     MediaControllerManager.kt # 单例：异步连接 MusicPlayerService，管理 MediaController
-    AudioCache.kt           # LRU 缓存单例：占用磁盘 60%，自动驱逐最旧数据
+    AudioCache.kt           # LRU 缓存单例：占用不超过启动时刻缓存预算，自动驱逐最旧数据
     LastPlayedStore.kt      # SharedPreferences 封装：保存/加载播放进度（专辑/曲目/位置）
     MusicPlayer.kt          # ExoPlayer 简单封装（早期低级版本，已被 PlayerViewModel 替代）
   service/

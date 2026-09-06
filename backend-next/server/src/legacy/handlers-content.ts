@@ -302,6 +302,9 @@ export async function artistNameSongs(ctx: LegacyCtx): Promise<unknown> {
 
 // ---------------------------------------------------------------- 专辑
 
+/** 专辑歌曲页整单加载上限（仓库级 ADR 0007）：App 一次性拉全量，超限静默截断防失控 */
+const ALBUM_SONGS_MAX = 2000;
+
 export async function albumList(ctx: LegacyCtx): Promise<unknown> {
   const total = await prisma.album.count({ where: albumStatusFilter });
   const rows = await prisma.album.findMany({
@@ -329,11 +332,12 @@ export async function albumSongs(ctx: LegacyCtx): Promise<unknown> {
     album: { status: true },
   };
   const total = await prisma.song.count({ where });
-  // 维度顺序优先（backend-next ADR 0007）：管理员手动排序生效；id DESC 兕底（未排序存量新歌在前）；旧实现按歌名排序已废弃
+  // 维度顺序优先（backend-next ADR 0007）：管理员手动排序生效；id DESC 兜底（未排序存量新歌在前）；旧实现按歌名排序已废弃
+  // 整单加载（仓库级 ADR 0007）：忽略 page，单次返回全量，仅以 ALBUM_SONGS_MAX 兜底截断；total_records 仍为真实总数
   const rows = await prisma.song.findMany({
     where,
     orderBy: [{ albumSort: "asc" }, { id: "desc" }],
-    ...limitOffset(pageOf(data), 10),
+    take: ALBUM_SONGS_MAX,
     include: songInclude,
   });
   return rows.map((s) => {

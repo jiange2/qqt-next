@@ -9,9 +9,10 @@
 1. **MusicPlayerService** — 后台前台服务，持有唯一的 ExoPlayer 实例 + MediaSession（系统媒体控制）+ WiFi 锁 + 缓存管理
 2. **MediaControllerManager** — 单例管理器，UI 通过 MediaController 连接到 Service 的 ExoPlayer
 3. **PlayerViewModel** — 全局播放状态（通过 MediaController 控制播放）+ 进度轮询 + 进度保存/恢复
-4. **AudioCache** — LRU 缓存，自动使用 60% 可用磁盘空间存储音频
+4. **AudioCache** — LRU 被动缓存，占用不超过启动时刻的缓存预算（总容量预留制，ADR 0004）
 5. **LastPlayedStore** — SharedPreferences，保存播放进度（专辑 ID、曲目索引、播放位置）
-6. **KeepAliveService + BootReceiver** — 双层前台保活 + 设备重启自启动
+6. **PlayerSettingsManager** — 播放设置单例：倍速 / 均衡器预设 / 定时关闭（倍速与 EQ 持久化，定时会话级）
+7. **KeepAliveService + BootReceiver** — 双层前台保活 + 设备重启自启动
 
 ## 关键文件
 
@@ -20,8 +21,10 @@
 | `player/MusicPlayerService.kt` | MediaSessionService 前台服务，管理 ExoPlayer、MediaSession、WiFi 锁、缓存 |
 | `player/MediaControllerManager.kt` | 单例，异步连接 MusicPlayerService，管理 MediaController 生命周期 |
 | `viewmodel/PlayerViewModel.kt` | 全局播放状态，通过 MediaController 控制播放，定期保存进度 |
-| `player/AudioCache.kt` | LRU 缓存单例，占用可用磁盘 60%，自动驱逐最旧数据 |
+| `player/AudioCache.kt` | LRU 被动缓存单例，占用不超过启动时刻的缓存预算，自动驱逐最旧数据 |
+| `player/SchemeRoutingDataSource.kt` | 按 scheme 分流播放数据源：file:// 直读已下载文件，http(s) 走被动缓存 |
 | `player/LastPlayedStore.kt` | SharedPreferences 封装，保存/加载最后播放的专辑、曲目、位置 |
+| `player/PlayerSettingsManager.kt` | 播放设置单例（StateFlow + SharedPreferences），UI 与 Service 共享 |
 | `service/KeepAliveService.kt` | 独立前台服务，与 MusicPlayerService 双层保活进程优先级 |
 | `receiver/BootReceiver.kt` | BroadcastReceiver，BOOT_COMPLETED 后启动 KeepAliveService |
 | `receiver/ManufacturerCompat.kt` | 工具类，获取小米/华为/OPPO/VIVO 自启动管理页面的 Intent |
@@ -182,14 +185,32 @@ MediaItem.Builder()
 
 **必须设置字段**：`title`、`artist`、`artworkUri`，否则系统媒体控制无法正确显示。
 
+## 播放设置（倍速 / 均衡器 / 定时关闭）
+
+`PlayerSettingsManager` 单例（模式对齐 DownloadManager）持有 StateFlow：倍速 / 均衡器预设 / 定时状态，UI 直接 collect。倍速与均衡器预设持久化到 SharedPreferences（`player_settings`），定时关闭会话级（进程被杀即失效）。
+
+入口：全屏播放器功能图标行第二位（双滑杆图标），M3 ModalBottomSheet；定时生效期间图标右上角小圆点角标。
+
+### 接线分工
+
+| 设置 | 生效路径 |
+|------|----------|
+| 倍速 | UI → `PlayerViewModel.setSpeed()` → `MediaController.setPlaybackSpeed()`；连接成功时恢复持久化值。固定变速不变调，档位 0.5/0.75/1.0/1.25/1.5/2.0 |
+| 均衡器 | UI → `PlayerSettingsManager.setEqPreset()` → Service collect → `Equalizer`（平台 AudioFX，非 ExoPlayer 内建）。Service 显式 `generateAudioSessionId()` 喂给 `ExoPlayer.Builder.setAudioSessionId()`，效果实例生命周期随 Service；设备不支持时 `eqAvailable=false`，面板显示提示。预设：正常（关效果）/ 流行 / 摇滚 / 古典 / 舞曲走平台内置预设，重低音为手工频段（最低两段 +4dB，单位 milliBel，按实际频段数与设备范围自适应钳制） |
+| 定时关闭 | UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点 `controller.pause()` 后撤销；「播完本曲」由 `onMediaItemTransition` 结算：AUTO（自然放完）→ 暂停，SEEK/PLAYLIST_CHANGED（手动切歌/点播新歌）→ 撤销定时。分钟模式剩余秒数写入单例供面板显示，Activity 重建自动续跑 |
+
 ## 缓存和进度保存
 
-### AudioCache - LRU 音频缓存
+### AudioCache - LRU 音频缓存（被动缓存）
 
-- 位置：`context.cacheDir/audio_cache/`
-- 大小：自动使用设备可用磁盘空间的 60%
+- 位置：`context.filesDir/audio_cache/`（从 cacheDir 迁入：部分厂商 ROM 会定期清理 cacheDir，ADR 0003）
+- 大小：受缓存预算约束（启动时刻按总容量预留制快照，ADR 0004）
 - 驱逐策略：LRU（最近最少使用）
-- 集成：MusicPlayerService 构建 CacheDataSource 时使用
+- 集成：MusicPlayerService 构建 CacheDataSource 时使用；DownloadManager 也以它为下载上游（缓存升格，ADR 0003）
+
+### 已下载歌曲的离线播放
+
+已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，file 直读本地文件（离线可播，不回写缓存），http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成。
 
 ### LastPlayedStore - 进度持久化
 

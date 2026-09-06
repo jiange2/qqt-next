@@ -25,6 +25,8 @@ val WarmSurface = Color(0xFFFFFFFF)
 val InkPrimary = Color(0xFF211D19)
 /** 次文字 */
 val InkSecondary = Color(0xFF8B847C)
+/** 导航未选中：底部导航栏等可交互导航元素，弱于选中橙但须保证小字可读 */
+val InkNav = Color(0xFF6E665D)
 /** 占位 / 禁用 */
 val InkFaint = Color(0xFFC9C1B9)
 /** 分隔线 / 描边 */
@@ -35,10 +37,14 @@ val PlaceholderBg = Color(0xFFF2EDE8)
 // ── 点缀 ─────────────────────────────────────────────
 val StarGold = Color(0xFFFFB93E)
 
-// ── 全屏播放器：深色氛围 ───────────────────────────────
-val PlayerBgTop = Color(0xFF2A1B12)
-val PlayerBgBottom = Color(0xFF130E0A)
-val PlayerOnDark = Color(0xFFF7F1EA)
-val PlayerOnDarkSub = Color(0xB3F7F1EA)   // 70%
-val PlayerOnDarkFaint = Color(0x80F7F1EA) // 50%
-val PlayerTrack = Color(0x33F7F1EA)       // 进度轨道 20%
+// ── 状态色 ───────────────────────────────────────────
+/** 已下载态：下载完成后播放器下载按钮的绿色 */
+val DownloadedGreen = Color(0xFF4CAF50)
+
+// ── 全屏播放器：亮色氛围（背景为 drawable/player_bg 极光图 + 玻璃蒙板）──
+/** 深藏青：标题 / 播放键 / 上下曲 */
+val PlayerNavy = Color(0xFF333B5E)
+/** 播放器次级图标与文字灰 */
+val PlayerIconGray = Color(0xFF9290A2)
+/** 进度轨道底色 */
+val PlayerTrack = Color(0xFFD9D5E4)

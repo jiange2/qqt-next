@@ -103,11 +103,9 @@ fun DrawerContent(
 
         val items = listOf(
             Triple(Icons.Default.Home, "首页", Screen.Home.route),
-            Triple(Icons.Default.Person, "音乐歌手", Screen.Artist.route),
             Triple(Icons.Default.Album, "音乐专辑", Screen.Album.route),
             Triple(Icons.Default.QueueMusic, "所有歌曲", Screen.Latest.route),
-            Triple(Icons.Default.PlaylistPlay, "播放列表", Screen.Playlist.route),
-            Triple(Icons.Default.PlaylistAdd, "我的列表", Screen.MyList.route),
+            Triple(Icons.Default.PlaylistAdd, "我的歌单", Screen.MyList.route),
             Triple(Icons.Default.CloudDownload, "我的下载", Screen.Download.route),
             Triple(Icons.Default.Favorite, "歌曲收藏", Screen.Favorites.route),
             Triple(Icons.Default.LibraryMusic, "建议歌曲", Screen.Latest.route),

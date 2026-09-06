@@ -173,8 +173,8 @@ object ManufacturerCompat {
 
 虽然缓存逻辑在 player.md 已提及，但后台保活与缓存的关系值得注意：
 
-- **缓存位置**：`context.cacheDir/audio_cache/`
-- **大小限制**：设备可用磁盘空间的 60%
+- **缓存位置**：`context.filesDir/audio_cache/`（从 cacheDir 迁入，ADR 0003）
+- **大小限制**：缓存预算（启动时刻按总容量预留制快照，ADR 0004）
 - **驱逐策略**：LRU（最近最少使用）
 - **集成时机**：MusicPlayerService 启动时创建 CacheDataSource
 

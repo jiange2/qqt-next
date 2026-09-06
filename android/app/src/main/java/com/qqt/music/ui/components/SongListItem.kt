@@ -48,6 +48,8 @@ fun SongListItem(
     onClick: () -> Unit,
     onMoreClick: () -> Unit = {},
     modifier: Modifier = Modifier,
+    /** 尾部插槽：默认渲染「更多」按钮；歌单详情等场景可替换为移除图标 */
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
@@ -150,8 +152,12 @@ fun SongListItem(
                 )
             }
         }
-        IconButton(onClick = onMoreClick, modifier = Modifier.size(32.dp)) {
-            Icon(Icons.Default.MoreVert, contentDescription = "More", tint = InkFaint, modifier = Modifier.size(20.dp))
+        if (trailing != null) {
+            trailing()
+        } else {
+            IconButton(onClick = onMoreClick, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.MoreVert, contentDescription = "More", tint = InkFaint, modifier = Modifier.size(20.dp))
+            }
         }
     }
 }

@@ -7,7 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerValue
@@ -25,9 +27,9 @@ import com.qqt.music.ui.components.DrawerContent
 import com.qqt.music.ui.components.MiniPlayer
 import com.qqt.music.ui.components.MusicBottomBar
 import com.qqt.music.ui.components.MusicTopBar
+import com.qqt.music.ui.components.navigateSingle
 import com.qqt.music.ui.screens.album.AlbumScreen
 import com.qqt.music.ui.screens.albumsongs.AlbumSongsScreen
-import com.qqt.music.ui.screens.artist.ArtistScreen
 import com.qqt.music.ui.screens.bannersongs.BannerSongsScreen
 import com.qqt.music.ui.screens.category.CategoryScreen
 import com.qqt.music.ui.screens.categoryalbums.CategoryAlbumsScreen
@@ -36,8 +38,8 @@ import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
 import com.qqt.music.ui.screens.latest.LatestScreen
 import com.qqt.music.ui.screens.mylist.MyListScreen
+import com.qqt.music.ui.screens.mylist.PlaylistDetailScreen
 import com.qqt.music.ui.screens.player.PlayerScreen
-import com.qqt.music.ui.screens.playlist.PlaylistScreen
 import com.qqt.music.ui.screens.recent.RecentScreen
 import com.qqt.music.ui.screens.settings.SettingsScreen
 import com.qqt.music.viewmodel.PlayerViewModel
@@ -56,16 +58,16 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isBannerSongs = currentRoute?.startsWith("banner_songs") == true
     val isAlbumSongs = currentRoute?.startsWith("album_songs") == true
     val isCategoryAlbums = currentRoute?.startsWith("category_albums") == true
-    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums
-    val isPlayerScreen = currentRoute == Screen.Player.route
+    val isMyPlaylistDetail = currentRoute?.startsWith("mylist_detail") == true
+    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums || isMyPlaylistDetail
+    // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
+    // 关闭时下层原样即时露出（无任何过渡动画），滚动位置等页面状态全程保留。
+    // 系统返回由 PlayerScreen 内部 BackHandler 接管（统一走整页下滑收出），顶层无需重复拦截
+    var playerOverlay by remember { mutableStateOf(false) }
 
-    // If player screen, show it fullscreen without drawer/topbar/bottombar
-    if (isPlayerScreen) {
-        PlayerScreen(
-            playerViewModel = playerViewModel,
-            onBackClick = { navController.popBackStack() },
-        )
-    } else {
+    // 常驻下层（抽屉 + 页面 + MiniPlayer）+ 播放器全屏覆盖层：下层页面始终原样保持，
+    // 下拉收起整页滑出时露出的就是它本身，关闭即显、无过渡
+    Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
@@ -75,7 +77,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums,
+            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isMyPlaylistDetail,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -93,6 +95,10 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             MusicBottomBar(navController = navController, currentRoute = currentRoute)
                         }
                     },
+                    // 系统导航栏空档不由 Scaffold 垫入内容：无底部导航的页面若被垫高，
+                    // 内容与外层 MiniPlayer 之间会出现页面底色的空隙；
+                    // 系统栏区域由 MiniPlayer 底部的白底 spacer 统一负责
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     modifier = Modifier.weight(1f),
                 ) { innerPadding ->
                     NavHost(
@@ -112,10 +118,6 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.Home.route) {
                         HomeScreen(
                             playerViewModel = playerViewModel,
-                            onAlbumClick = { album ->
-                                AlbumNav.album = album
-                                navController.navigate("album_songs/${album.id}")
-                            },
                             onBannerClick = { banner ->
                                 when {
                                     banner.songs.isNotEmpty() -> {
@@ -148,9 +150,6 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.Latest.route) {
                         LatestScreen(playerViewModel = playerViewModel)
                     }
-                    composable(Screen.Artist.route) {
-                        ArtistScreen()
-                    }
                     composable(Screen.Album.route) {
                         AlbumScreen(
                             onAlbumClick = { album ->
@@ -159,11 +158,17 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             },
                         )
                     }
-                    composable(Screen.Playlist.route) {
-                        PlaylistScreen()
-                    }
                     composable(Screen.MyList.route) {
-                        MyListScreen()
+                        MyListScreen(
+                            onPlaylistClick = { playlist ->
+                                MyListNav.playlistId = playlist.id
+                                MyListNav.playlistName = playlist.name
+                                navController.navigate("mylist_detail/${playlist.id}")
+                            },
+                        )
+                    }
+                    composable(Screen.MyPlaylistDetail.route) {
+                        PlaylistDetailScreen(playerViewModel = playerViewModel)
                     }
                     composable(Screen.Favorites.route) {
                         FavoritesScreen(playerViewModel = playerViewModel)
@@ -192,20 +197,23 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             },
                         )
                     }
-                    composable(Screen.Player.route) {
-                        PlayerScreen(
-                            playerViewModel = playerViewModel,
-                            onBackClick = { navController.popBackStack() },
-                        )
-                    }
                 }
                 }
-                // Mini player below the scaffold
+                // Mini player below the scaffold：与底部导航连为一体的扁平长条
                 MiniPlayer(
                     playerViewModel = playerViewModel,
-                    onPlayerClick = { navController.navigate(Screen.Player.route) },
+                    onPlayerClick = { playerOverlay = true },
+                    showTopDivider = !showBottomNav,
                 )
             }
+        }
+
+        // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；下拉收起整页滑出即露出下层页面
+        if (playerOverlay) {
+            PlayerScreen(
+                playerViewModel = playerViewModel,
+                onBackClick = { playerOverlay = false },
+            )
         }
     }
 }

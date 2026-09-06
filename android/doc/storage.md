@@ -4,13 +4,14 @@
 
 ## 功能概述
 
-`PrefsManager` 是 App 唯一的本地持久化模块，基于 `SharedPreferences` + Gson 序列化。管理两类数据：最近播放歌曲 ID 列表（最多 50 条，每次 `playSong()` 自动写入），以及已下载歌曲的完整 `Song` 对象列表。
+`PrefsManager` 是 App 唯一的本地持久化模块，基于 `SharedPreferences` + Gson 序列化。管理两类数据：最近播放歌曲 ID 列表（最多 50 条，每次 `playSong()` 自动写入），以及已下载歌曲的完整 `Song` 对象列表（由 `DownloadManager` 整表驱动，见下文）。
 
 ## 关键文件
 
 | 文件 | 职责 |
 |------|------|
-| `data/local/PrefsManager.kt` | SharedPreferences 单例封装：最近播放 ID、已下载歌曲 |
+| `data/local/PrefsManager.kt` | SharedPreferences 单例封装：最近播放 ID、已下载歌曲快照 |
+| `download/DownloadManager.kt` | 主动缓存（下载）管理器：串行下载队列、下载列表状态、与磁盘对账 |
 | `MainActivity.kt` | `PrefsManager.init(applicationContext)` — 必须在使用前调用 |
 
 ## 数据结构
@@ -19,7 +20,7 @@
 SharedPreferences name: "qqt_music_prefs"
 
 Key: "recent_song_ids"   → JSON 序列化的 List<String>（歌曲 ID 字符串列表，最多 50 条）
-Key: "downloaded_songs"  → JSON 序列化的 List<Song>（完整 Song 对象列表）
+Key: "downloaded_songs"  → JSON 序列化的 List<Song>（已下载歌曲快照，由 DownloadManager 整表写入）
 ```
 
 ## 最近播放
@@ -42,13 +43,20 @@ PrefsManager.getRecentIds()         // 返回 List<String>
 
 ## 已下载歌曲
 
+下载列表的事实来源是 `DownloadManager`（内存 StateFlow），`PrefsManager` 只负责持久化快照：
+
 ```kotlin
-PrefsManager.saveDownloadedSong(song)    // 保存（防重复：跳过已有相同 id 的歌曲）
-PrefsManager.getDownloadedSongs()        // 读取全部（按保存时间倒序）
-PrefsManager.removeDownloadedSong(songId) // 删除指定歌曲
+DownloadManager.init(context)              // MainActivity.onCreate 中调用（在 PrefsManager.init 之后）
+DownloadManager.enqueue(song)              // 入队下载（串行），以被动缓存为上游补齐缺失字节
+DownloadManager.deleteDownload(songId)     // 删除：取消进行中任务/删文件/移出列表
+DownloadManager.downloadedSongs            // StateFlow<List<Song>>，DownloadScreen 直接收集
+DownloadManager.activeDownloads            // StateFlow<Map<String, ActiveDownload>>：排队中/下载中(进度)
+DownloadManager.localUri(songId)           // 已下载返回本地 file:// URI，未下载返回 null
 ```
 
-`DownloadScreen` 通过 `remember { PrefsManager.getDownloadedSongs() }` 读取，**初始化一次，不响应后续变化**。如果需要实时响应（如下载完成立即显示），需改为 StateFlow 或 MutableState。
+- 完整文件位置：`filesDir/downloads/{songId}.mp3`，下载中为 `{songId}.mp3.part`（断点续传依据）
+- init 时列表与磁盘对账：文件缺失的条目剔除、孤儿完整文件删除、`.part` 半文件保留
+- 点"下载"不调用后端下载计数（ADR 0003）
 
 ## 初始化
 
@@ -65,7 +73,8 @@ override fun onCreate(savedInstanceState: Bundle?) {
 
 ## 注意事项
 
-- `PrefsManager` 未使用 Flow/LiveData，数据变更不会自动通知 UI；`DownloadScreen` 用 `remember` 只读取一次，如需动态更新需重构为 StateFlow
+- `PrefsManager` 本身未使用 Flow/LiveData；已下载歌曲的实时响应由 `DownloadManager` 的 StateFlow 提供，DownloadScreen 直接收集，不再读 PrefsManager
+- 进程被杀后进行中的下载不会自动恢复（无持久化队列），残留 `.part` 文件由下次点"下载"断点续传
 - 已下载歌曲存的是 `Song` 对象快照（序列化时的完整数据），后端数据更新后下载列表不会自动同步（如歌曲 URL 变更）
 - `MAX_RECENT = 50`，超出时截断旧记录（保留最新的 50 条）
-- `getDownloadedSongs()` 中防重复逻辑：`if (songs.none { it.id == song.id })`，基于 `Song.id` 去重
+- 已下载列表防重复逻辑在 `DownloadManager.finalizeDownload()` 中（`listOf(song) + songs.filterNot { it.id == song.id }`），基于 `Song.id` 去重

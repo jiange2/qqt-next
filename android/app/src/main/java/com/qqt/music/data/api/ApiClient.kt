@@ -43,6 +43,15 @@ object ApiClient {
 
     val apiService: ApiService = retrofit.create(ApiService::class.java)
 
+    /** GET 指定 URL 并返回 UTF-8 文本；网络失败或非 2xx 返回 null（歌词外链等轻量文本下载用） */
+    fun fetchText(url: String): String? = try {
+        okHttpClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            if (response.isSuccessful) response.body?.string() else null
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     /** Encode params as base64(urlencode(json)) with auth fields injected */
     fun buildData(params: Map<String, Any>): String {
         val salt = System.currentTimeMillis().toString()

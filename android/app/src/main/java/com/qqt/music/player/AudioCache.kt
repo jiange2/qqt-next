@@ -7,9 +7,10 @@ import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
 /**
- * 单例缓存管理器
+ * 单例被动缓存管理器
  *
- * 使用 SimpleCache + LRU 驱逐策略，自动维护 60% 磁盘容量的音频缓存。
+ * 使用 SimpleCache + LRU 驱逐策略，被动缓存占用不超过启动时刻的缓存预算（总容量预留制，见 docs/adr/0004）。
+ * 存放于 filesDir 而非 cacheDir：部分厂商 ROM 会定期清理 cacheDir（ADR 0003）。
  */
 object AudioCache {
     @Volatile
@@ -18,18 +19,19 @@ object AudioCache {
     fun get(context: Context): SimpleCache {
         return instance ?: synchronized(this) {
             instance ?: SimpleCache(
-                File(context.cacheDir, "audio_cache"),
-                LeastRecentlyUsedCacheEvictor(availableCacheBytes(context))
+                File(context.filesDir, "audio_cache"),
+                LeastRecentlyUsedCacheEvictor(cacheBudgetBytes(context))
             ).also { instance = it }
         }
     }
 
     /**
-     * 计算可用缓存字节数（设备可用磁盘空间的 60%）
+     * 计算缓存预算（启动时刻快照，总容量预留制）：
+     * 预算 = max(空闲空间 − max(总容量×5%, 1 GiB), 0)，预算为 0 时 LRU 即写即删。
      */
-    private fun availableCacheBytes(context: Context): Long {
-        val stat = StatFs(context.cacheDir.absolutePath)
-        val freeBytes = stat.availableBlocksLong * stat.blockSizeLong
-        return (freeBytes * 0.6).toLong()
+    private fun cacheBudgetBytes(context: Context): Long {
+        val stat = StatFs(context.filesDir.absolutePath)
+        val reserveBytes = maxOf(stat.totalBytes * 5 / 100, 1L shl 30)
+        return maxOf(stat.availableBytes - reserveBytes, 0L)
     }
 }

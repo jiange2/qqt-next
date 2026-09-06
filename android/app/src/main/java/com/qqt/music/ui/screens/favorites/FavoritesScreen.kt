@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
@@ -17,11 +16,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.api.model.Song
+import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.data.repository.MusicRepository
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.viewmodel.PlayerViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,22 +34,39 @@ class FavoritesViewModel : ViewModel() {
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
-
-    // In a real app, user ID would come from auth state
-    private val userId = 0
-    private var page = 1
-    private var hasMore = true
+    private val _loadFailed = MutableStateFlow(false)
+    val loadFailed: StateFlow<Boolean> = _loadFailed.asStateFlow()
 
     init { load() }
 
     fun load() {
-        if (_isLoading.value || !hasMore) return
+        if (_isLoading.value) return
+        val ids = PrefsManager.getFavouriteIds()
+        if (ids.isEmpty()) { _songs.value = emptyList(); _loadFailed.value = false; return }
         viewModelScope.launch {
             _isLoading.value = true
-            val result = MusicRepository.getFavorites(userId, page)
-            if (result.isEmpty()) hasMore = false
-            else { _songs.value = _songs.value + result; page++ }
+            // 后端 get_recent_songs 每页固定 10 条且按歌曲 ID 降序分页，与传入顺序无关：
+            // 按收藏数并行取全部页，合并后按本地收藏顺序（最新收藏在前）重排
+            val idsStr = ids.joinToString(",")
+            val pageCount = (ids.size + MusicRepository.RECENT_PAGE_SIZE - 1) / MusicRepository.RECENT_PAGE_SIZE
+            val fetched = (1..pageCount).map { page -> async { MusicRepository.getRecentSongs(idsStr, page) } }.awaitAll()
             _isLoading.value = false
+            if (fetched.any { it == null }) {
+                _loadFailed.value = true
+                return@launch
+            }
+            _loadFailed.value = false
+            _songs.value = fetched.filterNotNull().flatten().filter { it.id in ids }.sortedBy { ids.indexOf(it.id) }
+        }
+    }
+
+    /** 页面复用 ViewModel，回到本页时调用：本地收藏集合与已加载结果不一致（或上次失败）时重新加载 */
+    fun refreshIfStale() {
+        val ids = PrefsManager.getFavouriteIds()
+        when {
+            _loadFailed.value -> load()
+            ids.isEmpty() -> _songs.value = emptyList()
+            ids != _songs.value.map { it.id } -> load()
         }
     }
 }
@@ -59,41 +78,33 @@ fun FavoritesScreen(
 ) {
     val songs by viewModel.songs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val loadFailed by viewModel.loadFailed.collectAsState()
 
-    if (!isLoading && songs.isEmpty()) {
-        EmptyState(
+    // 从播放器返回时重新进入组合，比对本地收藏集合，变更（如在播放器取消收藏）则重载
+    LaunchedEffect(Unit) { viewModel.refreshIfStale() }
+
+    when {
+        isLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = BrandOrange)
+        }
+        loadFailed -> EmptyState(
             icon = Icons.Outlined.FavoriteBorder,
-            title = "没有发现歌曲",
-            actionText = "刷新",
+            title = "加载失败",
+            subtitle = "网络开小差了，稍后再试试",
+            actionText = "重试",
             onAction = { viewModel.load() },
         )
-        return
-    }
-
-    val listState = rememberLazyListState()
-    val reachedEnd by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val total = info.totalItemsCount
-            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            total > 0 && last >= total - 3
-        }
-    }
-    LaunchedEffect(reachedEnd) { if (reachedEnd) viewModel.load() }
-
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize().background(Color.White),
-        contentPadding = PaddingValues(vertical = 6.dp),
-    ) {
-        items(songs) { song ->
-            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
-        }
-        if (isLoading) {
-            item {
-                Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = BrandOrange, modifier = Modifier.size(32.dp))
-                }
+        songs.isEmpty() -> EmptyState(
+            icon = Icons.Outlined.FavoriteBorder,
+            title = "还没有收藏的歌曲",
+            subtitle = "在播放器点喜欢图标，喜欢的歌都在这里",
+        )
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize().background(Color.White),
+            contentPadding = PaddingValues(vertical = 6.dp),
+        ) {
+            items(songs) { song ->
+                SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
             }
         }
     }

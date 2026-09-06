@@ -19,11 +19,13 @@ class RecentViewModel : ViewModel() {
     init { load() }
 
     fun load() {
-        val ids = PrefsManager.getRecentIdsString()
+        val ids = PrefsManager.getRecentIds()
         if (ids.isEmpty()) return
         viewModelScope.launch {
             _isLoading.value = true
-            _songs.value = MusicRepository.getRecentSongs(ids, 1)
+            // 后端按歌曲 ID 降序返回，此处重排为点播顺序（最新点播在前）
+            val fetched = MusicRepository.getRecentSongs(ids.joinToString(","), 1) ?: emptyList()
+            _songs.value = fetched.filter { it.id in ids }.sortedBy { ids.indexOf(it.id) }
             _isLoading.value = false
         }
     }

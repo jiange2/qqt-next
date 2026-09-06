@@ -4,6 +4,10 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.qqt.music.data.api.ApiClient
 import com.qqt.music.data.api.model.*
+import com.qqt.music.data.local.PrefsManager
+
+/** 评分提交结果：成功 / 后端判定已评过（rate_already，每人每首仅一次）/ 网络或响应异常 */
+enum class RatingOutcome { SUCCESS, ALREADY_RATED, FAILED }
 
 object MusicRepository {
     private val service = ApiClient.apiService
@@ -58,14 +62,6 @@ object MusicRepository {
         } catch (e: Exception) { null }
     }
 
-    suspend fun getArtists(page: Int): List<Artist> {
-        return try {
-            val data = ApiClient.buildData(mapOf("method_name" to "artist_list", "page" to page))
-            val resp = service.callApi(data)
-            parseArray(resp.get("ONLINE_MP3"))
-        } catch (e: Exception) { emptyList() }
-    }
-
     suspend fun getAlbums(page: Int): List<Album> {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "album_list", "page" to page))
@@ -83,14 +79,6 @@ object MusicRepository {
             val total = resp.get("total_records")?.takeIf { it.isJsonPrimitive }?.asString?.toIntOrNull() ?: -1
             parseArray<Album>(resp.get("ONLINE_MP3")) to total
         } catch (e: Exception) { emptyList<Album>() to -1 }
-    }
-
-    suspend fun getPlaylists(page: Int): List<Playlist> {
-        return try {
-            val data = ApiClient.buildData(mapOf("method_name" to "playlist", "page" to page))
-            val resp = service.callApi(data)
-            parseArray(resp.get("ONLINE_MP3"))
-        } catch (e: Exception) { emptyList() }
     }
 
     suspend fun getCategories(page: Int): List<Category> {
@@ -117,17 +105,9 @@ object MusicRepository {
         } catch (e: Exception) { emptyList() }
     }
 
-    suspend fun getAlbumSongs(albumId: String, page: Int, userId: Int = 0): List<Song> {
+    suspend fun getAlbumSongs(albumId: String, userId: Int = 0): List<Song> {
         return try {
-            val data = ApiClient.buildData(mapOf("method_name" to "album_songs", "album_id" to albumId, "page" to page, "user_id" to userId))
-            val resp = service.callApi(data)
-            parseArray(resp.get("ONLINE_MP3"))
-        } catch (e: Exception) { emptyList() }
-    }
-
-    suspend fun getPlaylistSongs(playlistId: String, page: Int, userId: Int = 0): List<Playlist> {
-        return try {
-            val data = ApiClient.buildData(mapOf("method_name" to "playlist_songs", "playlist_id" to playlistId, "page" to page, "user_id" to userId))
+            val data = ApiClient.buildData(mapOf("method_name" to "album_songs", "album_id" to albumId, "user_id" to userId))
             val resp = service.callApi(data)
             parseArray(resp.get("ONLINE_MP3"))
         } catch (e: Exception) { emptyList() }
@@ -141,12 +121,17 @@ object MusicRepository {
         } catch (e: Exception) { emptyList() }
     }
 
-    suspend fun getRecentSongs(songIds: String, page: Int, userId: Int = 0): List<Song> {
+    /** get_recent_songs 每页条数（后端硬编码） */
+    const val RECENT_PAGE_SIZE = 10
+
+    /** 按 ID 串查歌曲详情（最近播放/收藏的换详情通道）；后端按歌曲 ID 降序分页，返回顺序与传入
+     *  顺序无关，需调用方自行重排；返回 null 表示请求失败（区别于成功但无数据） */
+    suspend fun getRecentSongs(songIds: String, page: Int, userId: Int = 0): List<Song>? {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "get_recent_songs", "songs_ids" to songIds, "page" to page, "user_id" to userId))
             val resp = service.callApi(data)
             parseArray(resp.get("ONLINE_MP3"))
-        } catch (e: Exception) { emptyList() }
+        } catch (e: Exception) { null }
     }
 
     suspend fun searchSongs(query: String, page: Int, userId: Int = 0): List<Song> {
@@ -164,5 +149,27 @@ object MusicRepository {
             val arr = resp.getAsJsonArray("ONLINE_MP3")
             arr?.get(0)?.asJsonObject?.get("success")?.asString == "1"
         } catch (e: Exception) { false }
+    }
+
+    /** 提交歌曲评分（song_rating）：归属设备 ID（ADR 0007），仅此请求携带；rate 为 1–5 */
+    suspend fun submitRating(songId: String, rate: Int): RatingOutcome {
+        return try {
+            val data = ApiClient.buildData(
+                mapOf(
+                    "method_name" to "song_rating",
+                    "post_id" to songId,
+                    "user_id" to PrefsManager.getOrCreateDeviceId(),
+                    "rate" to rate,
+                ),
+            )
+            val resp = service.callApi(data)
+            val success = resp.getAsJsonArray("ONLINE_MP3")
+                ?.firstOrNull()?.asJsonObject?.get("success")?.asString
+            when (success) {
+                "1" -> RatingOutcome.SUCCESS
+                "0" -> RatingOutcome.ALREADY_RATED
+                else -> RatingOutcome.FAILED
+            }
+        } catch (e: Exception) { RatingOutcome.FAILED }
     }
 }

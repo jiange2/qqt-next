@@ -2,6 +2,7 @@ package com.qqt.music.viewmodel
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,8 +12,11 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
+import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
+import com.qqt.music.player.PlayerSettingsManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +52,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private val _queue = MutableStateFlow<List<Song>>(emptyList())
     val queue: StateFlow<List<Song>> = _queue.asStateFlow()
 
+    // 当前歌曲在队列中的索引，-1 表示未开始播放
+    private val _currentIndex = MutableStateFlow(-1)
+    val currentIndex: StateFlow<Int> = _currentIndex.asStateFlow()
+
     private val _currentPosition = MutableStateFlow(0L)
     val currentPosition: StateFlow<Long> = _currentPosition.asStateFlow()
 
@@ -61,10 +69,15 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private var currentCategoryId: Int = -1
     private var currentQueue: List<Song> = emptyList()
 
+    /** 分钟模式定时倒计时协程；播完本曲模式无倒计时，由切曲事件结算 */
+    private var sleepJob: Job? = null
+
     init {
         startPositionPolling()
         // 延迟连接到 Service，确保 Service 已启动
         connectToService()
+        // Activity 重建时续跑未到点的分钟模式定时
+        if (PlayerSettingsManager.sleepTimer.value?.endOfTrack == false) restartSleepTicker()
         Log.d(TAG, "PlayerViewModel created (single ExoPlayer architecture)")
     }
 
@@ -78,6 +91,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 MediaControllerManager.mediaController.collect { controller ->
                     if (controller != null && mediaController == null) {
                         mediaController = controller
+                        // 恢复持久化倍速（单例在 MainActivity.init 时已载入）
+                        controller.setPlaybackSpeed(PlayerSettingsManager.speed.value)
                         setupPlayerListener()
                         Log.d(TAG, "✅ connected to MusicPlayerService")
                     }
@@ -97,10 +112,12 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val idx = mediaController?.currentMediaItemIndex ?: 0
+                _currentIndex.value = idx
                 val song = currentQueue.getOrNull(idx)
                 _currentSong.value = song
                 _duration.value = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
+                handleSleepTimerOnTransition(reason)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -166,10 +183,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
         _queue.value = queue
         _currentSong.value = song
+        _currentIndex.value = startIndex
 
         val items = queue.map { track ->
             MediaItem.Builder()
-                .setUri(track.url)
+                .setUri(resolveUri(track))
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(track.title)
@@ -203,10 +221,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
         _queue.value = tracks
         _currentSong.value = song
+        _currentIndex.value = startIndex
 
         val items = tracks.map { track ->
             MediaItem.Builder()
-                .setUri(track.url)
+                .setUri(resolveUri(track))
                 .setMediaMetadata(
                     MediaMetadata.Builder()
                         .setTitle(track.title)
@@ -244,9 +263,106 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         Log.d(TAG, "⏮️ skip to previous")
     }
 
+    /** 队列内跳播：不重建队列，直接切到队列第 index 首（队列入口浮层点选） */
+    fun skipTo(index: Int) {
+        val controller = mediaController ?: return
+        if (index < 0 || index >= currentQueue.size) return
+        controller.seekTo(index, 0L)
+        controller.play()
+        Log.d(TAG, "⏭️ skip to queue #$index")
+    }
+
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         Log.d(TAG, "📍 seek to ${positionMs}ms")
+    }
+
+    /** 设置倍速（变速不变调），持久化跨启动保持 */
+    fun setSpeed(speed: Float) {
+        PlayerSettingsManager.setSpeed(speed)
+        mediaController?.setPlaybackSpeed(speed)
+        Log.d(TAG, "🐢 playback speed: ${speed}x")
+    }
+
+    /** 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer */
+    fun setPlayMode(mode: PlayerSettingsManager.PlayMode) {
+        PlayerSettingsManager.setPlayMode(mode)
+        Log.d(TAG, "🎛️ play mode: ${mode.label}")
+    }
+
+    /** 菜单打开时继续点主控图标：按 随机→顺序→单曲循环 轮转到下一模式 */
+    fun cyclePlayMode() {
+        val modes = PlayerSettingsManager.PlayMode.values()
+        val next = modes[(PlayerSettingsManager.playMode.value.ordinal + 1) % modes.size]
+        setPlayMode(next)
+    }
+
+    /** 已下载歌曲用本地文件 URI 离线直读，未下载走网络（ADR 0003） */
+    private fun resolveUri(track: Song): Uri =
+        DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
+
+    // ========== 定时关闭 ==========
+
+    /**
+     * 「播完本曲」在切曲时结算：自然放完（AUTO）→ 暂停并撤销；手动切歌/点播新歌（SEEK/PLAYLIST_CHANGED）
+     * 视为用户主动干预，直接撤销定时（共识：自动化被显式操作打断即退场）。分钟模式与切曲无关。
+     */
+    private fun handleSleepTimerOnTransition(reason: Int) {
+        val timer = PlayerSettingsManager.sleepTimer.value ?: return
+        if (!timer.endOfTrack) return
+        when (reason) {
+            Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> {
+                mediaController?.pause()
+                PlayerSettingsManager.clearSleepTimer()
+                Log.d(TAG, "⏱️ end-of-track timer fired, paused")
+            }
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+            Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+            -> {
+                PlayerSettingsManager.clearSleepTimer()
+                Log.d(TAG, "⏱️ end-of-track timer cancelled by user navigation (reason=$reason)")
+            }
+        }
+    }
+
+    fun startSleepTimer(minutes: Int) {
+        PlayerSettingsManager.startSleepTimer(minutes)
+        restartSleepTicker()
+        Log.d(TAG, "⏱️ sleep timer: ${minutes}min")
+    }
+
+    fun startSleepTimerEndOfTrack() {
+        sleepJob?.cancel()
+        PlayerSettingsManager.startEndOfTrackTimer()
+        Log.d(TAG, "⏱️ sleep timer: end of track")
+    }
+
+    fun clearSleepTimer() {
+        sleepJob?.cancel()
+        PlayerSettingsManager.clearSleepTimer()
+        Log.d(TAG, "⏱️ sleep timer cleared")
+    }
+
+    /** 分钟模式倒计时：到点暂停并撤销定时；Activity 重建时从已有到点时刻续跑 */
+    private fun restartSleepTicker() {
+        sleepJob?.cancel()
+        val timer = PlayerSettingsManager.sleepTimer.value ?: return
+        if (timer.endOfTrack) return
+        sleepJob = viewModelScope.launch {
+            while (isActive) {
+                val remainMs = timer.endAtElapsedRealtime - SystemClock.elapsedRealtime()
+                if (remainMs <= 0L) {
+                    PlayerSettingsManager.updateSleepRemaining(0L)
+                    mediaController?.pause()
+                    PlayerSettingsManager.clearSleepTimer()
+                    Log.d(TAG, "⏱️ sleep timer fired, paused")
+                    break
+                }
+                // 向上取整到秒，显示从 90:00 递减；250ms tick 保证到点误差小
+                PlayerSettingsManager.updateSleepRemaining((remainMs + 999) / 1000)
+                delay(250)
+            }
+        }
     }
 
     override fun onCleared() {

@@ -64,6 +64,9 @@ dependencies {
     // Image loading
     implementation(libs.coil.compose)
 
+    // Palette: 封面主色提取（播放页动态背景，ADR 0005）
+    implementation(libs.androidx.palette.ktx)
+
     // Navigation
     implementation(libs.navigation.compose)
 
