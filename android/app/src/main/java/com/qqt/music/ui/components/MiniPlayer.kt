@@ -34,7 +34,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
 
 /**
  * 迷你播放器：与底部导航栏连成一体的扁平长条（无圆角，带轻微投影拉开层次），
- * 顶部嵌入实时进度细条（2 物理像素），播放键为品牌渐变圆钮；
+ * 顶部嵌入实时进度细条（4 物理像素），播放键为品牌渐变圆钮；
  * 白色底延伸至屏幕底部，内容自动抬升到系统手势区之上。
  */
 @Composable
@@ -49,8 +49,8 @@ fun MiniPlayer(
     val currentPosition by playerViewModel.currentPosition.collectAsState()
     val duration by playerViewModel.duration.collectAsState()
 
-    // 细线宽 = 2 物理像素：1px 偏纤细，加粗 1px 保证任何密度下清晰可见
-    val hairlineThickness = with(LocalDensity.current) { (2f / density).dp }
+    // 细线宽 = 4 物理像素：由 1px 逐轮加粗而来，任何密度下清晰可见
+    val hairlineThickness = with(LocalDensity.current) { (4f / density).dp }
     Surface(
         modifier = modifier
             .fillMaxWidth()

@@ -115,8 +115,8 @@ fun MusicBottomBar(
             frame.lineTo(cx - hw, 0f)
             frame.addTopFrameMid(cx, this)
             frame.lineTo(size.width, 0f)
-            // 描边宽 = 0.5dp 基础上再加 1 物理像素，与 MiniPlayer 细线同步加粗
-            drawPath(frame, Hairline, style = Stroke(width = 0.5.dp.toPx() + 1f))
+            // 描边宽 = 0.5dp 基础上再加 3 物理像素，与 MiniPlayer 细线同步加粗
+            drawPath(frame, Hairline, style = Stroke(width = 0.5.dp.toPx() + 3f))
         }
 
         // Center FAB：品牌渐变 + 柔光阴影（投在凸包白底上），承载「我的下载」；
@@ -142,7 +142,7 @@ fun MusicBottomBar(
                 Icons.Default.LibraryMusic,
                 contentDescription = "我的下载",
                 tint = Color.White,
-                modifier = Modifier.size(29.dp),
+                modifier = Modifier.size(27.dp),
             )
         }
     }
@@ -151,15 +151,15 @@ fun MusicBottomBar(
 /** 导航栏高度（bottomBar 槽高，MiniPlayer 紧贴其下） */
 private val NavHeight = 64.dp
 /** 中央圆钮直径 */
-private val FabSize = 58.dp
+private val FabSize = 54.dp
 /** 中央圆钮凸出栏顶的高度（圆钮底沿 = FabSize − FabOverhang，近似对齐 Tab 内容底） */
-private val FabOverhang = 6.dp
-/** 凸包半径：圆钮半径 29dp + 约 6dp 白边（轮廓裁剪与外框描边共用） */
-private val BulgeRadius = 35.dp
+private val FabOverhang = 4.dp
+/** 凸包半径：圆钮半径 27dp + 约 6dp 白边（轮廓裁剪与外框描边共用） */
+private val BulgeRadius = 33.dp
 /** 凸包圆心（= 圆钮中心）距栏顶的高度 */
 private val BulgeCenterY = FabSize / 2 - FabOverhang
 /** 凸包渐起点半宽：边框未到圆钮侧边就开始上斜，弧不突兀 */
-private val BulgeHalfWidth = 48.dp
+private val BulgeHalfWidth = 45.dp
 
 /** 外框中段：cubic 渐起 → 凸包圆弧（240°→300°，仅顶部小帽）→ cubic 渐落，切线连续且曲率渐进（G1） */
 private fun Path.addTopFrameMid(cx: Float, density: Density) {

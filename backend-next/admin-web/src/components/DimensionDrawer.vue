@@ -4,7 +4,7 @@
     <div v-loading="loading" class="drawer-body">
     <div class="toolbar">
       <span class="count">共 {{ items.length }} {{ unit }}</span>
-      <el-button type="primary" plain @click="openClaim">添加{{ entity }}</el-button>
+      <el-button v-if="!isBooks" type="primary" plain @click="openClaim">添加{{ entity }}</el-button>
       <el-button @click="sortByName">按名称排序</el-button>
       <el-button @click="sortByNameDesc">按名称倒序</el-button>
       <el-button type="success" :disabled="!dirty" :loading="saving" @click="saveOrder">保存顺序</el-button>
@@ -38,11 +38,11 @@
       <el-table-column type="index" label="#" width="50" />
       <el-table-column label="图片" width="64">
         <template #default="{ row }">
-          <el-image v-if="row.image" :src="thumbUrl(row.image)" style="width: 40px" fit="cover" />
+          <el-image v-if="row.image" :src="rowThumb(row.image)" style="width: 40px" fit="cover" />
         </template>
       </el-table-column>
       <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-      <el-table-column v-if="isCategory" label="歌曲数" width="70">
+      <el-table-column v-if="isCategory || isBooks" :label="isBooks ? '章节数' : '歌曲数'" width="70">
         <template #default="{ row }">{{ row.songCount ?? 0 }}</template>
       </el-table-column>
       <el-table-column label="状态" width="70">
@@ -50,7 +50,7 @@
           <el-tag :type="row.status ? 'success' : 'info'" size="small">{{ row.status ? "上架" : "下架" }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="70">
+      <el-table-column v-if="!isBooks" label="操作" width="70">
         <template #default="{ row }">
           <el-button link type="danger" size="small" @click="remove(row)">移除</el-button>
         </template>
@@ -100,53 +100,70 @@
 </template>
 
 <script setup lang="ts">
-// 维度顺序抽屉（backend-next ADR 0007 / 0009）：
+// 维度顺序抽屉（backend-next ADR 0007 / 0009 / 0011）：
 // - kind="albums"：专辑内歌曲排序（移除 = 置空专辑归属；添加 = 认领无专辑且有分类的歌曲）
 // - kind="categories"：分类内专辑排序（ADR 0009 层级化；移除 = 移出分类；添加 = 认领未分类专辑）
+// - kind="books"：分类内书籍排序（ADR 0011；书籍必有分类，仅排序——无移除/认领）
 // 列表按维度顺序展示；拖拽或「按名称排序」/「按名称倒序」调整（显式保存）；新加入插入最前
 import { computed, nextTick, ref, watch } from "vue";
 import { Rank } from "@element-plus/icons-vue";
 import Sortable from "sortablejs";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../api";
-import { thumbUrl } from "../media";
+import { bookThumbUrl, thumbUrl } from "../media";
 
 type Row = { id: number; name: string; image: string; status: boolean; songCount?: number };
 
-const props = defineProps<{ kind: "categories" | "albums"; parent: { id: number; name: string } }>();
+const props = defineProps<{
+  kind: "categories" | "albums" | "books";
+  parent: { id: number; name: string };
+}>();
 const open = defineModel<boolean>({ required: true });
 
 const PAGE_SIZE = 50;
 const isCategory = computed(() => props.kind === "categories");
-const entity = computed(() => (isCategory.value ? "专辑" : "歌曲"));
-const unit = computed(() => (isCategory.value ? "张" : "首"));
+const isBooks = computed(() => props.kind === "books");
+const entity = computed(() => (isCategory.value ? "专辑" : isBooks.value ? "书籍" : "歌曲"));
+const unit = computed(() => (isCategory.value ? "张" : isBooks.value ? "本" : "首"));
 const base = computed(() =>
   isCategory.value
     ? `/admin/categories/${props.parent.id}/albums`
-    : `/admin/${props.kind}/${props.parent.id}/songs`,
+    : isBooks.value
+      ? `/admin/categories/${props.parent.id}/books`
+      : `/admin/${props.kind}/${props.parent.id}/songs`,
 );
 const drawerTitle = computed(() => `${props.parent.name} — ${entity.value}`);
-const claimTitle = computed(() => `添加${entity.value}到${isCategory.value ? "分类" : "专辑"}「${props.parent.name}」`);
+const claimTitle = computed(
+  () => `添加${entity.value}到${isCategory.value || isBooks.value ? "分类" : "专辑"}「${props.parent.name}」`,
+);
 const claimHint = computed(() =>
-  isCategory.value ? "仅列未分类专辑" : "仅列无专辑且有分类的歌曲",
+  isCategory.value || isBooks.value ? "仅列未归属条目" : "仅列无专辑且有分类的歌曲",
 );
 
-// 服务端行结构两种形态：歌曲（title/thumbnail）与专辑（name/image/_count.songs），统一为展示行
+// 服务端行结构三种形态：歌曲（title/thumbnail）与专辑（name/image/_count.songs）、
+// 书籍（name/image/_count.chapters，image 已由服务端映射自 cover），统一为展示行
 function normalize(it: Record<string, unknown>): Row {
-  return isCategory.value
-    ? {
-        id: it.id as number,
-        name: it.name as string,
-        image: it.image as string,
-        status: it.status as boolean,
-        songCount: (it as { _count?: { songs?: number } })._count?.songs ?? 0,
-      }
-    : {
-        id: it.id as number,
-        name: it.title as string,
-        image: it.thumbnail as string,
-        status: it.status as boolean,
-      };
+  if (isCategory.value || isBooks.value) {
+    const cnt = (it as { _count?: { songs?: number; chapters?: number } })._count;
+    return {
+      id: it.id as number,
+      name: it.name as string,
+      image: it.image as string,
+      status: it.status as boolean,
+      songCount: cnt?.songs ?? cnt?.chapters ?? 0,
+    };
+  }
+  return {
+    id: it.id as number,
+    name: it.title as string,
+    image: it.thumbnail as string,
+    status: it.status as boolean,
+  };
+}
+
+// 书籍封面在 images/books/thumbs/，与音乐缩略图目录不同（ADR 0011）
+function rowThumb(name: string): string {
+  return isBooks.value ? bookThumbUrl(name) : thumbUrl(name);
 }
 
 const items = ref<Row[]>([]);

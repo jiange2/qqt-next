@@ -7,12 +7,14 @@
         <el-menu-item index="/categories">分类管理</el-menu-item>
         <el-menu-item index="/artists">艺术家管理</el-menu-item>
         <el-menu-item index="/albums">专辑管理</el-menu-item>
+        <el-menu-item index="/books">书籍管理</el-menu-item>
         <el-menu-item index="/banners">横幅管理</el-menu-item>
         <el-menu-item index="/playlists">播放列表</el-menu-item>
         <el-menu-item index="/trending">热门榜</el-menu-item>
         <el-menu-item index="/users">用户管理</el-menu-item>
         <el-menu-item index="/reports">举报管理</el-menu-item>
         <el-menu-item index="/suggestions">歌曲建议</el-menu-item>
+        <el-menu-item index="/stats">数据统计</el-menu-item>
         <el-menu-item index="/notifications">消息推送</el-menu-item>
         <el-menu-item index="/settings">应用设置</el-menu-item>
         <el-menu-item index="/oss">OSS 管理</el-menu-item>

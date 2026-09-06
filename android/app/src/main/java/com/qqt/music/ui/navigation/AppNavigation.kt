@@ -33,6 +33,8 @@ import com.qqt.music.ui.screens.albumsongs.AlbumSongsScreen
 import com.qqt.music.ui.screens.bannersongs.BannerSongsScreen
 import com.qqt.music.ui.screens.category.CategoryScreen
 import com.qqt.music.ui.screens.categoryalbums.CategoryAlbumsScreen
+import com.qqt.music.ui.screens.booklist.BookListScreen
+import com.qqt.music.ui.screens.reader.ReaderScreen
 import com.qqt.music.ui.screens.download.DownloadScreen
 import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
@@ -41,6 +43,9 @@ import com.qqt.music.ui.screens.mylist.MyListScreen
 import com.qqt.music.ui.screens.mylist.PlaylistDetailScreen
 import com.qqt.music.ui.screens.player.PlayerScreen
 import com.qqt.music.ui.screens.recent.RecentScreen
+import com.qqt.music.ui.screens.search.ArtistSongsScreen
+import com.qqt.music.ui.screens.search.SearchScreen
+import com.qqt.music.ui.screens.search.SearchSongsScreen
 import com.qqt.music.ui.screens.settings.SettingsScreen
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
@@ -58,8 +63,13 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isBannerSongs = currentRoute?.startsWith("banner_songs") == true
     val isAlbumSongs = currentRoute?.startsWith("album_songs") == true
     val isCategoryAlbums = currentRoute?.startsWith("category_albums") == true
+    val isBookList = currentRoute?.startsWith("book_list") == true
+    val isReader = currentRoute?.startsWith("reader") == true
     val isMyPlaylistDetail = currentRoute?.startsWith("mylist_detail") == true
-    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums || isMyPlaylistDetail
+    val isSearchSongs = currentRoute?.startsWith("search_songs") == true
+    val isArtistSongs = currentRoute?.startsWith("artist_songs") == true
+    val isSearch = currentRoute == Screen.Search.route
+    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
     // 关闭时下层原样即时露出（无任何过渡动画），滚动位置等页面状态全程保留。
     // 系统返回由 PlayerScreen 内部 BackHandler 接管（统一走整页下滑收出），顶层无需重复拦截
@@ -77,7 +87,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isMyPlaylistDetail,
+            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isBookList && !isReader && !isMyPlaylistDetail && !isSearchSongs && !isArtistSongs && !isSearch,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -85,7 +95,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         MusicTopBar(
                             title = Screen.titleOf(currentRoute),
                             onMenuClick = { scope.launch { drawerState.open() } },
-                            onSearchClick = {},
+                            onSearchClick = { navController.navigate(Screen.Search.route) },
                             showBackButton = showBackButton,
                             onBackClick = { navController.popBackStack() },
                         )
@@ -142,8 +152,10 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.Category.route) {
                         CategoryScreen(
                             onCategoryClick = { cat ->
+                                // 分类分流（书籍阅读域 ADR 0011）：书籍分类进书单页，音乐分类走既有专辑页
                                 CategoryNav.category = cat
-                                navController.navigate("category_albums/${cat.id}")
+                                if (cat.isBook) navController.navigate("book_list/${cat.id}")
+                                else navController.navigate("category_albums/${cat.id}")
                             },
                         )
                     }
@@ -182,6 +194,40 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.AlbumSongs.route) {
                         AlbumSongsScreen(playerViewModel = playerViewModel)
                     }
+                    composable(Screen.Search.route) {
+                        SearchScreen(
+                            playerViewModel = playerViewModel,
+                            onAlbumClick = { album ->
+                                AlbumNav.album = album
+                                navController.navigate("album_songs/${album.id}")
+                            },
+                            onArtistClick = { artist ->
+                                ArtistNav.artist = artist
+                                navController.navigate(Screen.ArtistSongs.route)
+                            },
+                            onMoreSongs = { query ->
+                                SearchNav.query = query
+                                navController.navigate(Screen.SearchSongs.route)
+                            },
+                        )
+                    }
+                    composable(Screen.SearchSongs.route) {
+                        SearchSongsScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.ArtistSongs.route) {
+                        ArtistSongsScreen(playerViewModel = playerViewModel)
+                    }
+                    composable(Screen.BookList.route) {
+                        BookListScreen(
+                            onBookClick = { book ->
+                                ReaderNav.book = book
+                                navController.navigate("reader/${book.id}")
+                            },
+                        )
+                    }
+                    composable(Screen.Reader.route) {
+                        ReaderScreen()
+                    }
                     composable(Screen.CategoryAlbums.route) {
                         CategoryAlbumsScreen(
                             onAlbumClick = { album ->
@@ -199,12 +245,15 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     }
                 }
                 }
-                // Mini player below the scaffold：与底部导航连为一体的扁平长条
-                MiniPlayer(
-                    playerViewModel = playerViewModel,
-                    onPlayerClick = { playerOverlay = true },
-                    showTopDivider = !showBottomNav,
-                )
+                // Mini player below the scaffold：与底部导航连为一体的扁平长条；
+                // 书籍域两页（书单/阅读）不挂——阅读场景与音乐控件互不干扰（ADR 0011）
+                if (!isBookList && !isReader) {
+                    MiniPlayer(
+                        playerViewModel = playerViewModel,
+                        onPlayerClick = { playerOverlay = true },
+                        showTopDivider = !showBottomNav,
+                    )
+                }
             }
         }
 

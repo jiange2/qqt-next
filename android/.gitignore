@@ -8,3 +8,8 @@ captures/
 .externalNativeBuild/
 .cxx/
 build
+
+# release signing (do not commit)
+keystore.properties
+*.keystore
+*.jks

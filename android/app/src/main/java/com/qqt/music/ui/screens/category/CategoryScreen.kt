@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.outlined.Category
 import androidx.compose.material3.*
@@ -106,8 +107,9 @@ private fun CategoryCircleItem(category: Category, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
             )
             if (category.imageThumb.isBlank() && category.image.isBlank()) {
+                // 无图占位图标按分类类型区分（书籍阅读域 ADR 0011）：书籍分类用书本图标
                 Icon(
-                    Icons.Default.MusicNote,
+                    if (category.isBook) Icons.AutoMirrored.Filled.MenuBook else Icons.Default.MusicNote,
                     contentDescription = null,
                     tint = InkFaint,
                     modifier = Modifier.fillMaxSize(0.35f),

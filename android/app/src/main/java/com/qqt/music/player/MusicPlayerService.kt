@@ -102,12 +102,6 @@ class MusicPlayerService : MediaSessionService() {
             PlayerSettingsManager.eqPreset.collect { applyEqPreset(it) }
         }
 
-        // 3.6 播放模式：初始应用持久化值，随后收集变化热切换（ADR 0008）
-        applyPlayMode(PlayerSettingsManager.playMode.value)
-        serviceScope.launch {
-            PlayerSettingsManager.playMode.collect { applyPlayMode(it) }
-        }
-
         // 4. 创建 MediaSession
         val sessionActivityIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -120,6 +114,14 @@ class MusicPlayerService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
+
+        // 4.5 播放模式：初始应用持久化值，随后收集变化热切换（ADR 0008）。
+        // 必须在 mediaSession 创建之后：applyPlayMode 经 mediaSession?.player 取播放器，
+        // 放在 session 之前会因 mediaSession 为 null 空转，引擎停留默认 REPEAT_MODE_OFF（播完即止）
+        applyPlayMode(PlayerSettingsManager.playMode.value)
+        serviceScope.launch {
+            PlayerSettingsManager.playMode.collect { applyPlayMode(it) }
+        }
 
         // 5. WiFi Lock 跟随播放状态自动获取/释放
         // 以及监听播放进度和元数据变化

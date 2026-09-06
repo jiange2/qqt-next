@@ -56,9 +56,10 @@ object MusicRepository {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "app_details"))
             val resp = service.callApi(data)
+            // 旧契约单行结果也包在 ONLINE_MP3 数组里（api.php array_push，backend-next 逐字复刻），取首元素解析
             val mp3 = resp.get("ONLINE_MP3") ?: return null
-            if (!mp3.isJsonObject) return null
-            gson.fromJson(mp3, AppUpdateInfo::class.java)
+            val row = if (mp3.isJsonArray) mp3.asJsonArray.firstOrNull() ?: return null else mp3
+            gson.fromJson(row, AppUpdateInfo::class.java)
         } catch (e: Exception) { null }
     }
 
@@ -79,6 +80,35 @@ object MusicRepository {
             val total = resp.get("total_records")?.takeIf { it.isJsonPrimitive }?.asString?.toIntOrNull() ?: -1
             parseArray<Album>(resp.get("ONLINE_MP3")) to total
         } catch (e: Exception) { emptyList<Album>() to -1 }
+    }
+
+    /** 分类书籍列表（书籍阅读域 ADR 0011）：形态对齐 getCategoryAlbums */
+    suspend fun getCategoryBooks(catId: String, page: Int): Pair<List<Book>, Int> {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "cat_books", "cat_id" to catId, "page" to page))
+            val resp = service.callApi(data)
+            val total = resp.get("total_records")?.takeIf { it.isJsonPrimitive }?.asString?.toIntOrNull() ?: -1
+            parseArray<Book>(resp.get("ONLINE_MP3")) to total
+        } catch (e: Exception) { emptyList<Book>() to -1 }
+    }
+
+    /** 全书章节目录：一次下发全部章（服务端按 id ASC）；返回 null 表示请求失败（区别于空书） */
+    suspend fun getBookChapters(bookId: String): List<BookChapter>? {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "book_chapters", "book_id" to bookId))
+            val resp = service.callApi(data)
+            parseArray<BookChapter>(resp.get("ONLINE_MP3"))
+        } catch (e: Exception) { null }
+    }
+
+    /** 单章正文：book_chapter 返回外包数组的单对象；不可见/失败返回 null（不可见时服务端返回空对象，id 为空串） */
+    suspend fun getChapterContent(chapterId: String): ChapterContent? {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "book_chapter", "chapter_id" to chapterId))
+            val resp = service.callApi(data)
+            val first = resp.getAsJsonArray("ONLINE_MP3")?.firstOrNull() ?: return null
+            gson.fromJson(first, ChapterContent::class.java).takeIf { it.id.isNotBlank() }
+        } catch (e: Exception) { null }
     }
 
     suspend fun getCategories(page: Int): List<Category> {
@@ -134,9 +164,32 @@ object MusicRepository {
         } catch (e: Exception) { null }
     }
 
+    /** 纯歌曲搜索（搜索页「查看更多歌曲」的全量分页通道）：按歌名模糊匹配，每页 10 条 */
     suspend fun searchSongs(query: String, page: Int, userId: Int = 0): List<Song> {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "song_search", "search_text" to query, "search_type" to "songs", "page" to page, "user_id" to userId))
+            val resp = service.callApi(data)
+            parseArray(resp.get("ONLINE_MP3"))
+        } catch (e: Exception) { emptyList() }
+    }
+
+    /** 组合搜索（搜索页首屏）：不传 search_type 走后端组合分支，一次返回歌曲（分页）/
+     *  专辑/艺术家（后两段各 20 条截断）三段；返回 null 表示请求失败 */
+    suspend fun searchAll(query: String, page: Int = 1, userId: Int = 0): SearchResults? {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "song_search", "search_text" to query, "page" to page, "user_id" to userId))
+            val resp = service.callApi(data)
+            val mp3 = resp.get("ONLINE_MP3") ?: return null
+            if (!mp3.isJsonObject) return null
+            gson.fromJson(mp3, SearchResults::class.java)
+        } catch (e: Exception) { null }
+    }
+
+    /** 艺术家歌曲列表（artist_name_songs 按名字精确匹配逗号分隔歌手字段），每页 10 条，id 倒序；
+     *  重名艺术家会进同一结果页（旧契约如此） */
+    suspend fun getArtistSongs(artistName: String, page: Int, userId: Int = 0): List<Song> {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "artist_name_songs", "artist_name" to artistName, "page" to page, "user_id" to userId))
             val resp = service.callApi(data)
             parseArray(resp.get("ONLINE_MP3"))
         } catch (e: Exception) { emptyList() }

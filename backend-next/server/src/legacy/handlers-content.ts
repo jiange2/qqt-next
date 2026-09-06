@@ -19,6 +19,9 @@ export type LegacyCtx = {
   base: string;
   data: Record<string, string>;
   settings: Awaited<ReturnType<typeof getSettings>>;
+  /** 客户端 IP（x-forwarded-for 首段 → req.ip）与 User-Agent，访问事实落库用（仓库级 ADR 0008） */
+  ip: string;
+  userAgent: string;
 };
 
 const songInclude = {
@@ -207,6 +210,8 @@ export async function catList(ctx: LegacyCtx): Promise<unknown> {
     total_records: S(total),
     cid: S(c.id),
     category_name: c.name,
+    // 分类类型（书籍阅读域 ADR 0011）：1=音乐，2=书籍；App 据此分流点击去向
+    category_type: S(c.type === "book" ? 2 : 1),
     category_image: `${base}images/${c.image}`,
     category_image_thumb: `${base}images/thumbs/${c.image}`,
   }));
@@ -232,6 +237,68 @@ export async function catAlbums(ctx: LegacyCtx): Promise<unknown> {
     album_image: `${base}images/${a.image}`,
     album_image_thumb: `${base}images/thumbs/${a.image}`,
   }));
+}
+
+// ---------------------------------------------------------------- 书籍（书籍阅读域 ADR 0011）
+
+/** 分类书籍列表：分页/形态完全对齐 cat_albums，行字段换书籍域命名；封面走 images/books/ 专属目录 */
+export async function catBooks(ctx: LegacyCtx): Promise<unknown> {
+  const { base, data } = ctx;
+  const catId = Number(data["cat_id"]);
+  if (!Number.isFinite(catId)) return [];
+  // 书籍可见性 = 书籍启用且所属分类启用（对齐 albumStatusFilter，ADR 0009/0011）
+  const where: Prisma.BookWhereInput = { status: true, category: { status: true }, categoryId: catId };
+  const total = await prisma.book.count({ where });
+  const rows = await prisma.book.findMany({
+    where,
+    // 维度顺序（ADR 0011）：分类内书籍排序，与 cat_albums 对称
+    orderBy: [{ categorySort: "asc" }, { id: "desc" }],
+    ...limitOffset(pageOf(data), 10),
+  });
+  return rows.map((b) => ({
+    total_records: S(total),
+    book_id: S(b.id),
+    book_name: b.name,
+    book_author: b.author,
+    book_cover: `${base}images/books/${b.cover}`,
+    book_cover_thumb: `${base}images/books/thumbs/${b.cover}`,
+  }));
+}
+
+/** 全书章节目录：章节无 sort 字段，按 id ASC 一次下发；书籍或分类不可见返回空 */
+export async function bookChapters(ctx: LegacyCtx): Promise<unknown> {
+  const bookId = Number(ctx.data["book_id"]);
+  if (!Number.isFinite(bookId)) return [];
+  const book = await prisma.book.findFirst({
+    where: { id: bookId, status: true, category: { status: true } },
+  });
+  if (!book) return [];
+  const rows = await prisma.chapter.findMany({
+    where: { bookId },
+    orderBy: { id: "asc" },
+    select: { id: true, title: true },
+  });
+  return rows.map((ch) => ({
+    chapter_id: S(ch.id),
+    chapter_title: ch.title,
+  }));
+}
+
+/** 单章正文：handler 返回单对象，routes 层自动外包数组（同 song_info 范式） */
+export async function bookChapter(ctx: LegacyCtx): Promise<unknown> {
+  const chapterId = Number(ctx.data["chapter_id"]);
+  if (!Number.isFinite(chapterId)) return {};
+  // 经章节反查归属链校验可见性：下架书/停用分类的章节不可读
+  const ch = await prisma.chapter.findFirst({
+    where: { id: chapterId, book: { status: true, category: { status: true } } },
+    select: { id: true, title: true, content: true },
+  });
+  if (!ch) return {};
+  return {
+    chapter_id: S(ch.id),
+    chapter_title: ch.title,
+    content: ch.content,
+  };
 }
 
 // ---------------------------------------------------------------- 艺术家
@@ -485,10 +552,11 @@ export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
     }));
   }
 
-  // 组合搜索（旧实现的 else 分支）
+  // 组合搜索（旧实现的 else 分支）：歌曲按关键词过滤——旧后端本就有 LIKE 过滤，复刻时漏掉，
+  // 此处补齐以对齐语义（复刻初期缺陷：组合搜索歌曲不按关键词过滤）
   const [songs, albums, artists] = await Promise.all([
     prisma.song.findMany({
-      where: songStatusFilter,
+      where: { ...songStatusFilter, title: { contains: text } },
       orderBy: { title: "asc" },
       ...limitOffset(page, 10),
       include: songInclude,

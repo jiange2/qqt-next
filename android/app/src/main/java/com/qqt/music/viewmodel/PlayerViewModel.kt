@@ -13,6 +13,7 @@ import androidx.media3.session.MediaController
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.download.DownloadManager
+import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
@@ -66,7 +67,6 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
     private var mediaController: MediaController? = null
-    private var currentCategoryId: Int = -1
     private var currentQueue: List<Song> = emptyList()
 
     /** 分钟模式定时倒计时协程；播完本曲模式无倒计时，由切曲事件结算 */
@@ -94,6 +94,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                         // 恢复持久化倍速（单例在 MainActivity.init 时已载入）
                         controller.setPlaybackSpeed(PlayerSettingsManager.speed.value)
                         setupPlayerListener()
+                        // 冷启动静默恢复上次播放（队列快照，ADR 0010）
+                        tryRestoreLastPlayed()
                         Log.d(TAG, "✅ connected to MusicPlayerService")
                     }
                 }
@@ -108,6 +110,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         mediaController?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 _isPlaying.value = playing
+                // 暂停立即保存；缓冲引起的假暂停（非 READY 态）不写盘（ADR 0010）
+                if (!playing && mediaController?.playbackState == Player.STATE_READY) {
+                    mediaController?.let { saveCurrentProgress(it) }
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -117,6 +123,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 _currentSong.value = song
                 _duration.value = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
+                // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）
+                song?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
+                // 切歌立即保存（ADR 0010）
+                mediaController?.let { saveCurrentProgress(it) }
                 handleSleepTimerOnTransition(reason)
             }
 
@@ -131,6 +141,12 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     else -> "UNKNOWN"
                 }
                 Log.d(TAG, "🎵 playback state: $state")
+                // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）
+                if (playbackState == Player.STATE_READY) {
+                    _currentSong.value?.let { song ->
+                        AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
+                    }
+                }
             }
         })
     }
@@ -144,8 +160,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     _currentPosition.value = controller.currentPosition.coerceAtLeast(0L)
                     _duration.value = controller.duration.coerceAtLeast(0L)
 
-                    // 每 10 个周期（5秒）保存一次进度
-                    if (pollCount++ % 10 == 0 && currentCategoryId != -1) {
+                    // 每 10 个周期（5秒）兜底保存一次（有当前歌即保存，ADR 0010）
+                    if (pollCount++ % 10 == 0 && _currentSong.value != null) {
                         saveCurrentProgress(controller)
                     }
                 }
@@ -155,14 +171,17 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     }
 
     // ========== 进度保存 ==========
+
+    /** 保存队列快照；距曲尾不足 3 秒按 0 存（ADR 0010） */
     private fun saveCurrentProgress(controller: MediaController) {
-        LastPlayedStore.save(
-            application,
-            categoryId = currentCategoryId,
-            trackIndex = controller.currentMediaItemIndex.coerceAtLeast(0),
-            positionMs = controller.currentPosition
-        )
-        Log.d(TAG, "💾 saved progress: categoryId=$currentCategoryId, idx=${controller.currentMediaItemIndex}, pos=${controller.currentPosition}ms")
+        val queue = currentQueue
+        if (queue.isEmpty()) return
+        val idx = controller.currentMediaItemIndex.coerceAtLeast(0)
+        val duration = controller.duration.coerceAtLeast(0L)
+        val pos = controller.currentPosition.coerceAtLeast(0L)
+        val savedPos = if (duration > 0 && duration - pos < 3_000L) 0L else pos
+        LastPlayedStore.save(application, queue, idx, savedPos)
+        Log.d(TAG, "💾 saved snapshot: ${queue.size} songs, idx=$idx, pos=${savedPos}ms")
     }
 
     // ========== 播放控制 ==========
@@ -177,27 +196,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         }
 
         val startIndex = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-        // 记录歌曲所属分类 ID，用于进度恢复时重建队列
-        currentCategoryId = song.catId.toIntOrNull() ?: -1
         currentQueue = queue
 
         _queue.value = queue
         _currentSong.value = song
         _currentIndex.value = startIndex
 
-        val items = queue.map { track ->
-            MediaItem.Builder()
-                .setUri(resolveUri(track))
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(track.title)
-                        .setArtist(track.artist)
-                        .setArtworkUri(Uri.parse(track.thumbnailBig))
-                        .build()
-                )
-                .build()
-        }
-        mediaController?.setMediaItems(items, startIndex, 0L)
+        mediaController?.setMediaItems(buildMediaItems(queue), startIndex, 0L)
         mediaController?.prepare()
         mediaController?.play()
 
@@ -207,38 +212,32 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     }
 
     /**
-     * 恢复上次播放的进度
+     * 恢复上次播放：重建队列、prepare 不 play，MiniPlayer 就位，点播放续播；
+     * 不写最近播放，守「点播过」语义（ADR 0010）。
      */
-    fun restoreLastPlayed(tracks: List<Song>, startIndex: Int, positionMs: Long) {
-        if (mediaController == null || tracks.isEmpty() || startIndex < 0) {
+    private fun restoreLastPlayed(tracks: List<Song>, startIndex: Int, positionMs: Long) {
+        if (mediaController == null || tracks.isEmpty() || startIndex !in tracks.indices) {
             Log.w(TAG, "⚠️ Cannot restore: controller=${mediaController != null}, tracks=${tracks.size}, idx=$startIndex")
             return
         }
 
-        val song = tracks.getOrNull(startIndex) ?: return
-        currentCategoryId = song.catId.toIntOrNull() ?: -1
+        val song = tracks[startIndex]
         currentQueue = tracks
 
         _queue.value = tracks
         _currentSong.value = song
         _currentIndex.value = startIndex
 
-        val items = tracks.map { track ->
-            MediaItem.Builder()
-                .setUri(resolveUri(track))
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(track.title)
-                        .setArtist(track.artist)
-                        .setArtworkUri(Uri.parse(track.thumbnailBig))
-                        .build()
-                )
-                .build()
-        }
-        mediaController?.setMediaItems(items, startIndex, positionMs)
+        mediaController?.setMediaItems(buildMediaItems(tracks), startIndex, positionMs)
         mediaController?.prepare()
 
         Log.d(TAG, "🔄 restored: ${song.title} @ ${positionMs}ms")
+    }
+
+    /** 冷启动恢复入口：读队列快照，无快照或索引越界即完全静默（ADR 0010） */
+    private fun tryRestoreLastPlayed() {
+        val snapshot = LastPlayedStore.load(application) ?: return
+        restoreLastPlayed(snapshot.queue, snapshot.trackIndex, snapshot.positionMs)
     }
 
     fun togglePlayPause() {
@@ -300,6 +299,20 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     /** 已下载歌曲用本地文件 URI 离线直读，未下载走网络（ADR 0003） */
     private fun resolveUri(track: Song): Uri =
         DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
+
+    /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
+    private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
+        MediaItem.Builder()
+            .setUri(resolveUri(track))
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(track.title)
+                    .setArtist(track.artist)
+                    .setArtworkUri(Uri.parse(track.thumbnailBig))
+                    .build()
+            )
+            .build()
+    }
 
     // ========== 定时关闭 ==========
 

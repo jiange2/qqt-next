@@ -16,14 +16,27 @@ object AudioCache {
     @Volatile
     private var instance: SimpleCache? = null
 
+    /** 本进程缓存预算（字节），SimpleCache 创建时快照；未初始化为 -1 */
+    @Volatile
+    private var budgetBytes = -1L
+
     fun get(context: Context): SimpleCache {
         return instance ?: synchronized(this) {
-            instance ?: SimpleCache(
-                File(context.filesDir, "audio_cache"),
-                LeastRecentlyUsedCacheEvictor(cacheBudgetBytes(context))
-            ).also { instance = it }
+            instance ?: create(context).also { instance = it }
         }
     }
+
+    private fun create(context: Context): SimpleCache {
+        val budget = cacheBudgetBytes(context)
+        budgetBytes = budget
+        return SimpleCache(
+            File(context.filesDir, "audio_cache"),
+            LeastRecentlyUsedCacheEvictor(budget)
+        )
+    }
+
+    /** 缓存预算快照（访问事实上报用），未初始化返回 -1（上报侧转为缺省） */
+    fun cacheBudget(): Long = budgetBytes
 
     /**
      * 计算缓存预算（启动时刻快照，总容量预留制）：

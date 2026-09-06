@@ -20,11 +20,24 @@ object AppUpdateChecker {
      * 检查更新；后台未开更新开关、已是最新版本、或请求失败时返回 null（不打扰用户）。
      */
     suspend fun check(context: Context): Result? {
-        val info = MusicRepository.getAppDetails() ?: return null
-        if (!info.isUpdateEnabled) return null
-        if (info.redirectUrl.isBlank()) return null
+        val info = MusicRepository.getAppDetails()
+        if (info == null) {
+            Log.w(TAG, "Update check skipped: app_details 不可用（请求失败或解析失败）")
+            return null
+        }
+        if (!info.isUpdateEnabled) {
+            Log.d(TAG, "Update check skipped: 更新开关未开")
+            return null
+        }
+        if (info.redirectUrl.isBlank()) {
+            Log.d(TAG, "Update check skipped: redirect url 为空")
+            return null
+        }
         val current = currentVersionName(context)
-        if (!isNewerVersion(current, info.newVersion)) return null
+        if (!isNewerVersion(current, info.newVersion)) {
+            Log.d(TAG, "Update check skipped: 已是最新（current=$current, latest=${info.newVersion}）")
+            return null
+        }
         Log.d(TAG, "Update available: current=$current, latest=${info.newVersion}, force=${!info.isCancelable}")
         return Result(info, forceUpdate = !info.isCancelable)
     }

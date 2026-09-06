@@ -66,10 +66,12 @@ model Category {
   id          Int      @id @default(autoincrement()) // 旧库 cid
   name        String   @map("name") @db.VarChar(255)
   image       String   @db.VarChar(255)
+  type        String   @default("music") @db.VarChar(20) // music | book（书籍阅读域 ADR 0011）：书籍分类下挂书籍而非专辑
   status      Boolean  @default(true)
   createdAt   DateTime @default(now()) @map("created_at")
   songs       Song[]
   albums      Album[]  // 分类-专辑层级（backend-next ADR 0009）：分类下放专辑而非歌曲
+  books       Book[]
 
   @@map("categories")
 }
@@ -104,6 +106,41 @@ model Album {
   @@map("albums")
 }
 
+// 书籍（书籍阅读域 ADR 0011）：归属书籍分类（type=book），正文经章节下发；
+// 无简介字段——App 无书籍详情页，简介没有展示位；删除约束：仍有书籍的分类阻止删除
+model Book {
+  id           Int      @id @default(autoincrement())
+  categoryId   Int      @map("category_id")
+  categorySort Int      @default(0) @map("category_sort") // 维度顺序第三维度：分类内书籍手动排序（ADR 0007 范式）
+  name         String   @db.VarChar(255)
+  author       String   @default("") @db.VarChar(255)
+  cover        String   @default("") @db.VarChar(255) // 媒体 Key，空串=无封面（App 出占位卡）
+  status       Boolean  @default(true) // 不可见即其章节对 App 不可见
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  category Category @relation(fields: [categoryId], references: [id])
+  chapters Chapter[]
+
+  @@index([categoryId])
+  @@index([categoryId, categorySort])
+  @@map("books")
+}
+
+// 章节（书籍阅读域 ADR 0011）：不设排序字段，展示序即 id 序（录入/切分顺序天然正确，
+// 不支持章节重排）；不独立上下架，可见性完全随书；删书级联删章
+model Chapter {
+  id        Int      @id @default(autoincrement())
+  bookId    Int      @map("book_id")
+  title     String   @db.VarChar(255)
+  content   String   @db.MediumText // 正文全文
+  createdAt DateTime @default(now()) @map("created_at")
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@map("chapters")
+}
+
 model Song {
   // categoryId 可空（backend-next ADR 0007）：未分类歌曲仅存在于后台，
   // App 端经 songStatusFilter 的关系过滤天然不可见
@@ -119,6 +156,7 @@ model Song {
   description   String     @db.Text
   lrcText       String?    @map("lrc_text") @db.Text
   lrcUrl        String?    @map("lrc_url") @db.VarChar(255) // local 存 rand 前缀文件名
+  duration      Int        @default(0) // 秒；由 App 播放就绪后写回（仓库级 ADR 0008），从未播过的歌为 0
   totalViews    Int        @default(0) @map("total_views")
   totalDownload Int        @default(0) @map("total_download")
   totalRate     Int        @default(0) @map("total_rate")
@@ -337,4 +375,34 @@ model AdminUser {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("admin_users")
+}
+
+// ============ 访问统计（仓库级 ADR 0008）============
+
+// 访问事实：append-only 流水，不去重不聚合，无字节维度（条数口径）。
+// songId 为裸列不设外键：事实指向的歌曲被删除后事实保留（明细展示「已删除歌曲」），
+// 若建 FK 会阻塞歌曲删除，与口径冲突。
+model AccessFact {
+  id               Int      @id @default(autoincrement())
+  songId           Int      @map("song_id")
+  deviceId         String   @map("device_id") @db.VarChar(50) // 设备 ID（见 android 上下文）
+  cacheHit         Boolean  @default(false) @map("cache_hit")
+  allocatedStorage BigInt?  @map("allocated_storage") // 上报时刻缓存预算快照（字节）
+  usedStorage      BigInt?  @map("used_storage") // 上报时刻被动缓存实际占用（字节）
+  ipAddress        String   @map("ip_address") @db.VarChar(45)
+  userAgent        String?  @map("user_agent") @db.Text
+  accessedAt       DateTime @default(now()) @map("accessed_at")
+
+  @@index([deviceId, accessedAt])
+  @@index([accessedAt])
+  @@map("access_facts")
+}
+
+// 在线采样：进程内每 5 分钟一行的时序化存证，sampledAt 为幂等键
+// （重启漏采不补，折线跨过丢点区间）
+model OnlineSample {
+  sampledAt   DateTime @id @map("sampled_at")
+  totalOnline Int      @map("total_online")
+
+  @@map("online_samples")
 }

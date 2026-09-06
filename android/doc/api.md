@@ -13,7 +13,7 @@ Android 端所有网络请求通过 `ApiClient`（Retrofit 单例）发出，统
 | `data/api/ApiClient.kt` | Retrofit 实例 + `buildData()` 签名编码 + MD5 工具 |
 | `data/api/BooleanAdapter.kt` | Gson TypeAdapter：将后端 `"0"`/`"1"` 字符串转换为 Boolean |
 | `data/api/model/Song.kt` | 歌曲数据模型 |
-| `data/api/model/Models.kt` | Artist、Album、Playlist、Category、Banner、HomeData |
+| `data/api/model/Models.kt` | Artist、SearchResults、Album、Playlist、Category、Banner、HomeData |
 | `data/repository/MusicRepository.kt` | 所有 API 方法（suspend fun），统一错误处理 |
 | `AppConfig.kt` | BASE_URL、PACKAGE_NAME、SIGN_KEY 配置 |
 
@@ -44,7 +44,9 @@ return Base64.encodeToString(urlEncoded.toByteArray(), Base64.NO_WRAP)
 | `getAlbumSongs(albumId, userId)` | `album_songs` | `List<Song>` | `album_id`, `user_id`（整单返回，不分页） |
 | `getFavorites(userId, page)` | `get_favourite_post` | `List<Song>` | `user_id`, `type`="song", `page` |
 | `getRecentSongs(songIds, page, userId)` | `get_recent_songs` | `List<Song>` | `songs_ids`(逗号串), `page`, `user_id` |
-| `searchSongs(query, page, userId)` | `song_search` | `List<Song>` | `search_text`, `search_type`="songs", `page`, `user_id` |
+| `searchSongs(query, page, userId)` | `song_search` | `List<Song>` | `search_text`, `search_type`="songs", `page`, `user_id`（歌曲结果页全量分页通道） |
+| `searchAll(query, page, userId)` | `song_search` | `SearchResults?` | `search_text`, `page`, `user_id`（不带 `search_type` 走组合分支，一次返回歌曲/专辑/艺术家三段；歌曲段每页 10 条，后两段各 20 条截断不分页） |
+| `getArtistSongs(artistName, page, userId)` | `artist_name_songs` | `List<Song>` | `artist_name`, `page`, `user_id`（按名字精确匹配，每页 10 条，id 倒序；重名艺术家共用一页） |
 | `toggleFavourite(songId, userId)` | `favourite_post` | `Boolean` | `post_id`, `user_id`, `type`="song" |
 | `getAppDetails()` | `app_details` | `AppUpdateInfo?` | 无（更新检查用，见下方说明） |
 
@@ -59,7 +61,7 @@ data class Song(
     val url: String,          // 播放 URL（mp3_url）
     val thumbnailBig: String, // 大封面 URL（mp3_thumbnail_b）
     val thumbnailSmall: String, // 小封面 URL（mp3_thumbnail_s）
-    val artist: String,       // 艺术家名（mp3_artist）
+    val artist: String,       // 歌手文本（mp3_artist，非实体的逗号分隔字符串，区别于 Artist 实体）
     val isFavourite: Boolean, // 是否已收藏（依赖传入的 user_id）
     val lrcText: String,      // 内嵌 LRC 歌词（mp3_lrc_txt）
     val lrcUrl: String,       // 外部 LRC 文件 URL（mp3_lrc_url）
@@ -85,7 +87,7 @@ data class HomeData(
 
 ## App 更新检查
 
-`MusicRepository.getAppDetails()` 调 `app_details` 拿后台的更新配置（`AppUpdateInfo`：`app_update_status`/`app_new_version`/`app_update_desc`/`app_redirect_url`/`cancel_update_status`）。`update/AppUpdateChecker.check()` 在 `MainActivity.onCreate` 中异步执行：后台开启更新开关、且后台 `app_new_version`（Double，按版本段比较）大于本机 versionName 时返回结果，由 `ui/components/AppUpdateDialog` 弹窗；`cancel_update_status` 非 `"true"` 时为强制更新（弹窗不可关闭）；点击更新用 `ACTION_VIEW` 打开 `app_redirect_url`。注意：`app_new_version` 是 Double，无法区分 1.1 与 1.10，后台发版避免用两位修订号。
+`MusicRepository.getAppDetails()` 调 `app_details` 拿后台的更新配置（`AppUpdateInfo`：`app_update_status`/`app_new_version`/`app_update_desc`/`app_redirect_url`/`cancel_update_status`）。注意 `app_details` 的 `ONLINE_MP3` 是**单元素数组**（旧契约 `array_push` 行为，backend-next 逐字复刻），客户端取首元素解析（兼容数组/对象两种形状，曾因误判 `isJsonObject` 导致更新弹窗永不出现）。`update/AppUpdateChecker.check()` 在 `MainActivity.onCreate` 中异步执行：后台开启更新开关、且后台 `app_new_version`（Double，按版本段比较）大于本机 versionName 时返回结果，由 `ui/components/AppUpdateDialog` 弹窗；`cancel_update_status` 非 `"true"` 时为强制更新（弹窗不可关闭）；点击更新用 `ACTION_VIEW` 打开 `app_redirect_url`。每个跳过分支都会打 `AppUpdateChecker` 标签的 logcat 日志（跳过原因），排查“不弹”先看日志。注意：`app_new_version` 是 Double，无法区分 1.1 与 1.10，后台发版避免用两位修订号。
 
 ## 错误处理
 

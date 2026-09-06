@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，下拉收起整页滑出即时露出（无过渡动画）。5 个底部 Tab + 4 个抽屉项 + 4 个详情页（横幅歌曲/专辑歌曲/分类专辑/歌单详情）共 13 个页面目的地（全屏播放器为导航外覆盖层，非路由目的地）。
+App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，下拉收起整页滑出即时露出（无过渡动画）。5 个底部 Tab + 4 个抽屉项 + 7 个详情页（横幅歌曲/专辑歌曲/分类专辑/歌单详情/搜索/歌曲结果/艺术家歌曲）共 16 个页面目的地（全屏播放器为导航外覆盖层，非路由目的地）。
 
 ## 关键文件
 
@@ -21,6 +21,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/screens/player/LrcParser.kt` | LRC 歌词解析（`[mm:ss]`/`[mm:ss.xx]`/`[mm:ss.xxx]` 与一行多时间标签） |
 | `ui/components/SongListItem.kt` | 歌曲列表行（缩略图 + 标题 + 艺术家 + 评分 + 下载按钮） |
 | `ui/components/BannerCarousel.kt` | 首页 Banner 横幅轮播（HorizontalPager + 自动翻页） |
+| `ui/screens/search/` | 搜索页组：`SearchScreen`（搜索框 + 组合结果分段单页：歌曲/专辑/艺术家，提交式触发）+ `SearchSongsScreen`（歌曲结果页，滚动自动分页）+ `ArtistSongsScreen`（艺术家歌曲页）；各配 ViewModel，交接经 `SearchNav`/`ArtistNav` |
 
 ## 路由结构
 
@@ -39,6 +40,9 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `banner_songs/{bid}` | 歌曲（横幅标题） | 详情页：首页轮播点击 | 无（数据随首页接口内嵌，经 `BannerNav` 交接） |
 | `album_songs/{aid}` | 专辑（专辑名） | 详情页：抽屉专辑列表/分类专辑页点击 | `AlbumSongsViewModel` |
 | `category_albums/{cid}` | 分类（分类名） | 详情页：分类列表页点击（backend-next ADR 0009） | `CategoryAlbumsViewModel` |
+| `search` | 搜索 | 详情页：TopBar 搜索图标点击 | `SearchViewModel` |
+| `search_songs` | 搜索关键词 | 详情页：搜索页「查看更多歌曲」 | `SearchSongsViewModel` |
+| `artist_songs` | 艺术家（艺术家名） | 详情页：搜索结果艺术家行点击 | `ArtistSongsViewModel` |
 
 ## AppNavigation 关键逻辑
 
@@ -76,9 +80,9 @@ Box(modifier = Modifier.fillMaxSize()) {
 // 底部导航只在 5 个 Tab 路由显示
 val showBottomNav = currentRoute in Screen.bottomNavRoutes
 
-// Settings / 详情页：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
-gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs
-showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs
+// Settings / 详情页（含搜索组三页）：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
+gesturesEnabled = ... && !isSearchSongs && !isArtistSongs && !isSearch
+showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
 ```
 
 ## 各页面说明
@@ -123,6 +127,24 @@ showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlb
 - 点击歌曲直接播放，播放队列 = 当前已加载的全部歌曲
 - `AlbumNav.album` 为空时显示“内容已失效”；专辑无歌曲时显示空态提示
 
+### SearchScreen / SearchViewModel（搜索页）
+- 顶部圆角搜索框（进入自动聚焦弹键盘；IME 搜索键/回车提交；提交式触发——输入过程不发请求，规避中文输入法 composing 误触发与后端 LIKE 全表扫描压力）
+- 提交后调 `MusicRepository.searchAll()`（song_search 不带 search_type 走后端组合分支），一次返回三段
+- 分段单页 LazyColumn：歌曲段（前 10 条 `SongListItem`）→ 专辑段（`chunked(2)` 两列 `AlbumCard`）→ 艺术家段（圆形头像行，尾随右箭头）；空段整段隐藏，三段全空显示 EmptyState「未找到相关歌曲」；接口异常按空态处理
+- 歌曲段满页（≥10 条）时显示「查看更多歌曲」→ `SearchNav.query` 暂存 → 跳转 `search_songs`
+- 点击歌曲行 = 点播该曲，播放队列 = 歌曲段当前已加载歌曲（不含专辑/艺术家段）；专辑卡片 → `AlbumNav` → `album_songs/{aid}`；艺术家行 → `ArtistNav` → `artist_songs`
+- `SearchViewModel`：`onQueryChanged` 只改文本不发请求（清空时取消进行中请求并重置）；`submit()` 先取消旧 Job 再发新请求，防旧结果晚到覆盖
+
+### SearchSongsScreen / SearchSongsViewModel（歌曲结果页）
+- 单列 `LazyColumn`，`MusicRepository.searchSongs()`（search_type=songs）滚动到底自动分页（每页 10 条），行为同 LatestScreen
+- 顶栏标题取 `SearchNav.query`；空结果显示 EmptyState「未找到相关歌曲」
+- 点击歌曲直接播放，播放队列 = 当前已加载的全部歌曲
+
+### ArtistSongsScreen / ArtistSongsViewModel（艺术家歌曲页）
+- 单列 `LazyColumn`，`MusicRepository.getArtistSongs()`（artist_name_songs 按名字精确匹配）滚动到底自动分页（每页 10 条，id 倒序）
+- 顶栏标题取 `ArtistNav.artist.name`；重名艺术家共用一页（旧契约，一期接受）
+- 点击歌曲直接播放，播放队列 = 当前已加载的全部歌曲；空态「该艺术家暂无歌曲」
+
 ### SettingsScreen
 - 主题 Switch（目前本地 state，未持久化到 PrefsManager）
 - 评价/分享/隐私政策/关于（点击事件均为空，待实现）
@@ -155,7 +177,7 @@ showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlb
 ## 注意事项
 
 - `PlayerViewModel` 通过 `by viewModels()` 在 `MainActivity` 创建，然后通过参数逐层传递给页面 Composable（非 Hilt inject）
-- Settings 页面与两个歌曲详情页的 `gesturesEnabled = false` 是为了防止侧滑手势与页面内部滑动冲突
+- Settings 页面与各详情页（含搜索组三页）的 `gesturesEnabled = false` 是为了防止侧滑手势与页面内部滑动冲突
 - `Screen.titleOf(route)` 函数用于 `TopBar` 动态显示当前页面标题，新增路由时需同步更新此函数
 - **[坑] TopBar 文本溢出处理**：使用 `TextOverflow.Ellipsis` 时，**必须导入** `androidx.compose.ui.text.style.TextOverflow`（注意包含 `.style.`），而不是 `androidx.compose.ui.text.TextOverflow`。后者不存在，会导致编译错误。参考 `SongListItem.kt`、`MiniPlayer.kt` 等其他组件的导入方式。
 - **[坑] 播放器页面动画命名冲突**：播放模式枚举不能用 `RepeatMode` 命名，因为 Compose 动画库已有同名枚举；现嵌套于 `PlayerSettingsManager` 内命名 `PlayMode`，图标映射集中在 `PlayerScreen.kt` 的 `playModeIcon()`（ADR 0008）。

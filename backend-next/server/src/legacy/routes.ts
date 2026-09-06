@@ -13,7 +13,10 @@ import {
   artistNameSongs,
   bannerSongs,
   banners,
+  bookChapter,
+  bookChapters,
   catAlbums,
+  catBooks,
   catList,
   home,
   latest,
@@ -36,6 +39,7 @@ import {
   userRegister,
 } from "./handlers-user.js";
 import { appDetails, songRating, songReport, songSuggest } from "./handlers-misc.js";
+import { recordSongAccess, updateSongDuration } from "./handlers-stats.js";
 
 export type UploadedImage = { buffer: Buffer; name: string };
 type Handler = (ctx: LegacyCtx, image?: UploadedImage) => Promise<unknown>;
@@ -52,6 +56,9 @@ const methods: Record<string, Handler> = {
   banner_songs: bannerSongs,
   cat_list: catList,
   cat_albums: catAlbums, // 分类专辑列表（backend-next ADR 0009，替代已删除的 cat_songs）
+  cat_books: catBooks, // 分类书籍列表（书籍阅读域 ADR 0011，形态对齐 cat_albums）
+  book_chapters: bookChapters, // 全书章节目录（按 id ASC 一次下发）
+  book_chapter: bookChapter, // 单章正文（handler 返回单对象，外包数组同 song_info）
   recent_artist_list: recentArtistList,
   artist_list: artistList,
   artist_album_list: artistAlbumList,
@@ -67,6 +74,9 @@ const methods: Record<string, Handler> = {
   song_rating: songRating,
   song_report: songReport,
   song_suggest: (ctx, image) => songSuggest(ctx, image),
+  // 访问统计（仓库级 ADR 0008）：纯增量 method，旧客户端不感知
+  record_song_access: recordSongAccess,
+  update_song_duration: updateSongDuration,
   user_register: userRegister,
   user_login: userLogin,
   user_profile: userProfile,
@@ -112,6 +122,11 @@ async function handleLegacy(req: FastifyRequest, reply: FastifyReply): Promise<v
     base: mediaBase(),
     data,
     settings: await getSettings(),
+    ip:
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ||
+      req.ip ||
+      "unknown",
+    userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : "",
   };
   const result = await handler(ctx, image);
   reply.send({

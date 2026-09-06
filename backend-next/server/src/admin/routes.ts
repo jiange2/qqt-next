@@ -17,6 +17,7 @@ import { mediaBase } from "../media/urls.js";
 import { deleteObject, listObjects, putObject, putStream } from "../media/oss.js";
 import { transferExternalToOss } from "../media/external.js";
 import { requireAdmin, signAdminToken } from "./auth.js";
+import { splitChapters, decodeTxt } from "../services/txtSplit.js";
 
 // ---------------------------------------------------------------- 工具
 
@@ -57,6 +58,8 @@ async function parseForm(
     streamHandler?: (fieldname: string, part: MultipartFile) => Promise<string | null>;
     /** 图片固定标签：传给 resolveName 生成 rand_<label><ext>；不传则保留原名 */
     imageLabel?: string;
+    /** 图片目录（默认 images/；书籍封面 images/books/，ADR 0011） */
+    imageDir?: string;
   } = {},
 ): Promise<FormData> {
   const fields: Record<string, string> = {};
@@ -84,7 +87,7 @@ async function parseForm(
     }
     saved[fieldname] = fieldname === "lrc_file" || fieldname === "lrc"
       ? await saveTextFile(f.buffer, f.name)
-      : await saveImage(f.buffer, f.name, 80, opts.imageLabel);
+      : await saveImage(f.buffer, f.name, 80, opts.imageLabel, opts.imageDir);
   }
   return { fields, saved };
 }
@@ -193,11 +196,10 @@ async function upsertCategory(req: FastifyRequest, reply: FastifyReply): Promise
   };
   const id = upsertId(req, fields);
   if (id === null) return void bad(reply, "invalid id");
-  reply.send(
-    id > 0
-      ? await prisma.category.update({ where: { id }, data })
-      : await prisma.category.create({ data: { ...data, image: data.image ?? "" } }),
-  );
+  if (id > 0) return void reply.send(await prisma.category.update({ where: { id }, data }));
+  // 类型仅创建时可定（书籍阅读域 ADR 0011）：编辑路径不触碰 type，存量分类不受影响
+  const type = fields["type"] === "book" ? "book" : "music";
+  reply.send(await prisma.category.create({ data: { ...data, type, image: data.image ?? "" } }));
 }
 
 async function upsertArtist(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -414,7 +416,7 @@ function registerDimensionSongs(app: FastifyInstance, key: "categories" | "album
     if (parentId <= 0) return void bad(reply, "invalid id");
     const items = await prisma.song.findMany({
       where: { [fk]: parentId } as Prisma.SongWhereInput,
-      // sort ASC 展示；id DESC 兕底：未手动排序过的存量歌新歌在前
+      // sort ASC 展示；id DESC 兜底：未手动排序过的存量歌新歌在前
       orderBy: [{ [sortKey]: "asc" }, { id: "desc" }] as Prisma.SongOrderByWithRelationInput[],
       select: songSelect,
     });
@@ -521,7 +523,7 @@ function registerCategoryAlbums(app: FastifyInstance): void {
     if (parentId <= 0) return void bad(reply, "invalid id");
     const items = await prisma.album.findMany({
       where: { categoryId: parentId },
-      // 维度顺序：sort ASC 展示；id DESC 兕底（未手动排序的存量专辑新专辑在前）
+      // 维度顺序：sort ASC 展示；id DESC 兜底（未手动排序的存量专辑新专辑在前）
       orderBy: [{ categorySort: "asc" }, { id: "desc" }] as Prisma.AlbumOrderByWithRelationInput[],
       select: albumSelect,
     });
@@ -601,6 +603,161 @@ function registerCategoryAlbums(app: FastifyInstance): void {
       data: { categoryId: null, categorySort: 0 },
     });
     if (r.count === 0) return void bad(reply, "专辑不属于该分类");
+    reply.send({ ok: true });
+  });
+}
+
+// ---------------------------------------------------------------- 书籍（书籍阅读域 ADR 0011）
+
+/** 书籍在分类内的维度顺序插入最前（对齐专辑范式，ADR 0011） */
+async function nextBookCategorySort(categoryId: number): Promise<number> {
+  const agg = await prisma.book.aggregate({ where: { categoryId }, _min: { categorySort: true } });
+  return (agg._min.categorySort ?? 0) - 1;
+}
+
+async function upsertBook(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { fields, saved } = await parseForm(req, { imageLabel: "book", imageDir: "images/books" });
+  const name = str(fields["name"]);
+  if (!name) return void bad(reply, "name required");
+  // 书籍必有分类，且必须是书籍分类（type=book）；分类类型创建后不可改，无音乐分类挂书的路径
+  const categoryId = intOr(fields["category_id"], 0);
+  if (categoryId <= 0) return void bad(reply, "category required");
+  const category = await prisma.category.findUnique({ where: { id: categoryId } });
+  if (!category) return void bad(reply, "category not found");
+  if (category.type !== "book") return void bad(reply, "category is not a book category");
+  const data = {
+    name,
+    author: str(fields["author"]),
+    categoryId,
+    status: fields["status"] !== "0" && fields["status"] !== "false",
+    ...(boundImage(saved, fields) ? { cover: boundImage(saved, fields) } : {}),
+  };
+  const id = upsertId(req, fields);
+  if (id === null) return void bad(reply, "invalid id");
+  // 维度顺序（ADR 0011）：新建/换分类时插入最前（min(sort)-1），未变动保留原序
+  const existing = id > 0 ? await prisma.book.findUnique({ where: { id } }) : null;
+  const categoryChanged = !!existing && existing.categoryId !== categoryId;
+  const categorySort = await nextBookCategorySort(categoryId);
+  const book = id > 0
+    ? await prisma.book.update({
+        where: { id },
+        data: { ...data, ...(categoryChanged ? { categorySort } : {}) },
+      })
+    : await prisma.book.create({ data: { ...data, categorySort } });
+  reply.send(book);
+}
+
+const chapterSchema = z.object({
+  title: z.string().min(1).max(255),
+  content: z.string().max(8 * 1024 * 1024),
+});
+
+async function createChapter(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const bookId = intOr((req.params as { id: string }).id, 0);
+  if (bookId <= 0) return void bad(reply, "invalid id");
+  if (!(await prisma.book.findUnique({ where: { id: bookId } }))) return void bad(reply, "book not found");
+  const parsed = chapterSchema.safeParse(req.body);
+  if (!parsed.success) return void bad(reply, "title required");
+  const chapter = await prisma.chapter.create({
+    data: { bookId, title: parsed.data.title, content: parsed.data.content },
+  });
+  reply.send({ id: chapter.id, title: chapter.title });
+}
+
+// 传什么改什么（逐章编辑抽屉：标题/正文可分别保存）
+async function updateChapter(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const id = intOr((req.params as { id: string }).id, 0);
+  if (id <= 0) return void bad(reply, "invalid id");
+  const parsed = chapterSchema.partial().safeParse(req.body);
+  if (!parsed.success) return void bad(reply, "invalid body");
+  if (parsed.data.title === undefined && parsed.data.content === undefined) {
+    return void bad(reply, "nothing to update");
+  }
+  const chapter = await prisma.chapter.update({ where: { id }, data: parsed.data });
+  reply.send({ id: chapter.id, title: chapter.title });
+}
+
+// 智能分章节：TXT 上限 50MB；preview 只切分不入库（parseForm 的 20MB 图片上限不适用，手动收流）
+const TXT_MAX = 50 * 1024 * 1024;
+
+async function txtPreview(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const bookId = intOr((req.params as { id: string }).id, 0);
+  if (bookId <= 0) return void bad(reply, "invalid id");
+  let buffer: Buffer | null = null;
+  for await (const part of req.parts()) {
+    if (part.type === "file") {
+      buffer = await part.toBuffer();
+      break;
+    }
+  }
+  if (!buffer) return void bad(reply, "txt file required");
+  if (buffer.length > TXT_MAX) return void bad(reply, "TXT too large (max 50MB)");
+  const chapters = splitChapters(decodeTxt(buffer));
+  reply.send({ total: chapters.length, chapters });
+}
+
+// 覆盖替换：删旧写新单事务（强确认弹窗在面板列明删 N 写 M）
+const importSchema = z.object({
+  chapters: z
+    .array(z.object({ title: z.string().min(1).max(255), content: z.string().max(8 * 1024 * 1024) }))
+    .min(1)
+    .max(5000),
+});
+
+async function txtImport(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const bookId = intOr((req.params as { id: string }).id, 0);
+  if (bookId <= 0) return void bad(reply, "invalid id");
+  if (!(await prisma.book.findUnique({ where: { id: bookId } }))) return void bad(reply, "book not found");
+  const parsed = importSchema.safeParse(req.body);
+  if (!parsed.success) return void bad(reply, "chapters required");
+  await prisma.$transaction([
+    prisma.chapter.deleteMany({ where: { bookId } }),
+    prisma.chapter.createMany({
+      data: parsed.data.chapters.map((c) => ({ bookId, title: c.title, content: c.content })),
+    }),
+  ]);
+  reply.send({ ok: true, count: parsed.data.chapters.length });
+}
+
+/** 分类内书籍维度端点（维度顺序第三维度，ADR 0011）：列表 + 拖拽排序。书籍必有分类，无认领/移除 */
+function registerCategoryBooks(app: FastifyInstance): void {
+  const base = "/admin/categories/:id/books";
+
+  app.get(base, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const rows = await prisma.book.findMany({
+      where: { categoryId: parentId },
+      // 维度顺序：sort ASC 展示；id DESC 兜底（未手动排序的存量书籍新书在前）
+      orderBy: [{ categorySort: "asc" }, { id: "desc" }] as Prisma.BookOrderByWithRelationInput[],
+      select: {
+        id: true, name: true, cover: true, status: true,
+        _count: { select: { chapters: true } },
+      },
+    });
+    // 行结构对齐 DimensionDrawer 的专辑形态（image 字段名 + _count 计数），前端零特判
+    reply.send({
+      items: rows.map((r) => ({
+        id: r.id, name: r.name, image: r.cover, status: r.status,
+        _count: { chapters: r._count.chapters },
+      })),
+    });
+  });
+
+  app.put(`${base}/order`, { preHandler: requireAdmin }, async (req, reply) => {
+    const parentId = intOr((req.params as { id: string }).id, 0);
+    if (parentId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const results = await prisma.$transaction(
+      parsed.data.ids.map((bookId, index) =>
+        prisma.book.updateMany({
+          where: { id: bookId, categoryId: parentId },
+          data: { categorySort: index },
+        }),
+      ),
+    );
+    if (results.some((r) => r.count === 0)) return void bad(reply, "存在不属于该分类的书籍");
     reply.send({ ok: true });
   });
 }
@@ -783,7 +940,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     { preHandler: requireAdmin },
     async (req, reply) => {
       const { page, size, skip } = paging(req);
-      const where = {};
+      // 类型筛选（书籍阅读域 ADR 0011）：管理面板按音乐/书籍分类分流管理
+      const type = (req.query as Record<string, string | undefined>)["type"];
+      const where = type === "music" || type === "book" ? { type } : {};
       const [total, items] = await Promise.all([
         prisma.category.count({ where }),
         prisma.category.findMany({ where, orderBy: { id: "desc" }, take: size, skip }),
@@ -801,6 +960,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       // ADR 0009：分类下仍有专辑即阻止删除（原为“仍有歌曲”）
       const albumCount = await prisma.album.count({ where: { categoryId: idNum } });
       if (albumCount > 0) return void bad(reply, `Category has ${albumCount} albums`);
+      // ADR 0011：分类下仍有书籍即阻止删除（对齐专辑规则）
+      const bookCount = await prisma.book.count({ where: { categoryId: idNum } });
+      if (bookCount > 0) return void bad(reply, `Category has ${bookCount} books`);
       // 过渡期保留（二期随 Song.categoryId 拆除）：存量歌曲仍挂分类且 FK 为 RESTRICT，避免直接 500
       const songCount = await prisma.song.count({ where: { categoryId: idNum } });
       if (songCount > 0) return void bad(reply, `Category has ${songCount} songs`);
@@ -950,6 +1112,99 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // 专辑维度歌曲端点（backend-next ADR 0007）；分类维度已改专辑（ADR 0009）
   registerDimensionSongs(app, "albums");
   registerCategoryAlbums(app);
+
+  // ============ 书籍（书籍阅读域 ADR 0011）============
+
+  app.get(
+    "/admin/books",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { page, size, skip } = paging(req);
+      const q = req.query as Record<string, string | undefined>;
+      const keyword = str(q["keyword"] ?? "");
+      const catRaw = q["category_id"];
+      const where = {
+        ...(keyword ? { name: { contains: keyword } } : {}),
+        ...(catRaw ? { categoryId: intOr(catRaw, 0) } : {}),
+      };
+      const [total, items] = await Promise.all([
+        prisma.book.count({ where }),
+        prisma.book.findMany({
+          where,
+          orderBy: { id: "desc" },
+          take: size,
+          skip,
+          include: {
+            category: { select: { id: true, name: true } },
+            _count: { select: { chapters: true } },
+          },
+        }),
+      ]);
+      reply.send({ items, total, page, size });
+    },
+  );
+  app.post("/admin/books", { preHandler: requireAdmin }, upsertBook);
+  app.put("/admin/books/:id", { preHandler: requireAdmin }, upsertBook);
+  app.delete("/admin/books/:id", {
+    preHandler: requireAdmin,
+    async handler(req, reply) {
+      const { id } = req.params as { id: string };
+      // 删书级联删章节（schema onDelete: Cascade）；章节是书的组成部分，无独立存活出路
+      await prisma.book.delete({ where: { id: Number.parseInt(id, 10) } });
+      reply.send({ ok: true });
+    },
+  });
+
+  app.get("/admin/books/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = intOr((req.params as { id: string }).id, 0);
+    if (id <= 0) return void bad(reply, "invalid id");
+    const book = await prisma.book.findUnique({
+      where: { id },
+      include: {
+        category: { select: { id: true, name: true } },
+        _count: { select: { chapters: true } },
+      },
+    });
+    if (!book) return void reply.code(404).send({ error: "book not found" });
+    reply.send(book);
+  });
+
+  // 章节：列表（id/标题/字数，CHAR_LENGTH 免拉正文）、逐章增删改（逐章录入通道）
+  app.get("/admin/books/:id/chapters", { preHandler: requireAdmin }, async (req, reply) => {
+    const bookId = intOr((req.params as { id: string }).id, 0);
+    if (bookId <= 0) return void bad(reply, "invalid id");
+    const rows = await prisma.$queryRaw<{ id: number; title: string; contentLength: number | bigint }[]>`
+      SELECT id, title, CHAR_LENGTH(content) AS contentLength
+      FROM chapters WHERE book_id = ${bookId} ORDER BY id ASC
+    `;
+    // CHAR_LENGTH 返回 BIGINT，$queryRaw 映射为 BigInt，JSON.stringify 无法序列化 → 统一转 number
+    reply.send({ items: rows.map((r) => ({ ...r, contentLength: Number(r.contentLength) })) });
+  });
+  app.post("/admin/books/:id/chapters", { preHandler: requireAdmin }, createChapter);
+  // 单章回读：逐章编辑抽屉回填正文用（列表出于流量考虑不带正文）
+  app.get("/admin/chapters/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = intOr((req.params as { id: string }).id, 0);
+    if (id <= 0) return void bad(reply, "invalid id");
+    const chapter = await prisma.chapter.findUnique({ where: { id } });
+    if (!chapter) return void reply.code(404).send({ error: "chapter not found" });
+    reply.send(chapter);
+  });
+  app.put("/admin/chapters/:id", { preHandler: requireAdmin }, updateChapter);
+  app.delete("/admin/chapters/:id", {
+    preHandler: requireAdmin,
+    async handler(req, reply) {
+      const { id } = req.params as { id: string };
+      await prisma.chapter.delete({ where: { id: Number.parseInt(id, 10) } });
+      reply.send({ ok: true });
+    },
+  });
+
+  // 智能分章节：preview 只切分不入库；import 单事务删旧写新（覆盖替换，强确认在面板）
+  app.post("/admin/books/:id/txt-preview", { preHandler: requireAdmin, bodyLimit: 60 * 1024 * 1024 }, txtPreview);
+  app.post("/admin/books/:id/txt-import", { preHandler: requireAdmin, bodyLimit: 120 * 1024 * 1024 }, txtImport);
+
+  // 分类内书籍维度端点（第三维度，ADR 0011）
+  registerCategoryBooks(app);
 
   app.get(
     "/admin/banners",
@@ -1110,7 +1365,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // OSS 管理（面板直管对象）；目录白名单与媒体目录约定一致（uploads/ images/ lrc/，ADR 0004）
   const ossDirs = new Set(["uploads", "images", "lrc"]);
-  const ossPrefixes = new Set(["", "uploads", "images", "images/thumbs", "lrc"]);
+  const ossPrefixes = new Set(["", "uploads", "images", "images/thumbs", "lrc", "images/books", "images/books/thumbs"]);
 
   // 全量列举 + 服务端解密原名（ADR 0008）；keyword 过滤与分页均在前端做
   app.get(
@@ -1185,8 +1440,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         prisma.album.count({ where: { image: name } }),
         prisma.banner.count({ where: { image: name } }),
         prisma.playlist.count({ where: { image: name } }),
+        prisma.book.count({ where: { cover: name } }),
       ]);
-      const labels = ["歌曲缩略图", "分类", "艺术家", "专辑", "横幅", "播放列表"];
+      const labels = ["歌曲缩略图", "分类", "艺术家", "专辑", "横幅", "播放列表", "书籍封面"];
       counts.forEach((n, i) => {
         if (n) usage.push(`${labels[i]} ${n} 处`);
       });
@@ -1200,4 +1456,119 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // OneSignal 推送
   app.post("/admin/notifications", { preHandler: requireAdmin }, sendNotification);
+
+  // ============ 访问统计（仓库级 ADR 0008，条数口径）============
+
+  // 当日访问分解：装载次数 / 命中 / 未命中 / 活跃设备数 + 命中率
+  app.get("/admin/stats/summary", { preHandler: requireAdmin }, async (_req, reply) => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const where = { accessedAt: { gte: startOfDay } };
+    const [total, hits, devices] = await Promise.all([
+      prisma.accessFact.count({ where }),
+      prisma.accessFact.count({ where: { ...where, cacheHit: true } }),
+      prisma.accessFact.groupBy({ by: ["deviceId"], where, _count: { _all: true } }),
+    ]);
+    reply.send({
+      total,
+      hits,
+      misses: total - hits,
+      devices: devices.length,
+      hitRate: total > 0 ? hits / total : 0,
+    });
+  });
+
+  // 访问明细：分页 + left join 歌名（已删歌曲 title 为 null，前端显示「已删除歌曲」）；
+  // 无日期筛选，累计返回上限 1000 条兜底（无 housekeep，ADR 0008）
+  app.get("/admin/stats/facts", { preHandler: requireAdmin }, async (req, reply) => {
+    const MAX_ROWS = 1000;
+    const { page, size, skip } = paging(req);
+    const [count, rows] = await Promise.all([
+      prisma.accessFact.count(),
+      skip >= MAX_ROWS
+        ? Promise.resolve([])
+        : prisma.$queryRaw<FactRow[]>`
+            SELECT f.id AS id, f.song_id AS songId, s.title AS songTitle,
+                   f.device_id AS deviceId, f.cache_hit AS cacheHit,
+                   f.accessed_at AS accessedAt
+            FROM access_facts f
+            LEFT JOIN songs s ON s.id = f.song_id
+            ORDER BY f.id DESC
+            LIMIT ${Math.min(size, MAX_ROWS - skip)} OFFSET ${skip}
+          `,
+    ]);
+    reply.send({ total: Math.min(count, MAX_ROWS), items: rows });
+  });
+
+  // 设备存储快照：每设备最新一条事实的 allocated/used（快照长事实上，ADR 0008）。
+  // 「最新一条」用每组 MAX(id) 回连：id 自增单调、插入序即时序，且无窗口函数（MySQL 5.7 不支持 OVER，部署库即 5.7）
+  app.get("/admin/stats/devices", { preHandler: requireAdmin }, async (_req, reply) => {
+    const rows = await prisma.$queryRaw<DeviceRow[]>`
+      SELECT f.device_id AS deviceId, f.allocated_storage + 0 AS allocatedStorage,
+             f.used_storage + 0 AS usedStorage, f.user_agent AS userAgent,
+             f.accessed_at AS lastSeen, s.facts AS facts
+      FROM access_facts f
+      INNER JOIN (
+        SELECT MAX(id) AS max_id, COUNT(*) AS facts
+        FROM access_facts
+        GROUP BY device_id
+      ) s ON s.max_id = f.id
+      ORDER BY f.accessed_at DESC
+    `;
+    // BigInt 列（+0 后仍 BIGINT）与 COUNT(*) 聚合均以 BigInt 抵达，JSON.stringify 无法序列化 → 统一转 number
+    reply.send({
+      items: rows.map((r) => ({
+        ...r,
+        allocatedStorage: r.allocatedStorage == null ? null : Number(r.allocatedStorage),
+        usedStorage: r.usedStorage == null ? null : Number(r.usedStorage),
+        facts: Number(r.facts),
+      })),
+    });
+  });
+
+  // 在线趋势：24h/7d 原始 5 分钟采样点；30d 小时平均（平均非峰值）
+  app.get("/admin/stats/online-trend", { preHandler: requireAdmin }, async (req, reply) => {
+    const range = str((req.query as Record<string, string | undefined>)["range"] ?? "24h");
+    if (range === "30d") {
+      const points = await prisma.$queryRaw<TrendPoint[]>`
+        SELECT DATE_FORMAT(sampled_at, '%Y-%m-%dT%H:00:00') AS bucket,
+               ROUND(AVG(total_online)) AS totalOnline
+        FROM online_samples
+        WHERE sampled_at >= NOW() - INTERVAL 30 DAY
+        GROUP BY bucket
+        ORDER BY bucket
+      `;
+      // ROUND(AVG()) 为 DECIMAL，$queryRaw 以 Decimal 对象抵达（toJSON 出字符串）→ 统一转 number
+      return void reply.send({ points: points.map((p) => ({ ...p, totalOnline: Number(p.totalOnline) })) });
+    }
+    const hours = range === "7d" ? 168 : 24;
+    const points = await prisma.onlineSample.findMany({
+      where: { sampledAt: { gte: new Date(Date.now() - hours * 3_600_000) } },
+      orderBy: { sampledAt: "asc" },
+      select: { sampledAt: true, totalOnline: true },
+    });
+    reply.send({ points });
+  });
 }
+
+// ---- 访问统计行类型（$queryRaw 原始返回；BIGINT/DECIMAL 以 BigInt/Decimal 对象抵达，出口统一转 number）
+
+type FactRow = {
+  id: number;
+  songId: number;
+  songTitle: string | null;
+  deviceId: string;
+  cacheHit: boolean | number;
+  accessedAt: Date;
+};
+
+type DeviceRow = {
+  deviceId: string;
+  allocatedStorage: number | string | bigint | null;
+  usedStorage: number | string | bigint | null;
+  userAgent: string | null;
+  lastSeen: Date;
+  facts: number | string | bigint;
+};
+
+type TrendPoint = { bucket: string; totalOnline: number | string };

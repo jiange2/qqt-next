@@ -20,8 +20,8 @@ import com.qqt.music.data.local.FavoriteStore
 import com.qqt.music.data.local.LocalPlaylistStore
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.data.local.RatingStore
+import com.qqt.music.data.local.ReadingProgressStore
 import com.qqt.music.download.DownloadManager
-import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.service.KeepAliveService
 import com.qqt.music.player.MusicPlayerService
@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         FavoriteStore.init()
         LocalPlaylistStore.init()
         RatingStore.init()
+        ReadingProgressStore.init(applicationContext)
         DownloadManager.init(applicationContext)
         PlayerSettingsManager.init(applicationContext)
 
@@ -61,9 +62,6 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to start services", e)
         }
-
-        // 2. 尝试恢复上次播放进度（可选）
-        tryRestoreLastPlayed()
 
         enableEdgeToEdge()
         setContent {
@@ -89,7 +87,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 3. 异步检查 App 更新（失败/已最新时静默跳过；仅本次创建时检查一次）
+        // 2. 异步检查 App 更新（失败/已最新时静默跳过；仅本次创建时检查一次）
         lifecycleScope.launch {
             updateResult = AppUpdateChecker.check(this@MainActivity)
         }
@@ -102,22 +100,6 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to open update url: $url", e)
-        }
-    }
-
-    /**
-     * 尝试恢复上次播放的进度
-     *
-     * 如果有保存的播放记录，从 API 加载该分类的歌曲列表，并设置起始播放位置。
-     */
-    private fun tryRestoreLastPlayed() {
-        val lastPlayed = LastPlayedStore.load(applicationContext)
-        if (lastPlayed.categoryId != -1) {
-            Log.d(TAG, "🔄 Detected last played category ID: ${lastPlayed.categoryId}")
-            // TODO: 异步加载该分类的歌曲列表，然后调用 playerViewModel.restoreLastPlayed()
-            // 由于目前没有 Repository 直接在 ViewModel 中注入，这里先保留注释
-            // val tracks = /* load from API */ 
-            // playerViewModel.restoreLastPlayed(tracks, lastPlayed.trackIndex, lastPlayed.positionMs)
         }
     }
 

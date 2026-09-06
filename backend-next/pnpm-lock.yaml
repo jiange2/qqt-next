@@ -71,6 +71,9 @@ importers:
       fastify:
         specifier: ^5.2.1
         version: 5.12.1
+      iconv-lite:
+        specifier: ^0.7.3
+        version: 0.7.3
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.3

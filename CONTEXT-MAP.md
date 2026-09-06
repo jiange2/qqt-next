@@ -1,12 +1,12 @@
 # Context Map
 
-QQT Music（倾轻听）是一个在线音乐流媒体产品，由两个限界上下文组成：后端负责内容的管理与分发，Android 端负责用户的播放体验。两者通过一个自研的签名协议在唯一的 `api.php` 入口上交互（协议本身见 [ADR 0001](docs/adr/0001-sign-salt-api-protocol.md)）。
+QQT Music（倾轻听）是一个在线音乐流媒体与书籍阅读产品，由两个限界上下文组成：后端负责内容的管理与分发，Android 端负责用户的播放体验。两者通过一个自研的签名协议在唯一的 `api.php` 入口上交互（协议本身见 [ADR 0001](docs/adr/0001-sign-salt-api-protocol.md)）。
 
 ## Contexts
 
 - [Backend](./backend/CONTEXT.md)：音乐内容的管理（歌曲、分类、艺术家、专辑、播放列表、横幅）与对 App 的数据分发，含一套管理员 Web 面板（**过渡期冻结，割接后下线**）
 - [Backend-Next](./backend-next/CONTEXT.md)：以 Node.js + TypeScript 重写的下一代后端（见 [ADR 0003](./docs/adr/0003-nodejs-rewrite-with-legacy-facade.md)），最终替换 Backend
-- [Android](./android/CONTEXT.md)：音乐播放客户端，负责浏览、搜索、播放、收藏、下载与后台保活
+- [Android](./android/CONTEXT.md)：客户端，负责音乐播放（浏览、搜索、播放、收藏、下载、后台保活）与书籍阅读
 
 ## Relationships
 

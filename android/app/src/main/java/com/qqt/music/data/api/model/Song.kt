@@ -18,6 +18,7 @@ data class Song(
     @SerializedName("category_name") val categoryName: String = "",
     @SerializedName("mp3_lrc_txt") val lrcText: String = "",
     @SerializedName("mp3_lrc_url") val lrcUrl: String = "",
+    @SerializedName("mp3_duration") val duration: String = "0",
     @SerializedName("total_songs") val totalSongs: String = "0",
     @SerializedName("total_records") val totalRecords: String = "0",
     @SerializedName("mp3_type") val mp3Type: String = "local",

@@ -1,30 +1,38 @@
 package com.qqt.music.player
 
 import android.content.Context
+import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import com.qqt.music.data.api.model.Song
 
 /**
- * 最近播放的进度和位置持久化
+ * 播放进度的持久化形态：整个播放队列的歌曲快照 + 队列索引 + 播放位置（ADR 0010）
  *
- * 在用户停止播放或 App 退出时保存，App 启动时恢复。
+ * 有当前歌即保存（切歌/暂停立即存、5 秒轮询兜底），App 冷启动时据此静默恢复，不回源后端。
+ * 旧「category_id + track_index + position_ms」三键格式废弃不迁移（恢复端从未上线，无存量数据）。
  */
-data class LastPlayed(
-    val categoryId: Int = -1,        // 正在播放歌曲所属的分类 ID（来自 Song.catId）
-    val trackIndex: Int = 0,         // 队列中的曲目索引
-    val positionMs: Long = 0L        // 播放进度（毫秒）
+data class LastPlayedSnapshot(
+    val queue: List<Song>,
+    val trackIndex: Int,             // 队列中的曲目索引
+    val positionMs: Long             // 播放进度（毫秒）
 )
 
 object LastPlayedStore {
+    private const val TAG = "LastPlayedStore"
     private const val PREFS_NAME = "last_played"
-    private const val KEY_CATEGORY_ID = "category_id"
+    private const val KEY_QUEUE_JSON = "queue_json"
     private const val KEY_TRACK_INDEX = "track_index"
     private const val KEY_POSITION_MS = "position_ms"
 
+    private val gson = Gson()
+
     /**
-     * 保存当前播放进度
+     * 保存队列快照
      */
-    fun save(context: Context, categoryId: Int, trackIndex: Int, positionMs: Long = 0L) {
+    fun save(context: Context, queue: List<Song>, trackIndex: Int, positionMs: Long) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
-            putInt(KEY_CATEGORY_ID, categoryId)
+            putString(KEY_QUEUE_JSON, gson.toJson(queue))
             putInt(KEY_TRACK_INDEX, trackIndex)
             putLong(KEY_POSITION_MS, positionMs)
             apply()
@@ -32,21 +40,30 @@ object LastPlayedStore {
     }
 
     /**
-     * 加载上次保存的播放进度
+     * 加载上次保存的队列快照
      *
-     * 如果没有保存过，返回默认值（categoryId = -1）
+     * 没有保存过或快照损坏时返回 null，由调用方完全静默地放弃恢复。
      */
-    fun load(context: Context): LastPlayed {
+    fun load(context: Context): LastPlayedSnapshot? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return LastPlayed(
-            categoryId = prefs.getInt(KEY_CATEGORY_ID, -1),
-            trackIndex = prefs.getInt(KEY_TRACK_INDEX, 0),
-            positionMs = prefs.getLong(KEY_POSITION_MS, 0L)
-        )
+        val json = prefs.getString(KEY_QUEUE_JSON, null) ?: return null
+        return try {
+            val type = object : TypeToken<List<Song>>() {}.type
+            val queue: List<Song> = gson.fromJson(json, type)
+            if (queue.isNullOrEmpty()) null
+            else LastPlayedSnapshot(
+                queue = queue,
+                trackIndex = prefs.getInt(KEY_TRACK_INDEX, 0),
+                positionMs = prefs.getLong(KEY_POSITION_MS, 0L)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ failed to parse queue snapshot, skip restore", e)
+            null
+        }
     }
 
     /**
-     * 清除保存的进度
+     * 清除保存的快照
      */
     fun clear(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()

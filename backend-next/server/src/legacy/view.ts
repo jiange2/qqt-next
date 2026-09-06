@@ -39,6 +39,8 @@ export function songToLegacy(song: SongWithRelations, ctx: SongCtx): Record<stri
       .map((sa) => sa.artist.name)
       .join(","),
     mp3_description: song.description,
+    // 时长（秒），由 App 播放就绪后写回（仓库级 ADR 0008）；纯增量字段，旧客户端忽略
+    mp3_duration: S(song.duration),
     total_rate: S(song.totalRate),
     rate_avg: S(song.rateAvg),
     total_views: S(song.totalViews),
