@@ -57,7 +57,7 @@ const methods: Record<string, Handler> = {
   cat_list: catList,
   cat_albums: catAlbums, // 分类专辑列表（backend-next ADR 0009，替代已删除的 cat_songs）
   cat_books: catBooks, // 分类书籍列表（书籍阅读域 ADR 0011，形态对齐 cat_albums）
-  book_chapters: bookChapters, // 全书章节目录（按 id ASC 一次下发）
+  book_chapters: bookChapters, // 全书章节目录（按章节顺序一次下发，ADR 0011 修订）
   book_chapter: bookChapter, // 单章正文（handler 返回单对象，外包数组同 song_info）
   recent_artist_list: recentArtistList,
   artist_list: artistList,
@@ -122,8 +122,12 @@ async function handleLegacy(req: FastifyRequest, reply: FastifyReply): Promise<v
     base: mediaBase(),
     data,
     settings: await getSettings(),
+    // 取头顺序（可信度递减）：XFF 首段（多级代理 append 链上最接近真实客户端）→ X-Real-IP
+    // （部署手册 nginx 反代 set 的 $remote_addr，单级反代下与首段等价）→ req.ip（socket 对端，
+    // 反代场景是代理自身地址，即统计页看到反代 IP 的坑源）。头均可伪造，IP 仅作排障信号非审计凭据。
     ip:
       (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ||
+      (req.headers["x-real-ip"] as string | undefined)?.trim() ||
       req.ip ||
       "unknown",
     userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : "",

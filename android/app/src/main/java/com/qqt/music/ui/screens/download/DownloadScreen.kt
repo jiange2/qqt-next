@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.download.DownloadManager
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.theme.BrandOrange
@@ -57,7 +58,7 @@ fun DownloadScreen(playerViewModel: PlayerViewModel) {
                 SongListItem(
                     song = song,
                     playerViewModel = playerViewModel,
-                    onClick = { playerViewModel.playSong(song, downloadedSongs) },
+                    onClick = { playerViewModel.playSong(song, downloadedSongs, QueueSource.DOWNLOADS) },
                     onMoreClick = { pendingDelete = song },
                 )
             }

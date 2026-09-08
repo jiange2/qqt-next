@@ -12,8 +12,8 @@
 
 ## Consequences
 
-- Referer 值写死在客户端两处（ExoPlayer 数据源 + Coil 拦截器），**换值 = App 发版**；上线前必须真机验证 CDN 白名单匹配通过。
+- Referer 值写死在客户端 5 处（ExoPlayer 播放数据源、下载 CacheDataSource 上游、下载 HEAD 探测、Coil 图片拦截器、歌词 fetchText）——App 内全部 CDN 出口统一注入，包括当前允许空 Referer 的 `lrc/` 歌词下载（2026-09 补齐），**换值 = App 发版**；上线前必须真机验证 CDN 白名单匹配通过。
 - 防护边界：防浏览器盗链与不带 Referer 的裸脚本直刷；**伪造 Referer 的脚本可绕过**（HTTP 明文下 Referer 本就是明文可见、可仿冒的头）。若将来刷流量损失扩大，升级路径是 CDN URL 鉴权。
 - 绕过 CDN 直打 OSS 默认域名（`qqt7.oss-cn-shanghai.aliyuncs.com`）仍可匿名拉流——公共读桶不设防，接受此残留面。
 - 被防盗链拦截的 403 响应仍产生少量 CDN 流量费（请求头 + 403 页面，可忽略）。
-- 将来管理面板若绑定域名，可把 `images/`、`lrc/` 收紧为禁止空 Referer。
+- 将来管理面板若绑定域名，可把 `images/`、`lrc/` 收紧为禁止空 Referer——客户端侧前提已就绪（全部出口已带约定 Referer），收紧只需改 CDN 配置，无需发版。

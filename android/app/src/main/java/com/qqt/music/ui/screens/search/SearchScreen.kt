@@ -63,6 +63,7 @@ import com.qqt.music.ui.theme.InkSecondary
 import com.qqt.music.ui.theme.PlaceholderBg
 import com.qqt.music.ui.theme.WarmBackground
 import com.qqt.music.ui.theme.WarmSurface
+import com.qqt.music.player.QueueSource
 import com.qqt.music.viewmodel.PlayerViewModel
 
 /** 后端 song_search 歌曲段每页固定 10 条，满页才可能还有更多结果 */
@@ -170,7 +171,7 @@ fun SearchScreen(
                                         song = song,
                                         playerViewModel = playerViewModel,
                                         // 播放队列取整页歌曲而非截断后的 3 条，上下曲仍在完整结果里
-                                        onClick = { playerViewModel.playSong(song, r.songs) },
+                                        onClick = { playerViewModel.playSong(song, r.songs, QueueSource.DEFAULT) },
                                     )
                                 }
                             }

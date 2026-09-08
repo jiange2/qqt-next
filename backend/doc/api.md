@@ -82,4 +82,4 @@ if ($decoded['sign'] != $sign_check || $decoded['package_name'] != PACKAGE_NAME)
 - `api.php` 顶部会检查 `envato_purchased_status`，未激活的情况下所有接口返回购买码验证失败
 - 歌曲 `mp3_type` 为 `"local"` 时，`mp3_url` 是服务器上 `uploads/` 目录的绝对 URL；为 `"youtube"` 或 `"external"` 时直接为外链
 - 分页参数 `page` 从 `1` 开始，每页条数由 `tbl_settings.api_latest_limit` 控制
-- LRC 歌词：`mp3_lrc_txt` 为内嵌文本，`mp3_lrc_url` 为外部 LRC 文件 URL
+- LRC 歌词：`mp3_lrc_txt` 为内嵌文本，`mp3_lrc_url` 为外部 LRC 文件 URL；歌词字段仅 `song_info` / `single_song` 详情接口返回，列表接口不携带；未上传歌词时 `mp3_lrc_url` 返回空串

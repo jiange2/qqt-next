@@ -1,6 +1,6 @@
 // OSS 对象列举通用逻辑（管理页与选择器共用，ADR 0008）：
 // 服务端全量返回某目录对象（含解密原名），keyword 过滤与分页均在前端本地做
-import { computed, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch, type Ref } from "vue";
 import { api } from "./api";
 import { loadMediaBase } from "./media";
 
@@ -10,9 +10,13 @@ export type OssObject = {
   lastModified: string;
   /** key 密文段解出的原名；存量明文 key / 解密失败时缺省 */
   originalName?: string;
+  /** 缓存头会话内状态：undefined=未查，null=未设置，其余为 max-age 原值；不落库，列表刷新即失 */
+  cacheControl?: string | null;
+  /** 该对象缓存头查询/设置失败标记（展示优先于 cacheControl） */
+  cacheFailed?: boolean;
 };
 
-/** 可浏览的媒体目录（与服务端白名单一致，ADR 0004） */
+/** 可浏览的媒体目录（与服务端列举白名单一致，ADR 0004）；缩略图仅浏览、无上传入口（ADR 0011 修订） */
 export const OSS_DIRS = [
   { value: "uploads", label: "音频 uploads/" },
   { value: "images", label: "图片 images/" },
@@ -39,7 +43,7 @@ export function useOssList(defaultDir: string, defaultPageSize = 20) {
   const keyword = ref("");
   const page = ref(1);
   const pageSize = ref(defaultPageSize);
-  const all = ref<OssObject[]>([]) as { value: OssObject[] };
+  const all = ref<OssObject[]>([]) as Ref<OssObject[]>;
   const loading = ref(false);
   const truncated = ref(false);
 
@@ -82,9 +86,68 @@ export function useOssList(defaultDir: string, defaultPageSize = 20) {
     page,
     pageSize,
     items,
+    all,
+    filtered,
     total: computed(() => filtered.value.length),
     loading,
     truncated,
     refresh,
   });
+}
+
+export type CacheFail = { key: string; error: string };
+
+// 缓存头批量操作分片大小：单请求时长可控（50 × ~150ms ≈ 8s），失败按片重试即断点续传
+const CACHE_SHARD = 50;
+
+/** 批量设置缓存头：分片提交，返回逐 key 失败明细；整片请求异常折算为逐 key 失败，进度经 onProgress 上报 */
+export async function setCacheControlBatch(
+  keys: string[],
+  maxAgeSeconds: number,
+  onProgress?: (done: number, total: number) => void,
+): Promise<CacheFail[]> {
+  const failed: CacheFail[] = [];
+  let done = 0;
+  for (let i = 0; i < keys.length; i += CACHE_SHARD) {
+    const shard = keys.slice(i, i + CACHE_SHARD);
+    try {
+      const { data } = await api.post("/admin/oss/cache-control", {
+        keys: shard,
+        maxAge: maxAgeSeconds,
+      });
+      failed.push(...data.failed);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "请求失败";
+      for (const key of shard) failed.push({ key, error });
+    }
+    done += shard.length;
+    onProgress?.(done, keys.length);
+  }
+  return failed;
+}
+
+/** 批量查询缓存头：分片提交，返回 key → cacheControl（null=未设置）；失败 key 不入 values */
+export async function queryCacheControlBatch(
+  keys: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ values: Map<string, string | null>; failed: CacheFail[] }> {
+  const values = new Map<string, string | null>();
+  const failed: CacheFail[] = [];
+  let done = 0;
+  for (let i = 0; i < keys.length; i += CACHE_SHARD) {
+    const shard = keys.slice(i, i + CACHE_SHARD);
+    try {
+      const { data } = await api.post("/admin/oss/cache-control/query", { keys: shard });
+      for (const it of data.items as { key: string; cacheControl: string | null }[]) {
+        values.set(it.key, it.cacheControl);
+      }
+      failed.push(...data.failed);
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "请求失败";
+      for (const key of shard) failed.push({ key, error });
+    }
+    done += shard.length;
+    onProgress?.(done, keys.length);
+  }
+  return { values, failed };
 }

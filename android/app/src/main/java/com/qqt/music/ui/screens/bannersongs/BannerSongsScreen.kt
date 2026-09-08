@@ -11,6 +11,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.navigation.BannerNav
@@ -40,7 +41,7 @@ fun BannerSongsScreen(playerViewModel: PlayerViewModel) {
             SongListItem(
                 song = song,
                 playerViewModel = playerViewModel,
-                onClick = { playerViewModel.playSong(song, songs) },
+                onClick = { playerViewModel.playSong(song, songs, QueueSource.DEFAULT) },
             )
         }
     }

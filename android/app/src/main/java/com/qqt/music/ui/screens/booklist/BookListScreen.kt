@@ -129,7 +129,7 @@ private fun BookCard(book: Book, onClick: () -> Unit) {
                     modifier = Modifier.fillMaxSize().padding(12.dp).wrapContentHeight(Alignment.CenterVertically),
                 )
             } else {
-                // thumb(300x) 优先省流量，原图兜底
+                // thumb(720x，书籍大卡按 3x 屏显示宽定尺寸) 优先省流量，原图兑底
                 AsyncImage(
                     model = book.coverThumb.ifBlank { book.cover },
                     contentDescription = book.name,

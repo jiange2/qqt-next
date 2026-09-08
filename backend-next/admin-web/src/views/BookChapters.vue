@@ -6,6 +6,7 @@
       <span class="count">共 {{ chapters.length }} 章</span>
       <el-button type="warning" @click="pickTxt">导入 TXT</el-button>
       <el-button type="success" @click="openCreate">新增章节</el-button>
+      <el-button type="primary" plain @click="orderOpen = true">调整顺序</el-button>
       <!-- 逐章录入通道：列表出于流量不带正文，编辑时单章回读 -->
       <input ref="fileRef" type="file" accept=".txt" style="display: none" @change="onTxtChange" />
     </div>
@@ -44,11 +45,28 @@
         :title="`将删除该书现有 ${chapters.length} 章，写入切分出的 ${previewChapters.length} 章`"
         style="margin-bottom: 12px"
       />
-      <el-table :data="previewChapters" max-height="360" size="small">
+      <el-alert
+        type="info"
+        :closable="false"
+        title="启发式切分仅供起步：章标题可直接改，误切/残留章用「并入」合入相邻章后再确认"
+        style="margin-bottom: 12px"
+      />
+      <el-table :data="previewChapters" max-height="360" size="small" :row-class-name="previewRowClass">
         <el-table-column type="index" label="#" width="60" />
-        <el-table-column prop="title" label="章标题" show-overflow-tooltip />
-        <el-table-column label="字数" width="90">
+        <el-table-column label="章标题" min-width="200">
+          <template #default="{ row }">
+            <el-input v-model="row.title" size="small" maxlength="255" />
+          </template>
+        </el-table-column>
+        <el-table-column label="字数" width="80">
           <template #default="{ row }">{{ row.content.length }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="110">
+          <template #default="{ $index }">
+            <el-button size="small" link type="primary" :disabled="previewChapters.length <= 1" @click="mergePreviewRow($index)">
+              {{ $index === 0 ? "并入下一章" : "并入上一章" }}
+            </el-button>
+          </template>
         </el-table-column>
       </el-table>
       <template #footer>
@@ -70,14 +88,18 @@
         <el-button type="primary" :loading="saving" @click="saveChapter">保存</el-button>
       </template>
     </el-drawer>
+
+    <!-- 章节顺序抽屉（ADR 0011 修订）：复用维度顺序抽屉交互（拖拽/整块移动/按名称排序/显式保存） -->
+    <DimensionDrawer v-model="orderOpen" kind="chapters" :parent="{ id: bookId, name: bookName }" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../api";
+import DimensionDrawer from "../components/DimensionDrawer.vue";
 
 type ChapterRow = { id: number; title: string; contentLength: number };
 type SplitChapter = { title: string; content: string };
@@ -133,6 +155,25 @@ async function onTxtChange(e: Event) {
   } catch {
     ElMessage.error("切分失败，请检查文件（TXT 上限 50MB）");
   }
+}
+
+// 预览最小编辑（ADR 0011 修订）：并章把标题行随内容并入相邻章（首章并入下一章，其余并入上一章）
+function mergePreviewRow(index: number) {
+  const rows = previewChapters.value;
+  const cur = rows[index];
+  if (!cur || rows.length <= 1) return;
+  const block = [cur.title, cur.content].filter((s) => s.trim()).join("\n");
+  if (index === 0) {
+    rows[1] = { title: rows[1].title, content: `${block}\n${rows[1].content}` };
+  } else {
+    rows[index - 1] = { title: rows[index - 1].title, content: `${rows[index - 1].content}\n${block}` };
+  }
+  rows.splice(index, 1);
+}
+
+// 超短章高亮（阈值与 server TINY_CHAPTER_LEN 对齐）：服务端已并入上一章，首章残渣留人工判断
+function previewRowClass({ row }: { row: SplitChapter }): string {
+  return row.content.trim().length < 30 ? "preview-tiny" : "";
 }
 
 async function doImport() {
@@ -199,6 +240,12 @@ async function remove(row: ChapterRow) {
   await loadChapters();
 }
 
+// ---- 章节顺序抽屉：关闭即回读列表（保存或取消后顺序可能已变）
+const orderOpen = ref(false);
+watch(orderOpen, (v) => {
+  if (!v) void loadChapters();
+});
+
 onMounted(async () => {
   // 顶栏书名兜底：query 缺失（如刷新丢失）时回读书籍信息
   if (!bookName.value) {
@@ -216,4 +263,8 @@ onMounted(async () => {
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
 .book-title { font-weight: 600; font-size: 16px; }
 .count { color: #909399; font-size: 13px; margin-right: auto; }
+/* 预览超短章高亮：需压过 element-plus striped 行背景 */
+:deep(.el-table .el-table__body tr.el-table__row.preview-tiny > td.el-table__cell) {
+  background: #fdf6ec;
+}
 </style>

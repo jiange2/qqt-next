@@ -11,10 +11,17 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../prisma.js";
 import { invalidateSettingsCache } from "../services/settings.js";
-import { resolveName, saveImage } from "../media/save.js";
-import { decryptFilename, nameStem } from "../media/crypt.js";
+import { BOOK_THUMB_SIZE, resolveName, saveImage } from "../media/save.js";
+import { decryptFilename, encryptLyrics, nameStem } from "../media/crypt.js";
 import { mediaBase } from "../media/urls.js";
-import { deleteObject, listObjects, putObject, putStream } from "../media/oss.js";
+import {
+  deleteObject,
+  getCacheControl,
+  listObjects,
+  putObject,
+  putStream,
+  setCacheControl,
+} from "../media/oss.js";
 import { transferExternalToOss } from "../media/external.js";
 import { requireAdmin, signAdminToken } from "./auth.js";
 import { splitChapters, decodeTxt } from "../services/txtSplit.js";
@@ -58,8 +65,8 @@ async function parseForm(
     streamHandler?: (fieldname: string, part: MultipartFile) => Promise<string | null>;
     /** 图片固定标签：传给 resolveName 生成 rand_<label><ext>；不传则保留原名 */
     imageLabel?: string;
-    /** 图片目录（默认 images/；书籍封面 images/books/，ADR 0011） */
-    imageDir?: string;
+    /** 缩略图边长（默认 300；书籍封面 720，ADR 0011 修订） */
+    thumbSize?: number;
   } = {},
 ): Promise<FormData> {
   const fields: Record<string, string> = {};
@@ -87,15 +94,16 @@ async function parseForm(
     }
     saved[fieldname] = fieldname === "lrc_file" || fieldname === "lrc"
       ? await saveTextFile(f.buffer, f.name)
-      : await saveImage(f.buffer, f.name, 80, opts.imageLabel, opts.imageDir);
+      : await saveImage(f.buffer, f.name, 80, opts.imageLabel, opts.thumbSize);
   }
   return { fields, saved };
 }
 
-/** LRC 文本上传 OSS（key = lrc/<rand>_lrc.<ext>；旧逻辑误用缩略图标签 _mp3_thumb，已修正） */
+/** LRC 文本上传 OSS（key = lrc/<rand>_lrc.<ext>；旧逻辑误用缩略图标签 _mp3_thumb，已修正）。
+ *  内容先经 encryptLyrics 密文化（docs/adr/0010 歌词密文）：歌曲表单与 OSS 直传两路都汇于此 */
 async function saveTextFile(buffer: Buffer, originalName: string): Promise<string> {
   const name = await resolveName("lrc", originalName, "lrc");
-  await putObject(`lrc/${name}`, buffer);
+  await putObject(`lrc/${name}`, Buffer.from(encryptLyrics(buffer.toString("utf8")), "utf8"));
   return name;
 }
 
@@ -616,7 +624,7 @@ async function nextBookCategorySort(categoryId: number): Promise<number> {
 }
 
 async function upsertBook(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { fields, saved } = await parseForm(req, { imageLabel: "book", imageDir: "images/books" });
+  const { fields, saved } = await parseForm(req, { imageLabel: "book", thumbSize: BOOK_THUMB_SIZE });
   const name = str(fields["name"]);
   if (!name) return void bad(reply, "name required");
   // 书籍必有分类，且必须是书籍分类（type=book）；分类类型创建后不可改，无音乐分类挂书的路径
@@ -658,8 +666,15 @@ async function createChapter(req: FastifyRequest, reply: FastifyReply): Promise<
   if (!(await prisma.book.findUnique({ where: { id: bookId } }))) return void bad(reply, "book not found");
   const parsed = chapterSchema.safeParse(req.body);
   if (!parsed.success) return void bad(reply, "title required");
+  // 章节顺序（ADR 0011 修订）：逐章录入追加书末（max+1），与 id 序初值语义一致
+  const agg = await prisma.chapter.aggregate({ where: { bookId }, _max: { chapterSort: true } });
   const chapter = await prisma.chapter.create({
-    data: { bookId, title: parsed.data.title, content: parsed.data.content },
+    data: {
+      bookId,
+      title: parsed.data.title,
+      content: parsed.data.content,
+      chapterSort: (agg._max.chapterSort ?? -1) + 1,
+    },
   });
   reply.send({ id: chapter.id, title: chapter.title });
 }
@@ -713,7 +728,8 @@ async function txtImport(req: FastifyRequest, reply: FastifyReply): Promise<void
   await prisma.$transaction([
     prisma.chapter.deleteMany({ where: { bookId } }),
     prisma.chapter.createMany({
-      data: parsed.data.chapters.map((c) => ({ bookId, title: c.title, content: c.content })),
+      // 章节顺序（ADR 0011 修订）：按切分/预览顺序赋初值 0..N-1
+      data: parsed.data.chapters.map((c, index) => ({ bookId, title: c.title, content: c.content, chapterSort: index })),
     }),
   ]);
   reply.send({ ok: true, count: parsed.data.chapters.length });
@@ -1169,18 +1185,36 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     reply.send(book);
   });
 
-  // 章节：列表（id/标题/字数，CHAR_LENGTH 免拉正文）、逐章增删改（逐章录入通道）
+  // 章节：列表（id/标题/字数，CHAR_LENGTH 免拉正文，按章节顺序展示）、逐章增删改（逐章录入通道）
   app.get("/admin/books/:id/chapters", { preHandler: requireAdmin }, async (req, reply) => {
     const bookId = intOr((req.params as { id: string }).id, 0);
     if (bookId <= 0) return void bad(reply, "invalid id");
     const rows = await prisma.$queryRaw<{ id: number; title: string; contentLength: number | bigint }[]>`
       SELECT id, title, CHAR_LENGTH(content) AS contentLength
-      FROM chapters WHERE book_id = ${bookId} ORDER BY id ASC
+      FROM chapters WHERE book_id = ${bookId} ORDER BY chapter_sort ASC, id ASC
     `;
     // CHAR_LENGTH 返回 BIGINT，$queryRaw 映射为 BigInt，JSON.stringify 无法序列化 → 统一转 number
     reply.send({ items: rows.map((r) => ({ ...r, contentLength: Number(r.contentLength) })) });
   });
   app.post("/admin/books/:id/chapters", { preHandler: requireAdmin }, createChapter);
+  // 章节顺序保存（ADR 0011 修订）：全量归位 0..N-1；ids 恰为该书全部章节（数量+无重复+归属三验），
+  // 部分提交整单拒——宽松现状不复刻，并发增删得到错误提示而非静默混序
+  app.put("/admin/books/:id/chapters/order", { preHandler: requireAdmin }, async (req, reply) => {
+    const bookId = intOr((req.params as { id: string }).id, 0);
+    if (bookId <= 0) return void bad(reply, "invalid id");
+    const parsed = z.object({ ids: z.array(z.number().int().positive()) }).safeParse(req.body);
+    if (!parsed.success) return void bad(reply, "Invalid body");
+    const ids = parsed.data.ids;
+    const rows = await prisma.chapter.findMany({ where: { bookId }, select: { id: true } });
+    const owned = new Set(rows.map((r) => r.id));
+    if (rows.length !== ids.length || !ids.every((id) => owned.has(id)) || new Set(ids).size !== ids.length) {
+      return void bad(reply, "章节集合已变化，请刷新后重试");
+    }
+    await prisma.$transaction(
+      ids.map((id, index) => prisma.chapter.updateMany({ where: { id, bookId }, data: { chapterSort: index } })),
+    );
+    reply.send({ ok: true });
+  });
   // 单章回读：逐章编辑抽屉回填正文用（列表出于流量考虑不带正文）
   app.get("/admin/chapters/:id", { preHandler: requireAdmin }, async (req, reply) => {
     const id = intOr((req.params as { id: string }).id, 0);
@@ -1363,9 +1397,17 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     },
   });
 
-  // OSS 管理（面板直管对象）；目录白名单与媒体目录约定一致（uploads/ images/ lrc/，ADR 0004）
+  // OSS 管理（面板直管对象）；目录白名单与媒体目录约定一致（uploads/ images/ lrc/，ADR 0004）。
+  // 缩略图可浏览但不可直传：派生物不设上传位，上传白名单 ossDirs 不含它（ADR 0011 修订）
   const ossDirs = new Set(["uploads", "images", "lrc"]);
-  const ossPrefixes = new Set(["", "uploads", "images", "images/thumbs", "lrc", "images/books", "images/books/thumbs"]);
+  const ossPrefixes = new Set(["", "uploads", "images", "images/thumbs", "lrc"]);
+
+  // 缓存头批量操作入参校验：1~200 个 key，且首段目录落在媒体目录白名单内
+  const parseCacheKeys = (raw: unknown): string[] | null => {
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 200) return null;
+    const keys = raw.map(String);
+    return keys.every((key) => ossDirs.has(key.split("/")[0] ?? "")) ? keys : null;
+  };
 
   // 全量列举 + 服务端解密原名（ADR 0008）；keyword 过滤与分页均在前端做
   app.get(
@@ -1378,7 +1420,13 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       const { items, truncated } = await listObjects({
         prefix: prefix ? `${prefix}/` : undefined,
       });
-      reply.send({ items, truncated });
+      // 目录视图只看本层：前缀列举会把子目录对象（thumbs/ 等）混进来，按 key 段数滤掉
+      const depth = prefix ? prefix.split("/").length + 1 : 0;
+      const visible = depth ? items.filter((i) => i.key.split("/").length === depth) : items;
+      // 最新优先（管理页与选择器共用本响应）；ali-oss 运行时返回 Date 对象，须转时间戳比较，不可字符串直比
+      const ts = (v: string) => new Date(v).getTime();
+      visible.sort((a, b) => ts(b.lastModified) - ts(a.lastModified));
+      reply.send({ items: visible, truncated });
     },
   );
 
@@ -1454,6 +1502,44 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     reply.send({ ok: true });
   });
 
+  // 批量设置缓存头（CONTEXT「缓存头」）：前端按 ~50 keys/片分片提交，逐 key CopyObject 改元数据，
+  // 失败逐条返回不中断整片，失败片由前端重试（断点续传）
+  app.post("/admin/oss/cache-control", { preHandler: requireAdmin }, async (req, reply) => {
+    const b = (req.body ?? {}) as { keys?: unknown; maxAge?: unknown };
+    const keys = parseCacheKeys(b.keys);
+    if (!keys) return void bad(reply, "keys 必须为 1~200 个、位于媒体目录内的 key 数组");
+    const maxAge = Number(b.maxAge);
+    if (!Number.isInteger(maxAge) || maxAge < 0 || maxAge > 10 * 365 * 24 * 3600) {
+      return void bad(reply, "maxAge 必须为 0~3153600000 的整数秒");
+    }
+    const failed: { key: string; error: string }[] = [];
+    for (const key of keys) {
+      try {
+        await setCacheControl(key, maxAge);
+      } catch (e) {
+        failed.push({ key, error: e instanceof Error ? e.message : "copy failed" });
+      }
+    }
+    reply.send({ ok: failed.length === 0, failed });
+  });
+
+  // 批量查询缓存头（管理列惰性查看）：逐 key head，未设置/对象缺失返回 null
+  app.post("/admin/oss/cache-control/query", { preHandler: requireAdmin }, async (req, reply) => {
+    const b = (req.body ?? {}) as { keys?: unknown };
+    const keys = parseCacheKeys(b.keys);
+    if (!keys) return void bad(reply, "keys 必须为 1~200 个、位于媒体目录内的 key 数组");
+    const items: { key: string; cacheControl: string | null }[] = [];
+    const failed: { key: string; error: string }[] = [];
+    for (const key of keys) {
+      try {
+        items.push({ key, cacheControl: await getCacheControl(key) });
+      } catch (e) {
+        failed.push({ key, error: e instanceof Error ? e.message : "head failed" });
+      }
+    }
+    reply.send({ items, failed });
+  });
+
   // OneSignal 推送
   app.post("/admin/notifications", { preHandler: requireAdmin }, sendNotification);
 
@@ -1490,7 +1576,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         : prisma.$queryRaw<FactRow[]>`
             SELECT f.id AS id, f.song_id AS songId, s.title AS songTitle,
                    f.device_id AS deviceId, f.cache_hit AS cacheHit,
-                   f.accessed_at AS accessedAt
+                   f.ip_address AS ipAddress, f.accessed_at AS accessedAt
             FROM access_facts f
             LEFT JOIN songs s ON s.id = f.song_id
             ORDER BY f.id DESC
@@ -1500,30 +1586,41 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     reply.send({ total: Math.min(count, MAX_ROWS), items: rows });
   });
 
-  // 设备存储快照：每设备最新一条事实的 allocated/used（快照长事实上，ADR 0008）。
+  // 设备快照：每设备最新一条事实的快照值（allocated/used、UA、最近上报 IP，快照长事实上，ADR 0008）。
+  // 预期下线 = 最新事实时刻 + 曲时长 + 1 分钟冗余（口径同「在线状态」词条），歌删或时长缺失仅加冗余。
+  // 在线与否在 Node 侧比对预期下线时刻与当前时刻（与写库同源的时钟基）：不得用 SQL NOW() —— Prisma 存
+  // UTC 墙上时间但不钉会话时区，部署库 SYSTEM=CST 时 NOW() 会混入 8 小时偏差，窗口内也被判离线。
+  // 对 SQL 内保留的时刻比较一律用 UTC_TIMESTAMP()（computeOnlineCount / 趋势窗口同此约定）。
   // 「最新一条」用每组 MAX(id) 回连：id 自增单调、插入序即时序，且无窗口函数（MySQL 5.7 不支持 OVER，部署库即 5.7）
   app.get("/admin/stats/devices", { preHandler: requireAdmin }, async (_req, reply) => {
     const rows = await prisma.$queryRaw<DeviceRow[]>`
       SELECT f.device_id AS deviceId, f.allocated_storage + 0 AS allocatedStorage,
              f.used_storage + 0 AS usedStorage, f.user_agent AS userAgent,
-             f.accessed_at AS lastSeen, s.facts AS facts
+             f.ip_address AS ipAddress, f.accessed_at AS lastSeen, s.facts AS facts,
+             s.first_seen AS firstSeen,
+             f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND AS expectedOfflineAt
       FROM access_facts f
       INNER JOIN (
-        SELECT MAX(id) AS max_id, COUNT(*) AS facts
+        SELECT MAX(id) AS max_id, COUNT(*) AS facts, MIN(accessed_at) AS first_seen
         FROM access_facts
         GROUP BY device_id
       ) s ON s.max_id = f.id
+      LEFT JOIN songs so ON so.id = f.song_id
       ORDER BY f.accessed_at DESC
     `;
-    // BigInt 列（+0 后仍 BIGINT）与 COUNT(*) 聚合均以 BigInt 抵达，JSON.stringify 无法序列化 → 统一转 number
-    reply.send({
-      items: rows.map((r) => ({
+    // BigInt 列（+0 后仍 BIGINT）与 COUNT(*) 聚合均以 BigInt 抵达，JSON.stringify 无法序列化 → 统一转 number；
+    // 排序：在线在前（稳定排序，组内保持最近访问倒序）
+    const now = Date.now();
+    const items = rows
+      .map((r) => ({
         ...r,
         allocatedStorage: r.allocatedStorage == null ? null : Number(r.allocatedStorage),
         usedStorage: r.usedStorage == null ? null : Number(r.usedStorage),
         facts: Number(r.facts),
-      })),
-    });
+        isOnline: new Date(r.expectedOfflineAt).getTime() > now,
+      }))
+      .sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
+    reply.send({ items });
   });
 
   // 在线趋势：24h/7d 原始 5 分钟采样点；30d 小时平均（平均非峰值）
@@ -1531,10 +1628,10 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const range = str((req.query as Record<string, string | undefined>)["range"] ?? "24h");
     if (range === "30d") {
       const points = await prisma.$queryRaw<TrendPoint[]>`
-        SELECT DATE_FORMAT(sampled_at, '%Y-%m-%dT%H:00:00') AS bucket,
+        SELECT DATE_FORMAT(CONVERT_TZ(sampled_at, '+00:00', '+08:00'), '%Y-%m-%dT%H:00:00') AS bucket,
                ROUND(AVG(total_online)) AS totalOnline
         FROM online_samples
-        WHERE sampled_at >= NOW() - INTERVAL 30 DAY
+        WHERE sampled_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY
         GROUP BY bucket
         ORDER BY bucket
       `;
@@ -1559,6 +1656,7 @@ type FactRow = {
   songTitle: string | null;
   deviceId: string;
   cacheHit: boolean | number;
+  ipAddress: string;
   accessedAt: Date;
 };
 
@@ -1567,8 +1665,11 @@ type DeviceRow = {
   allocatedStorage: number | string | bigint | null;
   usedStorage: number | string | bigint | null;
   userAgent: string | null;
+  ipAddress: string;
   lastSeen: Date;
   facts: number | string | bigint;
+  firstSeen: Date;
+  expectedOfflineAt: Date;
 };
 
 type TrendPoint = { bucket: string; totalOnline: number | string };

@@ -40,8 +40,10 @@ val StarGold = Color(0xFFFFB93E)
 // ── 状态色 ───────────────────────────────────────────
 /** 已下载态：下载完成后播放器下载按钮的绿色 */
 val DownloadedGreen = Color(0xFF4CAF50)
+/** 缓存染色：整曲本地可得（被动缓存整曲命中或已下载）的琥珀金（ADR 0013），进度条整槽以 30% 透明度浅金呈现 */
+val CachedGold = Color(0xFFE6A23C)
 
-// ── 全屏播放器：亮色氛围（背景为 drawable/player_bg 极光图 + 玻璃蒙板）──
+// ── 全屏播放器：亮色氛围（背景为封面主色亮色化渐变，提取中/失败回退 WarmBackground 暖白）──
 /** 深藏青：标题 / 播放键 / 上下曲 */
 val PlayerNavy = Color(0xFF333B5E)
 /** 播放器次级图标与文字灰 */

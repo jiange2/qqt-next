@@ -1,8 +1,12 @@
 package com.qqt.music.ui.screens.reader
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -21,18 +25,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,14 +53,23 @@ import com.qqt.music.data.api.model.BookChapter
 import com.qqt.music.data.local.ReadingProgressStore
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.theme.BrandOrange
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
+
+/** 手势翻章（ADR 0013）：拖动/滑动共用的翻章触发阈值 */
+private val DragTurnThreshold = 80.dp
+
+/** 水平滑动起点左右边缘避让宽度：避开系统边缘返回手势区 */
+private val EdgeGuardWidth = 30.dp
 
 /**
  * 阅读页（书籍阅读域 ADR 0011）：
  * - 全局顶栏承担返回/书名；内容区顶部常驻操作行 = 章节标题 + 目录 + 字号（Aa）
  * - 正文按 \n 分段 LazyColumn 渲染；章首「上一章」、章尾「下一章」footer
+ * - 手势翻章（ADR 0013）：章尾/章首越界拖动松手翻章（提示随阈值切换）；水平滑动 左滑=下一章、右滑=上一章
+ * - 正文禁用系统拉伸过滚动：越界拖动翻章高频到界，stretch 字形变形残留不可接受，边界反馈由提示文案承担
  * - 目录浮层（ModalBottomSheet）：滚动列章、当前章高亮、点选即跳浮层收起
  * - 阅读设置浮层：字号五档 + 背景主题（护眼色系，默认护眼绿）单选（全局一份偏好）
  * - 配色：阅读主题驱动正文区背景/字色（与系统明暗解耦）；书单/阅读页不显示迷你播放器
@@ -115,6 +134,7 @@ fun ReaderScreen(viewModel: ReaderViewModel = viewModel()) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderContent(
     state: ReaderState.Reading,
@@ -170,6 +190,59 @@ private fun ReaderContent(
         onDispose { onSaveProgress(currentRatio()) }
     }
 
+    // —— 手势翻章（ADR 0013）：观察式手势，不消费事件、不干预滚动与点击 ——
+    // 章尾继续上拖 / 章首继续下拖累计越界量（净量，回拖扣减），松手达阈值翻章；
+    // 水平滑动 |dx| 达阈值且大于 |dy|，按左滑=下一章、右滑=上一章判定，起点避开边缘手势区。
+    // 越界量以状态承载，供章尾/章首提示文案实时切换；累计仅在列表到界后生效。
+    val density = LocalDensity.current
+    val turnThresholdPx = remember(density) { with(density) { DragTurnThreshold.toPx() } }
+    val edgeGuardPx = remember(density) { with(density) { EdgeGuardWidth.toPx() } }
+    val tailDragPx = remember { mutableFloatStateOf(0f) }
+    val headDragPx = remember { mutableFloatStateOf(0f) }
+    val fireNext by rememberUpdatedState(onNext)
+    val firePrev by rememberUpdatedState(onPrev)
+    val gestureModifier = Modifier.pointerInput(state.chapterId) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            tailDragPx.floatValue = 0f
+            headDragPx.floatValue = 0f
+            var dx = 0f
+            var dy = 0f
+            val startX = down.position.x
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                if (!change.pressed) {
+                    when {
+                        tailDragPx.floatValue >= turnThresholdPx -> fireNext()
+                        headDragPx.floatValue >= turnThresholdPx -> firePrev()
+                        abs(dx) >= turnThresholdPx && abs(dx) > abs(dy) &&
+                            startX >= edgeGuardPx && startX <= size.width - edgeGuardPx ->
+                            if (dx > 0) firePrev() else fireNext()
+                    }
+                    break
+                }
+                val delta = change.positionChangeIgnoreConsumed()
+                dx += delta.x
+                dy += delta.y
+                if (!listState.canScrollForward) {
+                    tailDragPx.floatValue = when {
+                        delta.y < 0f -> tailDragPx.floatValue - delta.y
+                        else -> (tailDragPx.floatValue - delta.y).coerceAtLeast(0f)
+                    }
+                }
+                if (!listState.canScrollBackward) {
+                    headDragPx.floatValue = when {
+                        delta.y > 0f -> headDragPx.floatValue + delta.y
+                        else -> (headDragPx.floatValue + delta.y).coerceAtLeast(0f)
+                    }
+                }
+            }
+            tailDragPx.floatValue = 0f
+            headDragPx.floatValue = 0f
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(bg)) {
         // 常驻操作行：章节标题 + 目录 + 字号（返回/书名由全局顶栏承担）
         Row(
@@ -192,44 +265,71 @@ private fun ReaderContent(
             }
         }
         // navigationBarsPadding：无迷你播放器后，系统导航栏空档由内容区自行让位（背景延伸至底）
-        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
-            if (state.chapterIndex > 0) {
-                item(key = "prev") {
-                    ChapterNavLink("上一章", onBg = onBg, onClick = onPrev)
+        // 禁用系统拉伸过滚动（ADR 0013 修订）：越界拖动翻章高频到界，stretch 会把正文字形拉长
+        // 且残留不回弹；正文不可变形，边界反馈由章尾/章首提示文案承担
+        CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+                    .then(gestureModifier),
+            ) {
+                if (state.chapterIndex > 0) {
+                    item(key = "prev") {
+                        ChapterNavLink(
+                            label = when {
+                                headDragPx.floatValue >= turnThresholdPx -> "松手回到上一章"
+                                headDragPx.floatValue > 0f -> "继续拖动回到上一章"
+                                else -> "上一章"
+                            },
+                            onBg = onBg,
+                            onClick = onPrev,
+                        )
+                    }
                 }
-            }
-            item(key = "title") {
-                Text(
-                    text = state.chapterTitle,
-                    fontSize = (fontSp + 4).sp,
-                    fontWeight = FontWeight.Bold,
-                    color = onBg,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                )
-            }
-            itemsIndexed(state.paragraphs) { _, para ->
-                // 空行段落以空格占位，保持原文段距
-                Text(
-                    text = para.ifBlank { " " },
-                    fontSize = fontSp.sp,
-                    lineHeight = (fontSp * 1.7f).sp,
-                    color = onBg,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp),
-                )
-            }
-            if (state.chapterIndex < chapterCount - 1) {
-                item(key = "next") {
-                    ChapterNavLink("下一章", onBg = onBg, onClick = onNext)
-                }
-            } else {
-                item(key = "end") {
+                item(key = "title") {
                     Text(
-                        "— 全书完 —",
-                        fontSize = 13.sp,
-                        color = onBg.copy(alpha = 0.4f),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        text = state.chapterTitle,
+                        fontSize = (fontSp + 4).sp,
+                        lineHeight = ((fontSp + 4) * 1.4f).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = onBg,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                     )
+                }
+                itemsIndexed(state.paragraphs) { _, para ->
+                    // 空行段落以空格占位，保持原文段距
+                    Text(
+                        text = para.ifBlank { " " },
+                        fontSize = fontSp.sp,
+                        lineHeight = (fontSp * 1.7f).sp,
+                        color = onBg,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 5.dp),
+                    )
+                }
+                if (state.chapterIndex < chapterCount - 1) {
+                    item(key = "next") {
+                        ChapterNavLink(
+                            label = when {
+                                tailDragPx.floatValue >= turnThresholdPx -> "松手进入下一章"
+                                tailDragPx.floatValue > 0f -> "继续拖动进入下一章"
+                                else -> "下一章"
+                            },
+                            onBg = onBg,
+                            onClick = onNext,
+                        )
+                    }
+                } else {
+                    item(key = "end") {
+                        Text(
+                            "— 全书完 —",
+                            fontSize = 13.sp,
+                            color = onBg.copy(alpha = 0.4f),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        )
+                    }
                 }
             }
         }

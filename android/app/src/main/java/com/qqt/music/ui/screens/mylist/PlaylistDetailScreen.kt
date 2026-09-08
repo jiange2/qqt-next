@@ -27,6 +27,7 @@ import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.LocalPlaylist
 import com.qqt.music.data.local.LocalPlaylistStore
 import com.qqt.music.data.repository.MusicRepository
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.navigation.MyListNav
@@ -122,8 +123,8 @@ fun PlaylistDetailScreen(
                 SongListItem(
                     song = song,
                     playerViewModel = playerViewModel,
-                    // 点歌以整单替换播放队列（点播心智）
-                    onClick = { playerViewModel.playSong(song, songs) },
+                    // 点歌以整单替换播放队列（点播心智）；歌单来源按 id 打标（ADR 0015）
+                    onClick = { playlist?.id?.let { pid -> playerViewModel.playSong(song, songs, QueueSource.localPlaylist(pid)) } },
                     trailing = {
                         IconButton(onClick = { viewModel.removeSong(song) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Outlined.Close, contentDescription = "移出歌单", tint = InkFaint, modifier = Modifier.size(20.dp))

@@ -1,5 +1,7 @@
 package com.qqt.music.data.local
 
+import com.qqt.music.player.PlayerSettingsManager
+import com.qqt.music.player.QueueSource
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,8 @@ object LocalPlaylistStore {
     fun remove(id: String) {
         _playlists.value = _playlists.value.filterNot { it.id == id }
         persist()
+        // 联动清除该歌单的播放模式来源记忆（UUID 不复用，残留即死数据，ADR 0015）
+        PlayerSettingsManager.removeSourceMemory(QueueSource.localPlaylist(id))
     }
 
     /** 勾选式加歌/移歌：不在歌单则追加到尾（按添加序收歌），已在则移出 */

@@ -9,21 +9,19 @@
             <el-image
               v-if="!isPick"
               class="pic"
-              :src="previewSrc(row.key)"
+              :src="objectUrl(row.key)"
               :preview-src-list="[objectUrl(row.key)]"
               preview-teleported
               fit="cover"
               loading="lazy"
-              @error="markBroken(row.key)"
             />
             <img
               v-else
               class="pic"
-              :src="previewSrc(row.key)"
+              :src="objectUrl(row.key)"
               loading="lazy"
               alt=""
               @click="emit('select', baseName(row.key))"
-              @error="markBroken(row.key)"
             />
             <el-icon
               v-if="isPick"
@@ -38,6 +36,14 @@
           <div v-else class="doc">
             <el-icon :size="40" color="#909399"><Document /></el-icon>
           </div>
+          <!-- 管理页勾选角标：批量缓存头操作的选择集（Oss.vue 持有，全选=过滤结果跨页） -->
+          <el-checkbox
+            v-if="!isPick"
+            class="pick-check"
+            :model-value="hasSel(row.key)"
+            @change="(v: CheckboxValueType) => toggleRow(row.key, v)"
+            @click.stop
+          />
           <!-- 管理页 hover 浮现操作按钮 -->
           <div v-if="!isPick" class="ops">
             <el-button size="small" @click.stop="emit('copy', row)">复制 URL</el-button>
@@ -48,6 +54,17 @@
           <!-- 优先显示解密原名（ADR 0008），存量明文 key / 解密失败回退 key 尾段 -->
           <div class="name">{{ row.originalName ?? baseName(row.key) }}</div>
         </el-tooltip>
+        <!-- 缓存头会话内状态（CONTEXT「缓存头」）：未查可点查看，不查不付 head 代价 -->
+        <div v-if="!isPick" class="cache-line">
+          <span v-if="row.cacheFailed" class="cache-fail">查询失败</span>
+          <el-link
+            v-else-if="row.cacheControl === undefined"
+            type="primary"
+            @click="emit('query', row)"
+          >查看缓存头</el-link>
+          <span v-else-if="row.cacheControl === null" class="cache-unset">未设置</span>
+          <span v-else>{{ row.cacheControl }}</span>
+        </div>
       </div>
     </div>
     <!-- 表格视图（管理页） -->
@@ -57,17 +74,31 @@
       :data="oss.items"
       size="small"
     >
+      <el-table-column v-if="!isPick" width="44" align="center">
+        <template #header>
+          <el-checkbox
+            :model-value="allSelected"
+            :indeterminate="someSelected && !allSelected"
+            @change="toggleAllRows"
+          />
+        </template>
+        <template #default="{ row }">
+          <el-checkbox
+            :model-value="hasSel(row.key)"
+            @change="(v: CheckboxValueType) => toggleRow(row.key, v)"
+          />
+        </template>
+      </el-table-column>
       <el-table-column label="预览" width="80">
         <template #default="{ row }">
           <el-image
             v-if="isImage(row.key)"
             class="thumb"
-            :src="previewSrc(row.key)"
+            :src="objectUrl(row.key)"
             :preview-src-list="[objectUrl(row.key)]"
             preview-teleported
             fit="cover"
             loading="lazy"
-            @error="markBroken(row.key)"
           />
           <el-icon v-else :size="24" color="#909399"><Document /></el-icon>
         </template>
@@ -84,6 +115,14 @@
       </el-table-column>
       <el-table-column label="修改时间" width="170">
         <template #default="{ row }">{{ fmtTime(row.lastModified) }}</template>
+      </el-table-column>
+      <el-table-column v-if="!isPick" label="缓存头" width="150">
+        <template #default="{ row }">
+          <span v-if="row.cacheFailed" class="cache-fail">查询失败</span>
+          <el-link v-else-if="row.cacheControl === undefined" type="primary" @click="emit('query', row)">查看</el-link>
+          <span v-else-if="row.cacheControl === null" class="cache-unset">未设置</span>
+          <span v-else>{{ row.cacheControl }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="操作" width="170" fixed="right">
         <template #default="{ row }">
@@ -109,8 +148,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, ref } from "vue";
 import { Document, ZoomIn } from "@element-plus/icons-vue";
+import type { CheckboxValueType } from "element-plus";
 import { objectUrl } from "../media";
 import { fmtSize, fmtTime, type OssObject, type useOssList } from "../oss";
 import AppPagination from "./AppPagination.vue";
@@ -121,18 +161,21 @@ const props = defineProps<{
   mode?: "manage" | "pick";
   /** 网格=正方形统一网格；表格=管理页专属（选择器强制网格） */
   view?: "grid" | "table";
+  /** 勾选集（manage 专属，Oss.vue 持有）：批量缓存头操作的选择来源 */
+  selected?: Set<string>;
 }>();
 const emit = defineEmits<{
   (e: "select", name: string): void;
   (e: "copy", row: OssObject): void;
   (e: "remove", row: OssObject): void;
+  (e: "query", row: OssObject): void;
+  (e: "toggle", key: string, checked: boolean): void;
+  (e: "toggleAll", checked: boolean): void;
 }>();
 
 const isPick = props.mode === "pick";
 const isTable = computed(() => props.view === "table" && !isPick);
 const viewer = ref("");
-// 缩略图加载失败的对象（无同名 thumbs），回退显示原图
-const broken = reactive(new Set<string>());
 
 function isImage(key: string): boolean {
   return key.startsWith("images/");
@@ -142,20 +185,28 @@ function baseName(key: string): string {
   return key.split("/").pop() ?? key;
 }
 
-/** 网格预览用 thumbs 同名缩略图（thumbs 目录自身直接用当前 key），失败回退原图 */
-function previewSrc(key: string): string {
-  if (broken.has(key)) return objectUrl(key);
-  return key.startsWith("images/thumbs/") ? objectUrl(key) : objectUrl(key.replace(/^images\//, "images/thumbs/"));
-}
-
-function markBroken(key: string): void {
-  broken.add(key);
-}
+// 管理页与选择器预览一律直显原图（ADR 0011 修订：OSS 页不展示缩略图）
 
 function tip(row: OssObject): string {
   const name = row.originalName ? `${row.originalName}\n` : "";
   return `${name}${row.key}\n${fmtSize(row.size)} · ${fmtTime(row.lastModified)}`;
 }
+
+// ---- 勾选辅助（选择集在 Oss.vue；全选=当前过滤结果跨页，不止当前页）----
+function hasSel(key: string): boolean {
+  return props.selected?.has(key) ?? false;
+}
+function toggleRow(key: string, v: CheckboxValueType): void {
+  emit("toggle", key, v === true);
+}
+function toggleAllRows(v: CheckboxValueType): void {
+  emit("toggleAll", v === true);
+}
+const filteredKeys = computed(() => (props.oss.filtered ?? []).map((o) => o.key));
+const allSelected = computed(
+  () => filteredKeys.value.length > 0 && filteredKeys.value.every((k) => hasSel(k)),
+);
+const someSelected = computed(() => filteredKeys.value.some((k) => hasSel(k)));
 </script>
 
 <style scoped>
@@ -212,6 +263,35 @@ function tip(row: OssObject): string {
   display: block;
   width: 48px;
   height: 48px;
+}
+/* 管理页网格勾选角标 */
+.pick-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  margin-right: 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.85);
+}
+.table-check {
+  margin-right: 0;
+}
+/* 缓存头状态行（网格卡名下） */
+.cache-line {
+  padding: 0 8px 6px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cache-unset {
+  color: var(--el-color-warning);
+}
+.cache-fail {
+  color: var(--el-color-danger);
 }
 /* hover 操作浮层 */
 .ops {

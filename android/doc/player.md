@@ -11,7 +11,7 @@
 3. **PlayerViewModel** — 全局播放状态（通过 MediaController 控制播放）+ 进度轮询 + 进度保存/恢复
 4. **AudioCache** — LRU 被动缓存，占用不超过启动时刻的缓存预算（总容量预留制，ADR 0004）
 5. **LastPlayedStore** — SharedPreferences，保存播放进度（专辑 ID、曲目索引、播放位置）
-6. **PlayerSettingsManager** — 播放设置单例：倍速 / 均衡器预设 / 定时关闭（倍速与 EQ 持久化，定时会话级）
+6. **PlayerSettingsManager** — 播放设置单例：播放模式（按队列来源记忆）/ 定时关闭（播放模式持久化，定时会话级）
 7. **KeepAliveService + BootReceiver** — 双层前台保活 + 设备重启自启动
 
 ## 关键文件
@@ -185,19 +185,17 @@ MediaItem.Builder()
 
 **必须设置字段**：`title`、`artist`、`artworkUri`，否则系统媒体控制无法正确显示。
 
-## 播放设置（倍速 / 均衡器 / 定时关闭）
+## 播放设置（定时关闭）
 
-`PlayerSettingsManager` 单例（模式对齐 DownloadManager）持有 StateFlow：倍速 / 均衡器预设 / 定时状态，UI 直接 collect。倍速与均衡器预设持久化到 SharedPreferences（`player_settings`），定时关闭会话级（进程被杀即失效）。
+`PlayerSettingsManager` 单例（模式对齐 DownloadManager）持有 StateFlow：播放模式 / 定时状态，UI 直接 collect。播放模式按队列来源持久化到 SharedPreferences（`player_settings`，ADR 0015），定时关闭会话级（进程被杀即失效）。
 
 入口：全屏播放器功能图标行第二位（双滑杆图标），M3 ModalBottomSheet；定时生效期间图标右上角小圆点角标。
 
-### 接线分工
+倍速与均衡器已全链路移除（UI / PlayerSettingsManager / Service 接线，2026-09）：倍速回归 ExoPlayer 默认 1.0x，播放会话无 Equalizer 挂载，显式 audioSessionId 一并撤销；SharedPreferences 中残留的 `playback_speed` / `eq_preset_key` 键无读取方，不清理。
 
-| 设置 | 生效路径 |
-|------|----------|
-| 倍速 | UI → `PlayerViewModel.setSpeed()` → `MediaController.setPlaybackSpeed()`；连接成功时恢复持久化值。固定变速不变调，档位 0.5/0.75/1.0/1.25/1.5/2.0 |
-| 均衡器 | UI → `PlayerSettingsManager.setEqPreset()` → Service collect → `Equalizer`（平台 AudioFX，非 ExoPlayer 内建）。Service 显式 `generateAudioSessionId()` 喂给 `ExoPlayer.Builder.setAudioSessionId()`，效果实例生命周期随 Service；设备不支持时 `eqAvailable=false`，面板显示提示。预设：正常（关效果）/ 流行 / 摇滚 / 古典 / 舞曲走平台内置预设，重低音为手工频段（最低两段 +4dB，单位 milliBel，按实际频段数与设备范围自适应钳制） |
-| 定时关闭 | UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点 `controller.pause()` 后撤销；「播完本曲」由 `onMediaItemTransition` 结算：AUTO（自然放完）→ 暂停，SEEK/PLAYLIST_CHANGED（手动切歌/点播新歌）→ 撤销定时。分钟模式剩余秒数写入单例供面板显示，Activity 重建自动续跑 |
+### 定时关闭生效路径
+
+UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点 `controller.pause()` 后撤销；「播完本曲」由 `onMediaItemTransition` 结算：AUTO（自然放完）→ 暂停，SEEK/PLAYLIST_CHANGED（手动切歌/点播新歌）→ 撤销定时。分钟模式剩余秒数写入单例供面板显示，Activity 重建自动续跑。档位：30 / 60 / 90 / 120 / 240 分钟 + 播完本曲 + 关闭。
 
 ## 缓存和进度保存
 

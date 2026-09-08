@@ -26,6 +26,8 @@ export const config = {
     // 缺失即启动失败（fail fast），杜绝“以为加密了其实明文”的静默降级
     nameSecret: required("OSS_NAME_SECRET"),
   },
+  // 歌词文件内容加密口令（docs/adr/0010）：任意字符串，内部 sha256 派生 AES-256 key/IV；fail fast 同 OSS_NAME_SECRET
+  lyricsContentSecret: required("LRC_CONTENT_SECRET"),
   jwtExpiresIn: "7d",
   adminCookieName: "admin_token",
 } as const;

@@ -1,13 +1,19 @@
 package com.qqt.music
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,9 +29,8 @@ import com.qqt.music.data.local.RatingStore
 import com.qqt.music.data.local.ReadingProgressStore
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.PlayerSettingsManager
-import com.qqt.music.service.KeepAliveService
-import com.qqt.music.player.MusicPlayerService
 import com.qqt.music.ui.components.AppUpdateDialog
+import com.qqt.music.ui.components.WhitelistGuidanceDialog
 import com.qqt.music.ui.navigation.AppNavigation
 import com.qqt.music.ui.theme.QQTMusicTheme
 import com.qqt.music.update.AppUpdateChecker
@@ -43,6 +48,13 @@ class MainActivity : ComponentActivity() {
     /** 非空时显示更新弹窗 */
     private var updateResult by mutableStateOf<AppUpdateChecker.Result?>(null)
 
+    /** 通知权限申请结果：无论同意与否都继续，电池引导与通知权限相互独立 */
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { maybeShowBatteryGuidance() }
+
+    /** 电池优化未白名单时显示引导弹窗（每次打开检查，不记忆"已询问"，ADR 0014） */
+    private var showWhitelistDialog by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PrefsManager.init(applicationContext)
@@ -53,14 +65,16 @@ class MainActivity : ComponentActivity() {
         DownloadManager.init(applicationContext)
         PlayerSettingsManager.init(applicationContext)
 
-        // 1. 启动双层前台服务保活
-        //    MusicPlayerService 中的 ExoPlayer 将被所有 UI 使用
-        try {
-            ContextCompat.startForegroundService(this, Intent(this, KeepAliveService::class.java))
-            ContextCompat.startForegroundService(this, Intent(this, MusicPlayerService::class.java))
-            Log.d(TAG, "✅ KeepAliveService & MusicPlayerService started")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Failed to start services", e)
+        // 1. app 打开即申请：先通知权限（API 33+，连续拒绝 2 次后系统自限不再弹窗），
+        //    处理完接电池优化引导（ADR 0014）。MusicPlayerService 由 PlayerViewModel 的
+        //    SessionToken 绑定自行拉起，无需显式 startForegroundService
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            maybeShowBatteryGuidance()
         }
 
         enableEdgeToEdge()
@@ -84,6 +98,17 @@ class MainActivity : ComponentActivity() {
                         onDismiss = { updateResult = null },
                     )
                 }
+
+                // 白名单引导：电池优化未放行时弹窗（ADR 0014）
+                if (showWhitelistDialog) {
+                    WhitelistGuidanceDialog(
+                        onBatteryWhitelist = {
+                            showWhitelistDialog = false
+                            openBatteryWhitelist()
+                        },
+                        onDismiss = { showWhitelistDialog = false },
+                    )
+                }
             }
         }
 
@@ -100,6 +125,32 @@ class MainActivity : ComponentActivity() {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
             Log.e(TAG, "❌ Failed to open update url: $url", e)
+        }
+    }
+
+    /** 未加入电池优化白名单时置位引导弹窗 */
+    private fun maybeShowBatteryGuidance() {
+        val pm = getSystemService(PowerManager::class.java)
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            showWhitelistDialog = true
+        }
+    }
+
+    /** 电池优化白名单：直接请求加入，异常回退电池优化设置列表页 */
+    private fun openBatteryWhitelist() {
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (e2: Exception) {
+                Log.e(TAG, "❌ Failed to open battery settings", e2)
+            }
         }
     }
 

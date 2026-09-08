@@ -2,6 +2,9 @@
   <div>
     <!-- 当日访问分解（条数口径，ADR 0008） -->
     <div class="stat-row" v-loading="summaryLoading">
+      <el-tooltip content="刷新" placement="top">
+        <el-button class="row-refresh" circle text :icon="Refresh" :loading="summaryLoading" @click="loadSummary" />
+      </el-tooltip>
       <div class="stat">
         <div class="num">{{ summary.total }}</div>
         <div class="label">今日装载</div>
@@ -28,11 +31,16 @@
     <div class="section">
       <div class="section-head">
         <span>在线人数趋势（5 分钟采样；30 天视图为小时平均）</span>
-        <el-radio-group v-model="range" size="small" @change="loadTrend">
-          <el-radio-button value="24h">24 小时</el-radio-button>
-          <el-radio-button value="7d">7 天</el-radio-button>
-          <el-radio-button value="30d">30 天</el-radio-button>
-        </el-radio-group>
+        <div class="head-actions">
+          <el-radio-group v-model="range" size="small" @change="loadTrend">
+            <el-radio-button value="24h">24 小时</el-radio-button>
+            <el-radio-button value="7d">7 天</el-radio-button>
+            <el-radio-button value="30d">30 天</el-radio-button>
+          </el-radio-group>
+          <el-tooltip content="刷新" placement="top">
+            <el-button circle text :icon="Refresh" :loading="trendLoading" @click="loadTrend" />
+          </el-tooltip>
+        </div>
       </div>
       <div v-if="trend.length" class="chart">
         <svg :viewBox="`0 0 ${W} ${H}`">
@@ -48,13 +56,23 @@
       <el-empty v-else description="暂无采样数据" :image-size="60" />
     </div>
 
-    <!-- 设备存储快照：每设备最新一条事实的快照值 -->
+    <!-- 设备快照：每设备最新一条事实的快照值 -->
     <div class="section">
-      <div class="section-head"><span>设备存储快照（每设备取最新事实）</span></div>
+      <div class="section-head">
+        <span>设备快照（每设备取最新事实）</span>
+        <el-tooltip content="刷新" placement="top">
+          <el-button circle text :icon="Refresh" :loading="devicesLoading" @click="loadDevices" />
+        </el-tooltip>
+      </div>
       <el-table :data="devices" v-loading="devicesLoading" stripe size="small">
-        <el-table-column label="设备" min-width="130">
+        <el-table-column label="设备" min-width="290">
           <template #default="{ row }">
-            <span class="mono" :title="row.deviceId">{{ shortId(row.deviceId) }}</span>
+            <span class="mono">{{ row.deviceId }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="在线" width="70">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.isOnline ? 'success' : 'info'">{{ row.isOnline ? "在线" : "离线" }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="缓存预算" width="100">
@@ -66,8 +84,14 @@
         <el-table-column label="事实数" width="80">
           <template #default="{ row }">{{ Number(row.facts) }}</template>
         </el-table-column>
-        <el-table-column label="最近访问" width="170">
-          <template #default="{ row }">{{ new Date(row.lastSeen).toLocaleString() }}</template>
+        <el-table-column label="首次创建" width="170">
+          <template #default="{ row }">{{ new Date(row.firstSeen).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="预期下线" width="170">
+          <template #default="{ row }">{{ new Date(row.expectedOfflineAt).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="最近上报 IP" width="150">
+          <template #default="{ row }"><span class="mono">{{ row.ipAddress }}</span></template>
         </el-table-column>
         <el-table-column prop="userAgent" label="User-Agent" min-width="200" show-overflow-tooltip />
       </el-table>
@@ -75,15 +99,23 @@
 
     <!-- 访问明细 -->
     <div class="section">
-      <div class="section-head"><span>访问明细（无清理任务，最多保留 1000 条）</span></div>
+      <div class="section-head">
+        <span>访问明细（无清理任务，最多保留 1000 条）</span>
+        <el-tooltip content="刷新" placement="top">
+          <el-button circle text :icon="Refresh" :loading="loading" @click="load" />
+        </el-tooltip>
+      </div>
       <el-table :data="items" v-loading="loading" stripe size="small">
         <el-table-column label="歌曲" min-width="180">
           <template #default="{ row }">{{ row.songTitle ?? `已删除歌曲 #${row.songId}` }}</template>
         </el-table-column>
-        <el-table-column label="设备" min-width="130">
+        <el-table-column label="设备" min-width="290">
           <template #default="{ row }">
-            <span class="mono" :title="row.deviceId">{{ shortId(row.deviceId) }}</span>
+            <span class="mono">{{ row.deviceId }}</span>
           </template>
+        </el-table-column>
+        <el-table-column label="IP" width="140">
+          <template #default="{ row }"><span class="mono">{{ row.ipAddress }}</span></template>
         </el-table-column>
         <el-table-column label="命中" width="90">
           <template #default="{ row }">
@@ -103,6 +135,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { Refresh } from "@element-plus/icons-vue";
 import { api } from "../api";
 import { usePagedList } from "../useList";
 import AppPagination from "../components/AppPagination.vue";
@@ -127,6 +160,7 @@ async function loadSummary() {
 type TrendPoint = { t: number; v: number };
 const range = ref("24h");
 const trend = ref<TrendPoint[]>([]);
+const trendLoading = ref(false);
 
 const W = 720;
 const H = 200;
@@ -168,25 +202,34 @@ function fmtTime(t: number): string {
 }
 
 async function loadTrend() {
-  // 24h/7d 返回 sampledAt（Prisma ISO），30d 返回 bucket（本地时间无时区后缀），统一转毫秒
-  type RawPoint = { bucket?: string; sampledAt?: string; totalOnline: number | string };
-  const { data } = await api.get<{ points: RawPoint[] }>("/admin/stats/online-trend", {
-    params: { range: range.value },
-  });
-  trend.value = data.points
-    .map((p) => ({ t: new Date(p.bucket ?? p.sampledAt ?? "").getTime(), v: Number(p.totalOnline) || 0 }))
-    .filter((p) => !Number.isNaN(p.t));
+  trendLoading.value = true;
+  try {
+    // 24h/7d 返回 sampledAt（Prisma ISO），30d 返回 bucket（本地时间无时区后缀），统一转毫秒
+    type RawPoint = { bucket?: string; sampledAt?: string; totalOnline: number | string };
+    const { data } = await api.get<{ points: RawPoint[] }>("/admin/stats/online-trend", {
+      params: { range: range.value },
+    });
+    trend.value = data.points
+      .map((p) => ({ t: new Date(p.bucket ?? p.sampledAt ?? "").getTime(), v: Number(p.totalOnline) || 0 }))
+      .filter((p) => !Number.isNaN(p.t));
+  } finally {
+    trendLoading.value = false;
+  }
 }
 
-// ---- 设备存储快照 ----
+// ---- 设备快照 ----
 
 type DeviceRow = {
   deviceId: string;
   allocatedStorage: number | string | null;
   usedStorage: number | string | null;
   userAgent: string | null;
+  ipAddress: string;
   lastSeen: string;
   facts: number | string;
+  firstSeen: string;
+  expectedOfflineAt: string;
+  isOnline: boolean;
 };
 const devices = ref<DeviceRow[]>([]);
 const devicesLoading = ref(false);
@@ -218,15 +261,12 @@ type FactRow = {
   songTitle: string | null;
   deviceId: string;
   cacheHit: boolean | number;
+  ipAddress: string;
   accessedAt: string;
 };
 const { items, total, page, size, loading, load } = usePagedList<FactRow>("/admin/stats/facts");
 
 // ---- 公共 ----
-
-function shortId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) + "…" : id;
-}
 
 onMounted(() => {
   void loadSummary();
@@ -238,12 +278,18 @@ onMounted(() => {
 
 <style scoped>
 .stat-row {
+  position: relative;
   display: flex;
   gap: 32px;
   padding: 16px 20px;
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);
   border-radius: 4px;
+}
+.row-refresh {
+  position: absolute;
+  top: 10px;
+  right: 10px;
 }
 .stat .num {
   font-size: 26px;
@@ -267,6 +313,11 @@ onMounted(() => {
   align-items: center;
   margin-bottom: 10px;
   color: var(--el-text-color-regular);
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .chart svg {
   width: 100%;

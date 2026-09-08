@@ -16,7 +16,7 @@ cp .env.example .env   # 来自仓库根；按注释填写
 chmod +x deploy.sh
 ```
 
-`.env` 必填：`DB_PASSWORD`、`JWT_SECRET`（`openssl rand -hex 32`）、`OSS_*`（`OSS_INTERNAL=true`）。可选：`ACR_HOST` 设为 `crpi-oyq5ia6dv9vty8p3-vpc.cn-shanghai.personal.cr.aliyuncs.com`（同 region ECS 拉镜像走内网，免公网流量费）。
+`.env` 必填：`DB_PASSWORD`、`JWT_SECRET`（`openssl rand -hex 32`）、`OSS_*`（`OSS_INTERNAL=true`）、`LRC_CONTENT_SECRET`（歌词内容加密口令，docs/adr/0010，须与 App 端 AppConfig 一致）。可选：`ACR_HOST` 设为 `crpi-oyq5ia6dv9vty8p3-vpc.cn-shanghai.personal.cr.aliyuncs.com`（同 region ECS 拉镜像走内网，免公网流量费）。
 
 ## 3. ACR 登录（一次性）
 
@@ -34,6 +34,7 @@ server {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         client_max_body_size 520m;   # 音频上传 ≤500MB
     }
 }
@@ -85,4 +86,5 @@ docker compose -f docker-compose.next.yml run --rm app \
 | 容器起不来 / DB 连接拒绝 | `.env` 的 `DB_PASSWORD` 与宝塔账号是否一致；账号 host 是否 `172.%`（compose 网段是 172.19.x 等动态值，不是 172.17.x）；`bind-address` |
 | 面板白屏 | 确认镜像内 `admin-web/dist` 产物资源路径带 `/admin/` 前缀（`--base=/admin/`） |
 | 媒体 403 | OSS bucket 私有读（历史坑），确认走 URL 签名/公共读配置 |
+| 统计里设备 IP 是反代地址 | nginx 两个头都没透传：代码取头顺序 XFF 首段 → X-Real-IP → req.ip，X-Real-IP 与 X-Forwarded-For 至少配一个（见第 4 节） |
 | 管理员密码丢失 | 删 `admin_users` 表记录后重跑 seed-admin.ts |

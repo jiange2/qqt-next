@@ -20,7 +20,7 @@
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column label="封面" width="80">
         <template #default="{ row }">
-          <el-image v-if="row.cover" :src="bookThumbUrl(row.cover)" style="width: 48px" fit="cover" />
+          <el-image v-if="row.cover" :src="thumbUrl(row.cover)" style="width: 48px" fit="cover" />
         </template>
       </el-table-column>
       <el-table-column prop="name" label="书名" />
@@ -59,7 +59,7 @@
         </el-form-item>
         <el-form-item label="状态"><el-switch v-model="form.status" /></el-form-item>
         <el-form-item label="封面">
-          <UploadField v-model="imageFile" accept="image/*" dir="images/books" />
+          <UploadField v-model="imageFile" accept="image/*" dir="images" />
         </el-form-item>
       </el-form>
       <el-progress v-if="pct > 0 && pct < 100" :percentage="pct" style="margin-top: 4px" />
@@ -78,7 +78,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { api, formBody, saveForm } from "../api";
 import { usePagedList } from "../useList";
 import AppPagination from "../components/AppPagination.vue";
-import { bookThumbUrl } from "../media";
+import { thumbUrl } from "../media";
 import UploadField from "../components/UploadField.vue";
 
 type Row = {

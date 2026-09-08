@@ -14,9 +14,12 @@ import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
+import com.qqt.music.player.AudioCache
+import com.qqt.music.player.CacheVisual
 import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
+import com.qqt.music.player.QueueSource
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +69,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private val _isBuffering = MutableStateFlow(false)
     val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
+    // 缓存可视化（ADR 0013）：整曲本地可得与缓存前缀比例，随切曲与 500ms 轮询刷新
+    private val _cacheVisual = MutableStateFlow(CacheVisual.NOT_CACHED)
+    val cacheVisual: StateFlow<CacheVisual> = _cacheVisual.asStateFlow()
+
     private var mediaController: MediaController? = null
     private var currentQueue: List<Song> = emptyList()
 
@@ -74,7 +81,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     init {
         startPositionPolling()
-        // 延迟连接到 Service，确保 Service 已启动
+        // 连接到 Service：SessionToken 绑定会自行拉起服务（ADR 0014），无需显式 startForegroundService
         connectToService()
         // Activity 重建时续跑未到点的分钟模式定时
         if (PlayerSettingsManager.sleepTimer.value?.endOfTrack == false) restartSleepTicker()
@@ -84,15 +91,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     // ========== 连接到 Service ==========
     private fun connectToService() {
         viewModelScope.launch {
-            // 等待 100ms 确保 Service 已启动
-            delay(100)
             try {
                 MediaControllerManager.connect(application)
                 MediaControllerManager.mediaController.collect { controller ->
                     if (controller != null && mediaController == null) {
                         mediaController = controller
-                        // 恢复持久化倍速（单例在 MainActivity.init 时已载入）
-                        controller.setPlaybackSpeed(PlayerSettingsManager.speed.value)
                         setupPlayerListener()
                         // 冷启动静默恢复上次播放（队列快照，ADR 0010）
                         tryRestoreLastPlayed()
@@ -125,6 +128,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
                 // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）
                 song?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
+                // 缓存可视化切曲即刷（装载时刻判定），此后随轮询生长（ADR 0013）
+                refreshCacheVisual()
                 // 切歌立即保存（ADR 0010）
                 mediaController?.let { saveCurrentProgress(it) }
                 handleSleepTimerOnTransition(reason)
@@ -151,7 +156,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         })
     }
 
-    // ========== 进度轮询（每 500ms 更新一次）==========
+    // ========== 进度轮询（每 100ms 更新一次）：粒度过粗会让歌词高亮与进度条滞后最多半个周期 ==========
     private fun startPositionPolling() {
         viewModelScope.launch {
             var pollCount = 0
@@ -160,13 +165,36 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     _currentPosition.value = controller.currentPosition.coerceAtLeast(0L)
                     _duration.value = controller.duration.coerceAtLeast(0L)
 
-                    // 每 10 个周期（5秒）兜底保存一次（有当前歌即保存，ADR 0010）
-                    if (pollCount++ % 10 == 0 && _currentSong.value != null) {
+                    // 缓存可视化随轮询刷新：前缀实时生长、长满即翻金（ADR 0013）
+                    refreshCacheVisual()
+
+                    // 每 50 个周期（5秒）兜底保存一次（有当前歌即保存，ADR 0010）
+                    if (pollCount++ % 50 == 0 && _currentSong.value != null) {
                         saveCurrentProgress(controller)
                     }
                 }
-                delay(500)
+                delay(100)
             }
+        }
+    }
+
+    // ========== 缓存可视化（ADR 0013）==========
+
+    /**
+     * 刷新缓存染色状态：已下载歌曲（file:// 直读）直接整曲本地可得；
+     * 流式播放按缓存 key（播放 URI 字符串，与 CacheDataSource 默认 key 一致）查命中与前缀。
+     */
+    private fun refreshCacheVisual() {
+        val song = _currentSong.value
+        if (song == null) {
+            _cacheVisual.value = CacheVisual.NOT_CACHED
+            return
+        }
+        val uri = resolveUri(song)
+        if (uri.scheme == "file") {
+            _cacheVisual.value = CacheVisual.FULLY_AVAILABLE
+        } else {
+            _cacheVisual.value = AudioCache.cacheVisual(uri.toString())
         }
     }
 
@@ -180,21 +208,23 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         val duration = controller.duration.coerceAtLeast(0L)
         val pos = controller.currentPosition.coerceAtLeast(0L)
         val savedPos = if (duration > 0 && duration - pos < 3_000L) 0L else pos
-        LastPlayedStore.save(application, queue, idx, savedPos)
+        LastPlayedStore.save(application, queue, idx, savedPos, PlayerSettingsManager.currentSource)
         Log.d(TAG, "💾 saved snapshot: ${queue.size} songs, idx=$idx, pos=${savedPos}ms")
     }
 
     // ========== 播放控制 ==========
 
     /**
-     * 播放指定歌曲及其队列
+     * 播放指定歌曲及其队列。[sourceDescriptor] 必传显式打标队列来源（五键见 [QueueSource]，ADR 0015），
+     * 切播放模式时据此写入对应来源的记忆。
      */
-    fun playSong(song: Song, queue: List<Song> = listOf(song)) {
+    fun playSong(song: Song, queue: List<Song> = listOf(song), sourceDescriptor: String) {
         if (mediaController == null) {
             Log.w(TAG, "⚠️ MediaController not ready yet")
             return
         }
 
+        PlayerSettingsManager.setSource(sourceDescriptor)
         val startIndex = queue.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
         currentQueue = queue
 
@@ -234,9 +264,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         Log.d(TAG, "🔄 restored: ${song.title} @ ${positionMs}ms")
     }
 
-    /** 冷启动恢复入口：读队列快照，无快照或索引越界即完全静默（ADR 0010） */
+    /** 冷启动恢复入口：读队列快照，无快照或索引越界即完全静默（ADR 0010）；
+     *  快照来源落位播放模式记忆，旧快照无该字段按 default（ADR 0015） */
     private fun tryRestoreLastPlayed() {
         val snapshot = LastPlayedStore.load(application) ?: return
+        PlayerSettingsManager.setSource(snapshot.sourceDescriptor ?: QueueSource.DEFAULT)
         restoreLastPlayed(snapshot.queue, snapshot.trackIndex, snapshot.positionMs)
     }
 
@@ -274,13 +306,6 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         Log.d(TAG, "📍 seek to ${positionMs}ms")
-    }
-
-    /** 设置倍速（变速不变调），持久化跨启动保持 */
-    fun setSpeed(speed: Float) {
-        PlayerSettingsManager.setSpeed(speed)
-        mediaController?.setPlaybackSpeed(speed)
-        Log.d(TAG, "🐢 playback speed: ${speed}x")
     }
 
     /** 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer */

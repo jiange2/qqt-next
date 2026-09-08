@@ -16,8 +16,10 @@ data class Song(
     @SerializedName("total_download") val totalDownload: String = "0",
     @SerializedName("is_favourite") val isFavourite: Boolean = false,
     @SerializedName("category_name") val categoryName: String = "",
-    @SerializedName("mp3_lrc_txt") val lrcText: String = "",
-    @SerializedName("mp3_lrc_url") val lrcUrl: String = "",
+    // 歌词字段可空：后端对无歌词的歌输出 JSON null（旧库空列），Gson 会绕过 Kotlin 默认值直接注入 null，
+    // 非空声明反而导致访问时 NPE（消费方用 orEmpty() 归一）
+    @SerializedName("mp3_lrc_txt") val lrcText: String? = null,
+    @SerializedName("mp3_lrc_url") val lrcUrl: String? = null,
     @SerializedName("mp3_duration") val duration: String = "0",
     @SerializedName("total_songs") val totalSongs: String = "0",
     @SerializedName("total_records") val totalRecords: String = "0",

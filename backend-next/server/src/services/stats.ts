@@ -8,7 +8,9 @@ const SAMPLE_INTERVAL_MS = 5 * 60 * 1000;
 type OnlineCountRow = { total: number | bigint };
 
 /** 当下在线设备数：每设备最新事实 + 该曲时长推导（时长取 songs.duration，App 写回）。
- *  「每设备最新」用 MAX(id) 回连而非 ROW_NUMBER()：窗口函数需 MySQL 8.0+，部署库是 5.7 */
+ *  「每设备最新」用 MAX(id) 回连而非 ROW_NUMBER()：窗口函数需 MySQL 8.0+，部署库是 5.7。
+ *  时刻比较用 UTC_TIMESTAMP() 而非 NOW()：事实表存 Prisma 写入的 UTC 墙上时间，会话时区跟随
+ *  部署库 SYSTEM（可为 CST），NOW() 会混入时区偏差（见 admin/routes.ts 设备快照同款注释） */
 export async function computeOnlineCount(): Promise<number> {
   const rows = await prisma.$queryRaw<OnlineCountRow[]>`
     SELECT COUNT(*) AS total
@@ -19,7 +21,7 @@ export async function computeOnlineCount(): Promise<number> {
       GROUP BY device_id
     ) latest ON latest.max_id = f.id
     LEFT JOIN songs s ON s.id = f.song_id
-    WHERE f.accessed_at + INTERVAL (IFNULL(s.duration, 0) + 60) SECOND > NOW()
+    WHERE f.accessed_at + INTERVAL (IFNULL(s.duration, 0) + 60) SECOND > UTC_TIMESTAMP()
   `;
   return Number(rows[0]?.total ?? 0);
 }

@@ -55,7 +55,7 @@ export function songToLegacy(song: SongWithRelations, ctx: SongCtx): Record<stri
   if (song.albumId != null) row.album_id = S(song.albumId);
 
   if (ctx.detail) {
-    // 旧库无 lrc 列时 PHP undefined index 输出 null；mp3_lrc_url 恒为 base+'lrc/'+文件名
+    // 旧库无 lrc 列时 PHP undefined index 输出 null；mp3_lrc_url 无歌词文件时为空串（不拼伪 URL）
     row.mp3_lrc_txt = song.lrcText ?? null;
     row.mp3_lrc_url = lrcUrl(ctx.base, song.lrcUrl);
     if (ctx.userRate !== undefined) row.user_rate = ctx.userRate;

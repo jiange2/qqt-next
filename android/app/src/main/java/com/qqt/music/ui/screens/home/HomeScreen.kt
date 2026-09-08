@@ -28,6 +28,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.qqt.music.data.api.model.Banner
 import com.qqt.music.data.api.model.Song
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.BannerCarousel
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.InkPrimary
@@ -128,7 +129,7 @@ fun HomeScreen(
                 SectionHeader("热门歌曲")
             }
             items(state.trendingSongs) { song ->
-                WaterfallCard(song) { playerViewModel.playSong(song, state.trendingSongs) }
+                WaterfallCard(song) { playerViewModel.playSong(song, state.trendingSongs, QueueSource.DEFAULT) }
             }
         }
     }

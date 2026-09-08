@@ -12,7 +12,7 @@
 #
 # 首次部署（详见 docs/backend-next-deploy.md）：
 #   1. 宝塔 MySQL 建库 qqt_next，账号 qqt_next（host 172.%，覆盖 compose 动态网段，仅授本库）
-#   2. cp .env.example .env，填写 DB_PASSWORD / JWT_SECRET / OSS_*
+#   2. cp .env.example .env，填写 DB_PASSWORD / JWT_SECRET / OSS_* / LRC_CONTENT_SECRET
 #   3. ./deploy.sh vN
 #   4. 生成初始管理员（幂等，密码仅打印一次）：
 #      docker compose -f docker-compose.next.yml run --rm app \
@@ -50,3 +50,5 @@ services:
       OSS_INTERNAL: ${OSS_INTERNAL:-true}
       OSS_PUBLIC_BASE: ${OSS_PUBLIC_BASE:?请在 .env 中配置 OSS_PUBLIC_BASE}
       OSS_NAME_SECRET: ${OSS_NAME_SECRET:?请在 .env 中配置 OSS_NAME_SECRET}
+      # 歌词文件内容加密口令（docs/adr/0010）：须与 App 端 AppConfig.LRC_CONTENT_SECRET 一致
+      LRC_CONTENT_SECRET: ${LRC_CONTENT_SECRET:?请在 .env 中配置 LRC_CONTENT_SECRET}

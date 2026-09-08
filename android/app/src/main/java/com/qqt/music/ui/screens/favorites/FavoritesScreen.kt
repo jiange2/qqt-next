@@ -18,6 +18,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.data.repository.MusicRepository
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.theme.BrandOrange
@@ -104,7 +105,7 @@ fun FavoritesScreen(
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
             items(songs) { song ->
-                SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
+                SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.FAVOURITES) })
             }
         }
     }

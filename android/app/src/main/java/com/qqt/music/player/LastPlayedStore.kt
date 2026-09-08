@@ -7,7 +7,7 @@ import com.google.gson.reflect.TypeToken
 import com.qqt.music.data.api.model.Song
 
 /**
- * 播放进度的持久化形态：整个播放队列的歌曲快照 + 队列索引 + 播放位置（ADR 0010）
+ * 播放进度的持久化形态：整个播放队列的歌曲快照 + 队列索引 + 播放位置 + 队列来源（ADR 0010、ADR 0015）
  *
  * 有当前歌即保存（切歌/暂停立即存、5 秒轮询兜底），App 冷启动时据此静默恢复，不回源后端。
  * 旧「category_id + track_index + position_ms」三键格式废弃不迁移（恢复端从未上线，无存量数据）。
@@ -15,7 +15,8 @@ import com.qqt.music.data.api.model.Song
 data class LastPlayedSnapshot(
     val queue: List<Song>,
     val trackIndex: Int,             // 队列中的曲目索引
-    val positionMs: Long             // 播放进度（毫秒）
+    val positionMs: Long,            // 播放进度（毫秒）
+    val sourceDescriptor: String? = null  // 队列来源（ADR 0015）；存量快照无该字段，恢复按 default 落位
 )
 
 object LastPlayedStore {
@@ -24,17 +25,19 @@ object LastPlayedStore {
     private const val KEY_QUEUE_JSON = "queue_json"
     private const val KEY_TRACK_INDEX = "track_index"
     private const val KEY_POSITION_MS = "position_ms"
+    private const val KEY_SOURCE_DESCRIPTOR = "source_descriptor"
 
     private val gson = Gson()
 
     /**
      * 保存队列快照
      */
-    fun save(context: Context, queue: List<Song>, trackIndex: Int, positionMs: Long) {
+    fun save(context: Context, queue: List<Song>, trackIndex: Int, positionMs: Long, sourceDescriptor: String?) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
             putString(KEY_QUEUE_JSON, gson.toJson(queue))
             putInt(KEY_TRACK_INDEX, trackIndex)
             putLong(KEY_POSITION_MS, positionMs)
+            putString(KEY_SOURCE_DESCRIPTOR, sourceDescriptor)
             apply()
         }
     }
@@ -54,7 +57,8 @@ object LastPlayedStore {
             else LastPlayedSnapshot(
                 queue = queue,
                 trackIndex = prefs.getInt(KEY_TRACK_INDEX, 0),
-                positionMs = prefs.getLong(KEY_POSITION_MS, 0L)
+                positionMs = prefs.getLong(KEY_POSITION_MS, 0L),
+                sourceDescriptor = prefs.getString(KEY_SOURCE_DESCRIPTOR, null)
             )
         } catch (e: Exception) {
             Log.w(TAG, "⚠️ failed to parse queue snapshot, skip restore", e)

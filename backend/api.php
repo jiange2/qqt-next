@@ -1105,8 +1105,8 @@
 
 			$row['mp3_thumbnail_b'] = $file_path . 'images/' . $data['mp3_thumbnail'];
 			$row['mp3_thumbnail_s'] = $file_path . 'images/thumbs/' . $data['mp3_thumbnail'];
-			$row['mp3_lrc_txt'] = $data['mp3_lrc_txt'];
-			$row['mp3_lrc_url'] = $file_path . 'lrc/' . $data['mp3_lrc_url'];
+			$row['mp3_lrc_txt'] = $data['mp3_lrc_txt'] ?? '';
+			$row['mp3_lrc_url'] = $data['mp3_lrc_url'] ? $file_path . 'lrc/' . $data['mp3_lrc_url'] : '';
 
 			$row['mp3_artist'] = $data['mp3_artist'];
 			$row['mp3_description'] = $data['mp3_description'];
@@ -1200,8 +1200,8 @@
 			$row['mp3_artist'] = $data['mp3_artist'];
 			$row['mp3_description'] = $data['mp3_description'];
 
-			$row['mp3_lrc_txt'] = $data['mp3_lrc_txt'];
-			$row['mp3_lrc_url'] = $file_path . 'lrc/' . $data['mp3_lrc_url'];
+			$row['mp3_lrc_txt'] = $data['mp3_lrc_txt'] ?? '';
+			$row['mp3_lrc_url'] = $data['mp3_lrc_url'] ? $file_path . 'lrc/' . $data['mp3_lrc_url'] : '';
 
 			$row['total_rate'] = $data['total_rate'];
 			$row['rate_avg'] = $data['rate_avg'];

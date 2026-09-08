@@ -129,8 +129,8 @@
         'mp3_lrc_url'  =>  $mp3_lrc_url,
         'mp3_duration'  =>  '-',
         'mp3_artist'  => implode(',', $_POST['mp3_artist']),
-        'mp3_description'  =>  addslashes(trim($_POST['mp3_description'])),
-        'mp3_lrc_txt'  =>  addslashes(trim($_POST['mp3_lrc_txt']))
+        'mp3_description'  =>  trim($_POST['mp3_description']),
+        'mp3_lrc_txt'  =>  trim($_POST['mp3_lrc_txt'])
       );
 
       $qry=Update('tbl_mp3', $data, "WHERE id = '".$_POST['mp3_id']."'");

@@ -27,11 +27,14 @@ app/src/main/java/com/qqt/music/
   data/
     api/
       ApiClient.kt          # Retrofit 单例 + buildData()（签名编码：json  urlencode  base64）
+      ResponseSnapshotInterceptor.kt # 响应快照拦截器（ADR 0012）：只读接口回写/回放，断网降级
+      ResponseSnapshotStore.kt       # 响应快照存储：cacheDir 专用目录，5MB 预算 + LRU
       BooleanAdapter.kt     # Gson TypeAdapter：兼容后端返回 "0"/"1" 字符串作为 Boolean
       model/
         Song.kt             # 歌曲数据模型（id/title/artist/url/thumbnail/views/downloads/isFavourite/lrc）
         Models.kt           # 其他模型：Artist、Album、Playlist、Category、Banner、HomeData
     local/
+      NetworkMonitor.kt     # 断网检测（ADR 0012）：默认网络有效性 StateFlow，供拦截器与离线横幅共用
       PrefsManager.kt       # SharedPreferences 封装：最近播放 ID 列表（50条）、已下载歌曲列表（Gson序列化）
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
@@ -67,6 +70,7 @@ app/src/main/java/com/qqt/music/
       player/               # 播放器（全屏播放器 UI：专辑封面、进度条、播放控制）
     components/
       BannerCarousel.kt     # HorizontalPager 轮播（3秒自动翻页 + 圆点指示器）
+      OfflineBanner.kt      # 离线横幅（ADR 0012）：断网时内容区顶部常显，联网自动收起
       BottomBar.kt          # 底部导航栏（5 Tab，中间下载为 FAB 样式）
       DrawerContent.kt      # 侧边抽屉（橙色头图 + 6个导航项 + 底部设置）
       MiniPlayer.kt         # 底部迷你播放器：实时显示歌曲名、进度、播放控制
@@ -91,15 +95,16 @@ app/src/main/java/com/qqt/music/
 
 ```kotlin
 object AppConfig {
-    const val BASE_URL     = "http://47.111.25.157/"  // 后端服务器地址，末尾必须有斜杠
-    const val PACKAGE_NAME = "com.vpapps.onlinemp3"   // 必须与后台 tbl_settings.package_name 一致
-    const val SIGN_KEY     = "viaviweb"               // 签名密钥，必须与后端一致
+    const val BASE_URL          = "http://qqt.yunshangzhiai7.top:8001/"  // 主用：后端域名入口，末尾必须有斜杠
+    const val FALLBACK_BASE_URL = "http://101.132.159.145:8001/"    // 回退：域名连接失败时改用（docs/adr/0009）
+    const val PACKAGE_NAME      = "com.vpapps.onlinemp3"            // 必须与后台 tbl_settings.package_name 一致
+    const val SIGN_KEY          = "viaviweb"                        // 签名密钥，必须与后端一致
 }
 ```
 
 ## 与其他模块的接口
 
-- **依赖后端**：所有内容数据从 `AppConfig.BASE_URL + "api.php"` 获取
+- **依赖后端**：所有内容数据从 `AppConfig.BASE_URL` + `"api.php"` 获取；域名入口连接层失败时由 ApiClient 自动切换回退地址（仓库 docs/adr/0009）
 - **对外无暴露**：纯客户端 App，不对外提供接口
 - **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK`
 
@@ -113,4 +118,4 @@ cd android
 ./gradlew installDebug           # 安装到连接的设备
 ```
 
-修改服务器地址：编辑 `app/src/main/java/com/qqt/music/AppConfig.kt` 中的 `BASE_URL`。
+修改服务器地址：编辑 `app/src/main/java/com/qqt/music/AppConfig.kt` 中的 BASE_URL 与 FALLBACK_BASE_URL。

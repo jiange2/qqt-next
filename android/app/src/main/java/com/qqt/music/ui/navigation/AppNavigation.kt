@@ -27,6 +27,7 @@ import com.qqt.music.ui.components.DrawerContent
 import com.qqt.music.ui.components.MiniPlayer
 import com.qqt.music.ui.components.MusicBottomBar
 import com.qqt.music.ui.components.MusicTopBar
+import com.qqt.music.ui.components.OfflineBanner
 import com.qqt.music.ui.components.navigateSingle
 import com.qqt.music.ui.screens.album.AlbumScreen
 import com.qqt.music.ui.screens.albumsongs.AlbumSongsScreen
@@ -111,10 +112,14 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     modifier = Modifier.weight(1f),
                 ) { innerPadding ->
-                    NavHost(
-                        navController = navController,
-                        startDestination = Screen.Home.route,
-                        modifier = Modifier.padding(innerPadding),
+                    // 断网横幅（ADR 0012）置于内容区顶部：TopBar 下方，出现时页面内容整体下移；
+                    // 全屏播放器为覆盖层，覆盖期间自然遮住横幅（播放场景无需离线提示）
+                    Column(modifier = Modifier.padding(innerPadding)) {
+                        OfflineBanner()
+                        NavHost(
+                            navController = navController,
+                            startDestination = Screen.Home.route,
+                            modifier = Modifier.weight(1f),
                         // 页面过渡：轻微滑动 + 淡入淡出，避免生硬跳变
                         enterTransition = {
                             fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 14 }
@@ -124,7 +129,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                         popExitTransition = {
                             fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 14 }
                         },
-                    ) {
+                        ) {
                     composable(Screen.Home.route) {
                         HomeScreen(
                             playerViewModel = playerViewModel,
@@ -243,8 +248,9 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             },
                         )
                     }
-                }
-                }
+                    }
+                    }
+                    }
                 // Mini player below the scaffold：与底部导航连为一体的扁平长条；
                 // 书籍域两页（书单/阅读）不挂——阅读场景与音乐控件互不干扰（ADR 0011）
                 if (!isBookList && !isReader) {

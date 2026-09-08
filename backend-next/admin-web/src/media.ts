@@ -21,15 +21,6 @@ export function thumbUrl(name: string): string {
   return `${mediaBase}images/thumbs/${encodeURIComponent(name)}`;
 }
 
-/** 书籍封面（images/books/ 与 images/books/thumbs/ 同名同源，ADR 0011） */
-export function bookCoverUrl(name: string): string {
-  return `${mediaBase}images/books/${encodeURIComponent(name)}`;
-}
-
-export function bookThumbUrl(name: string): string {
-  return `${mediaBase}images/books/thumbs/${encodeURIComponent(name)}`;
-}
-
 /** local 类型歌曲的音频完整链接（rand 前缀 key，文件名部分 encode） */
 export function audioFileUrl(name: string): string {
   return `${mediaBase}uploads/${encodeURIComponent(name)}`;

@@ -10,12 +10,15 @@ Android 端所有网络请求通过 `ApiClient`（Retrofit 单例）发出，统
 
 | 文件 | 职责 |
 |------|------|
-| `data/api/ApiClient.kt` | Retrofit 实例 + `buildData()` 签名编码 + MD5 工具 |
+| `data/api/ApiClient.kt` | Retrofit 实例 + 域名→IP 故障切换拦截器 + `buildData()` 签名编码 + MD5 工具 |
+| `data/api/ResponseSnapshotInterceptor.kt` | 响应快照拦截器（ADR 0012）：只读接口回写/回放，断网降级 |
+| `data/api/ResponseSnapshotStore.kt` | 响应快照存储：cacheDir 专用目录，5MB 预算 + LRU |
 | `data/api/BooleanAdapter.kt` | Gson TypeAdapter：将后端 `"0"`/`"1"` 字符串转换为 Boolean |
 | `data/api/model/Song.kt` | 歌曲数据模型 |
 | `data/api/model/Models.kt` | Artist、SearchResults、Album、Playlist、Category、Banner、HomeData |
 | `data/repository/MusicRepository.kt` | 所有 API 方法（suspend fun），统一错误处理 |
-| `AppConfig.kt` | BASE_URL、PACKAGE_NAME、SIGN_KEY 配置 |
+| `data/local/NetworkMonitor.kt` | 断网检测：默认网络有效性 StateFlow，供快照拦截器与离线横幅共用 |
+| `AppConfig.kt` | BASE_URL（主用域名）、FALLBACK_BASE_URL（回退 IP）、PACKAGE_NAME、SIGN_KEY 配置 |
 
 ## 请求编码流程
 
@@ -89,6 +92,19 @@ data class HomeData(
 
 `MusicRepository.getAppDetails()` 调 `app_details` 拿后台的更新配置（`AppUpdateInfo`：`app_update_status`/`app_new_version`/`app_update_desc`/`app_redirect_url`/`cancel_update_status`）。注意 `app_details` 的 `ONLINE_MP3` 是**单元素数组**（旧契约 `array_push` 行为，backend-next 逐字复刻），客户端取首元素解析（兼容数组/对象两种形状，曾因误判 `isJsonObject` 导致更新弹窗永不出现）。`update/AppUpdateChecker.check()` 在 `MainActivity.onCreate` 中异步执行：后台开启更新开关、且后台 `app_new_version`（Double，按版本段比较）大于本机 versionName 时返回结果，由 `ui/components/AppUpdateDialog` 弹窗；`cancel_update_status` 非 `"true"` 时为强制更新（弹窗不可关闭）；点击更新用 `ACTION_VIEW` 打开 `app_redirect_url`。每个跳过分支都会打 `AppUpdateChecker` 标签的 logcat 日志（跳过原因），排查“不弹”先看日志。注意：`app_new_version` 是 Double，无法区分 1.1 与 1.10，后台发版避免用两位修订号。
 
+## 响应快照（断网降级，ADR 0012）
+
+浏览/搜索/阅读等发现域在断网时由「响应快照」兜底（播放域由主动/被动缓存与队列快照覆盖，不在此列）。实现位于 OkHttp 拦截器层，Repository 与 ViewModel 零改动：
+
+- **为何不用 HTTP 缓存**：业务请求是单一 POST api.php 且 data 含动态 salt，同一业务的两次请求字节永不相同，HTTP 层缓存原理性不可行——拦截器解码 data 提取 `method_name` + 业务参数（剔除 package_name/salt/sign）作业务语义 key
+- **白名单**：全部只读接口可回放；`app_details` 与全部写接口（评分/访问上报/时长写回）不拦不写
+- **回放时机**：断网（NetworkMonitor 判定，含已连网未通过验证）时命中即回放；弱网发包失败（IOException，含 failover 主域/回退都失败后）兜底回放
+- **回写口径**：仅 ONLINE_MP3 非空有效的响应落盘，空列表不覆盖既有快照；在线时始终发真实请求并回写覆盖，无 TTL
+- **实体级特例**：`get_recent_songs` 的 key 含 ID 串（最近播放每多一首即变，整串缓存必然 miss），特殊化为按歌曲 ID 的实体级缓存，回放时按请求 ID 串顺序切片重组（调用方本就按传入顺序重排，合并结果等价）
+- **歌词纳入**：`fetchText` 走同一 client，GET 文本按 URL 留档；封面图维持 Coil 默认磁盘缓存
+- **存储**：`cacheDir/response_snapshot/`，5MB 独立预算 LRU（不并入音频缓存预算），用户不可感知不可管理
+- **离线横幅**：断网时 AppNavigation 内容区顶部常显「当前离线，展示最近一次内容」（`ui/components/OfflineBanner.kt`）
+
 ## 错误处理
 
 `MusicRepository` 中所有方法用 `try-catch` 包裹，异常时返回 `null` 或空列表，不向上抛出异常。ViewModel 需检查返回值是否为 null/empty 来判断是否加载失败并设置 error 状态。
@@ -97,5 +113,5 @@ data class HomeData(
 
 - `BooleanAdapter` 处理后端返回 `"0"`/`"1"` 整数字符串作为 Boolean 的情况，**必须**在 Gson 实例构建时注册（`ApiClient` 中已配置）
 - 后端所有数值字段（`id`、`total_views` 等）均以字符串形式返回，`Song.totalCount()` 提供了一个统一取条数的辅助方法
-- 修改 `AppConfig.BASE_URL` 后不需要任何其他代码改动（所有请求都通过 `ApiClient.retrofit` 发出）
+- 修改 `BASE_URL` / `FALLBACK_BASE_URL` 后不需要任何其他代码改动：所有请求都通过 `ApiClient.retrofit` 发出；域名入口连接层失败（DNS 解析失败、连接被拒、连接超时）时由故障切换拦截器自动改用回退地址，进程内粘性、冷启动恢复域名优先（仓库 docs/adr/0009）
 - `page` 参数从 `1` 开始（非 0-based）；列表页每页条数由后端 `tbl_settings.api_latest_limit` 控制；`album_songs` 例外——不分页，一次性返回全量（后端 2000 条兜底截断，仓库级 ADR 0007）

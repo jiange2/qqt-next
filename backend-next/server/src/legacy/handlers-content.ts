@@ -19,7 +19,7 @@ export type LegacyCtx = {
   base: string;
   data: Record<string, string>;
   settings: Awaited<ReturnType<typeof getSettings>>;
-  /** 客户端 IP（x-forwarded-for 首段 → req.ip）与 User-Agent，访问事实落库用（仓库级 ADR 0008） */
+  /** 客户端 IP（x-forwarded-for 首段 → x-real-ip → req.ip）与 User-Agent，访问事实落库用（仓库级 ADR 0008） */
   ip: string;
   userAgent: string;
 };
@@ -241,7 +241,7 @@ export async function catAlbums(ctx: LegacyCtx): Promise<unknown> {
 
 // ---------------------------------------------------------------- 书籍（书籍阅读域 ADR 0011）
 
-/** 分类书籍列表：分页/形态完全对齐 cat_albums，行字段换书籍域命名；封面走 images/books/ 专属目录 */
+/** 分类书籍列表：分页/形态完全对齐 cat_albums，行字段换书籍域命名；封面与其它业务图同库 images/（ADR 0011 修订：目录归一） */
 export async function catBooks(ctx: LegacyCtx): Promise<unknown> {
   const { base, data } = ctx;
   const catId = Number(data["cat_id"]);
@@ -260,12 +260,12 @@ export async function catBooks(ctx: LegacyCtx): Promise<unknown> {
     book_id: S(b.id),
     book_name: b.name,
     book_author: b.author,
-    book_cover: `${base}images/books/${b.cover}`,
-    book_cover_thumb: `${base}images/books/thumbs/${b.cover}`,
+    book_cover: `${base}images/${b.cover}`,
+    book_cover_thumb: `${base}images/thumbs/${b.cover}`,
   }));
 }
 
-/** 全书章节目录：章节无 sort 字段，按 id ASC 一次下发；书籍或分类不可见返回空 */
+/** 全书章节目录：按章节顺序一次下发（chapterSort ASC + id ASC 兜底，ADR 0011 修订）；书籍或分类不可见返回空 */
 export async function bookChapters(ctx: LegacyCtx): Promise<unknown> {
   const bookId = Number(ctx.data["book_id"]);
   if (!Number.isFinite(bookId)) return [];
@@ -275,7 +275,7 @@ export async function bookChapters(ctx: LegacyCtx): Promise<unknown> {
   if (!book) return [];
   const rows = await prisma.chapter.findMany({
     where: { bookId },
-    orderBy: { id: "asc" },
+    orderBy: [{ chapterSort: "asc" }, { id: "asc" }],
     select: { id: true, title: true },
   });
   return rows.map((ch) => ({

@@ -17,10 +17,13 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
+import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.ScrollScope
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -47,7 +50,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.paint
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -67,7 +69,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -84,7 +85,6 @@ import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
-import com.qqt.music.R
 import com.qqt.music.data.local.FavoriteStore
 import com.qqt.music.data.local.LocalPlaylistStore
 import com.qqt.music.data.local.RatingStore
@@ -95,6 +95,7 @@ import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.ui.components.NewPlaylistDialog
 import com.qqt.music.ui.components.PlayerIcons
 import com.qqt.music.ui.theme.BrandOrange
+import com.qqt.music.ui.theme.CachedGold
 import com.qqt.music.ui.theme.DownloadedGreen
 import com.qqt.music.ui.theme.InkSecondary
 import com.qqt.music.ui.theme.PlaceholderBg
@@ -102,6 +103,7 @@ import com.qqt.music.ui.theme.PlayerIconGray
 import com.qqt.music.ui.theme.PlayerNavy
 import com.qqt.music.ui.theme.PlayerTrack
 import com.qqt.music.ui.theme.StarGold
+import com.qqt.music.ui.theme.WarmBackground
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -110,12 +112,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 全屏播放器：背景为封面主色亮色化垂直渐变（Palette 提取、400ms 过渡；提取中/失败回退极光图 + 白蒙板，ADR 0005）。
+ * 全屏播放器：背景为封面主色亮色化垂直渐变（Palette 提取、400ms 过渡；提取中/失败回退默认暖白底，ADR 0005）。
  * 顶部下箭头 + 「歌曲/歌词」页签 + 循环箭头；圆角方形歌曲封面居中大图（高度自适应：min(0.76×宽, 中部剩余高度)，
  * 矮屏以 0.5×宽托底；切歌淡入 + 0.95→1.0 缩放进场、暂停压暗降饱和、加载/失败/无 URL 统一音符占位）；
  * 左对齐标题 / 歌手 / 队列位置；中部五个功能图标（喜欢 / 播放设置 / 下载 / 加入歌单 / 更多菜单：评分）；藏青细进度条；
  * 主控行（播放模式 / 上一首 / 藏青大圆播放键 / 下一首 / 队列入口）钉在页面底部常驻。
- * 中部播放区首槽位为双页横向 Pager（歌词页在左、歌曲页在右，CONTEXT.md「横滑切页」），横滑由根级水平 scrollable 全域驱动（含主控行上方），标题及以下共享不随翻页移动；
+ * 中部播放区首槽位为双页横向 Pager（歌曲页在左、歌词页在右，CONTEXT.md「横滑切页」），横滑由根级水平 scrollable 全域驱动（含主控行上方），标题及以下共享不随翻页移动；
  * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下拉返回/下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
  * 全页下拉返回（CONTEXT.md「下拉返回」，不跟手）：下拖到位或甩动后触发统一收出，矮屏内容滚到顶后继续下拉才触发。
  * 正常屏中部播放区固定高度、整体不可拖动（四段间距 = 最小值 + weight 均摊剩余，估算误差由间距吸收）；
@@ -131,6 +133,7 @@ fun PlayerScreen(
     val isPlaying by playerViewModel.isPlaying.collectAsState()
     val currentPosition by playerViewModel.currentPosition.collectAsState()
     val duration by playerViewModel.duration.collectAsState()
+    val cacheVisual by playerViewModel.cacheVisual.collectAsState()
     val queue by playerViewModel.queue.collectAsState()
     val currentIndex by playerViewModel.currentIndex.collectAsState()
 
@@ -144,8 +147,29 @@ fun PlayerScreen(
     val favouriteIds by FavoriteStore.favouriteIds.collectAsState()
     val isFavorite = songId != null && songId in favouriteIds
 
-    // 双页 Pager：page 0 = 歌词页（左）、page 1 = 歌曲页（右），默认落在歌曲页；页签选中态由滑动进度连续派生
-    val pagerState = rememberPagerState(initialPage = 1) { 2 }
+    // 双页 Pager：page 0 = 歌曲页（左）、page 1 = 歌词页（右），默认落在歌曲页；页签选中态由滑动进度连续派生
+    val pagerState = rememberPagerState(initialPage = 0) { 2 }
+    // 根级 scrollable 的手势量与 Pager 的滚动量符号相反，直驱会内容反向跟手（真机实证：手往左滑、内容往右跑），
+    // 包一层把送入 pagerState 的量取反使内容跟手；scroll 仍转发进 pagerState 自己的 scroll 块，
+    // isScrollInProgress / 打断翻页动画的语义不变（松手吸附监听照旧挂 pagerState）
+    val pagerDragState = remember(pagerState) {
+        object : ScrollableState {
+            // 包裹层的「前/后」与 Pager 相反（正量被取反送入），可滚标记也随符号翻转
+            override val isScrollInProgress: Boolean get() = pagerState.isScrollInProgress
+            override val canScrollForward: Boolean get() = pagerState.canScrollBackward
+            override val canScrollBackward: Boolean get() = pagerState.canScrollForward
+            override fun dispatchRawDelta(delta: Float): Float = -pagerState.dispatchRawDelta(-delta)
+            override suspend fun scroll(
+                scrollPriority: MutatePriority,
+                block: suspend ScrollScope.() -> Unit,
+            ) = pagerState.scroll(scrollPriority) {
+                val pagerScope = this
+                object : ScrollScope {
+                    override fun scrollBy(pixels: Float): Float = -pagerScope.scrollBy(-pixels)
+                }.block()
+            }
+        }
+    }
     val tabSelection = (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
     // 全域横滑松手后的落页校正：拖动/fling 结束（isScrollInProgress 变 false）若停在两页之间，动画到最近页；
     // 页签点击的 animateScrollToPage 结束时已在整页位置，此处为空操作
@@ -161,29 +185,31 @@ fun PlayerScreen(
         }
     }
 
-    // 歌词加载：内嵌 lrcText 优先、外链 lrcUrl 兜底（loadLyrics），会话缓存避免切回已播歌重复下载；
-    // 顶栏「刷新」递增 lyricsReload 强制重取当前歌
+    // 歌词加载（ADR 0014）：歌词字段只在 song_info 详情接口下发，滑到歌词页才请求——详情请求在后端计一次
+    // 播放，播放器打开即取会给播放量灌水；会话缓存避免切回已播歌重复请求；顶栏「刷新」递增 lyricsReload 强制重取
     var lyricsState by remember { mutableStateOf<LyricsState>(LyricsState.Loading) }
     var lyricsReload by remember { mutableStateOf(0) }
-    LaunchedEffect(songId, lyricsReload) {
-        val song = currentSong
-        if (song == null) {
+    val lyricsPageVisible = pagerState.currentPage == 1
+    LaunchedEffect(lyricsPageVisible, songId, lyricsReload) {
+        if (!lyricsPageVisible) return@LaunchedEffect
+        if (songId == null) {
             lyricsState = LyricsState.Empty
             return@LaunchedEffect
         }
-        if (lyricsReload > 0) LyricsCache.clear(song.id)
-        val cached = LyricsCache.get(song.id)
+        if (lyricsReload > 0) LyricsCache.clear(songId)
+        val cached = LyricsCache.get(songId)
         if (cached != null) {
             lyricsState = LyricsState.Ready(cached)
             return@LaunchedEffect
         }
         lyricsState = LyricsState.Loading
-        val lines = loadLyrics(song)
-        lyricsState = if (lines != null) {
-            LyricsCache.put(song.id, lines)
-            LyricsState.Ready(lines)
-        } else {
-            LyricsState.Empty
+        when (val outcome = loadLyrics(songId)) {
+            is LyricsOutcome.Ready -> {
+                LyricsCache.put(songId, outcome.lines)
+                lyricsState = LyricsState.Ready(outcome.lines)
+            }
+            LyricsOutcome.NoData -> lyricsState = LyricsState.Empty
+            LyricsOutcome.Failed -> lyricsState = LyricsState.Error
         }
     }
 
@@ -231,10 +257,7 @@ fun PlayerScreen(
     val isCurrentDownloaded = songId != null && downloadedSongs.any { it.id == songId }
     val isCurrentDownloading = songId != null && activeDownloads.containsKey(songId)
 
-    // 播放设置面板（PlayerSettingsManager 单例：倍速 / 均衡器 / 定时关闭）
-    val speed by PlayerSettingsManager.speed.collectAsState()
-    val eqPreset by PlayerSettingsManager.eqPreset.collectAsState()
-    val eqAvailable by PlayerSettingsManager.eqAvailable.collectAsState()
+    // 播放设置面板（PlayerSettingsManager 单例：定时关闭）
     val sleepTimer by PlayerSettingsManager.sleepTimer.collectAsState()
     val sleepRemainingSeconds by PlayerSettingsManager.sleepRemainingSeconds.collectAsState()
     var showSettingsSheet by remember { mutableStateOf(false) }
@@ -259,7 +282,7 @@ fun PlayerScreen(
     val scope = rememberCoroutineScope()
 
     // 封面主色提取：歌曲 ID → 亮色化渐变色，会话内缓存避免切回已播放歌重复提取（ADR 0005）；
-    // 无条目（提取中）或值为 null（提取失败/无可取色）时背景回退极光图
+    // 无条目（提取中）或值为 null（提取失败/无可取色）时背景回退默认暖白底
     val context = LocalContext.current
     val coverPalettes = remember { mutableStateMapOf<String, CoverPalette?>() }
     val songCover = currentSong?.thumbnailBig.orEmpty()
@@ -269,19 +292,15 @@ fun PlayerScreen(
         }
     }
     val songPalette = songId?.let { coverPalettes[it] }
-    // 背景过渡：渐变色 400ms 平滑跟随主色；alpha 烘进两端色值实现与极光回退层的淡入淡出
-    val gradientAlpha by animateFloatAsState(
-        targetValue = if (songPalette != null) 1f else 0f,
-        animationSpec = tween(400),
-        label = "bgFade",
-    )
+    // 背景过渡：渐变色 400ms 平滑跟随主色；提取中/失败目标值为暖白底，
+    // 切歌时旧色→暖白→新色全程由动画引擎连续插值，无回退层切换
     val gradientTop by animateColorAsState(
-        targetValue = songPalette?.top ?: Color.White,
+        targetValue = songPalette?.top ?: WarmBackground,
         animationSpec = tween(400),
         label = "bgTop",
     )
     val gradientBottom by animateColorAsState(
-        targetValue = songPalette?.bottom ?: Color.White,
+        targetValue = songPalette?.bottom ?: WarmBackground,
         animationSpec = tween(400),
         label = "bgBottom",
     )
@@ -309,25 +328,17 @@ fun PlayerScreen(
             // 矮屏时页内 verticalScroll 优先消费，此层不干扰
             .nestedScroll(collapseConnection)
             .scrollable(orientation = Orientation.Vertical, state = rememberScrollableState { 0f })
-            // 横滑切页（CONTEXT.md「横滑切页」）：根级 scrollable(Horizontal) 直接驱动 pagerState（PagerState 本身即
-            // ScrollableState），两页全域（含主控行、Slider 上方）均可横滑跟手；Slider 等子级水平控件优先消费不误触；
-            // Pager 自带手势关闭（userScrollEnabled=false）统一手势入口，收起动画中禁用
-            .scrollable(orientation = Orientation.Horizontal, state = pagerState, enabled = !dismissing)
-            // 背景：极光图 + 白蒙板是回退底层（提取中/失败时露出）；封面主色亮色化垂直渐变
-            // （顶部主色浅版 → 底部近白）400ms 淡入覆盖其上，alpha 烘进两端色值（ADR 0005）
-            .paint(painterResource(R.drawable.player_bg), contentScale = ContentScale.Crop)
-            .background(Color.White.copy(alpha = 0.52f))
+            // 横滑切页（CONTEXT.md「横滑切页」）：根级 scrollable(Horizontal) 经 pagerDragState 翻转包裹驱动 pagerState
+            // （两套滚动量符号相反，直驱会内容反向跟手），两页全域（含主控行、Slider 上方）均可横滑跟手；
+            // Slider 等子级水平控件优先消费不误触；Pager 自带手势关闭（userScrollEnabled=false）统一手势入口，
+            // 收起动画中禁用
+            .scrollable(orientation = Orientation.Horizontal, state = pagerDragState, enabled = !dismissing)
+            // 背景：默认暖白底；封面主色亮色化垂直渐变（顶部主色浅版 → 底部近白）400ms 跟随，
+            // 提取中/失败渐变目标值即暖白，与底色融为一体（ADR 0005）
+            .background(WarmBackground)
             .background(
                 Brush.verticalGradient(
-                    listOf(Color.White.copy(alpha = 0f), Color.White.copy(alpha = 0.28f)),
-                ),
-            )
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        gradientTop.copy(alpha = gradientAlpha),
-                        gradientBottom.copy(alpha = gradientAlpha),
-                    ),
+                    listOf(gradientTop, gradientBottom),
                 ),
             ),
     ) {
@@ -347,11 +358,11 @@ fun PlayerScreen(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.Center,
             ) {
-                // 页签 = 真实导航：文案序「歌曲=右页 / 歌词=左页」，选中程度取自 Pager 滑动进度，滑动中连续过渡
+                // 页签 = 真实导航：文案序「歌曲=左页 / 歌词=右页」，选中程度取自 Pager 滑动进度，滑动中连续过渡
                 listOf("歌曲", "歌词").forEachIndexed { index, label ->
-                    val selection = if (index == 0) tabSelection else 1f - tabSelection
+                    val selection = if (index == 0) 1f - tabSelection else tabSelection
                     PlayerTab(label = label, selection = selection) {
-                        scope.launch { pagerState.animateScrollToPage(if (index == 0) 1 else 0) }
+                        scope.launch { pagerState.animateScrollToPage(if (index == 0) 0 else 1) }
                     }
                 }
             }
@@ -385,7 +396,7 @@ fun PlayerScreen(
             ) {
                 Spacer(Modifier.height(12.dp))
 
-                // ── 首槽位：双页横向 Pager（歌词页在左、歌曲页在右，CONTEXT.md「横滑切页」）；
+                // ── 首槽位：双页横向 Pager（歌曲页在左、歌词页在右，CONTEXT.md「横滑切页」）；
                 //    标题及以下区块在 Pager 外共享，不随翻页移动 ──
                 HorizontalPager(
                     state = pagerState,
@@ -394,16 +405,17 @@ fun PlayerScreen(
                         .height(coverSize),
                     userScrollEnabled = false, // 横滑统一由根级 scrollable(Horizontal) 全域驱动（见根 modifier 链）
                 ) { page ->
-                    if (page == 0) {
-                        // 歌词页：歌词区占满槽位（内部 LazyColumn 自滚，到顶后下拉量上传触发下拉返回）
+                    if (page == 1) {
+                        // 歌词页（page 1）：歌词区占满槽位（内部 LazyColumn 自滚，到顶后下拉量上传触发下拉返回）
                         LyricsPanel(
                             state = lyricsState,
                             positionMs = currentPosition,
                             onSeekTo = { playerViewModel.seekTo(it) },
+                            onRetry = { if (songId != null) lyricsReload++ },
                             modifier = Modifier.fillMaxSize(),
                         )
                     } else {
-                        // 歌曲页：歌曲封面（24dp 圆角方形），统一占位：加载中/失败/无 URL 都显示音符（ADR 0005）
+                        // 歌曲页（page 0）：歌曲封面（24dp 圆角方形），统一占位：加载中/失败/无 URL 都显示音符（ADR 0005）
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center,
@@ -609,13 +621,25 @@ fun PlayerScreen(
                             } else {
                                 0f
                             }
+                            // 缓存染色（ADR 0013）：整曲本地可得整槽浅金；未命中显缓存前缀浅藏青条，
+                            // 随播放实时生长、长满即翻金；已播放段实心藏青永不染色
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(4.dp)
                                     .clip(RoundedCornerShape(2.dp))
-                                    .background(PlayerTrack),
+                                    .background(
+                                        if (cacheVisual.fullyCached) CachedGold.copy(alpha = 0.30f) else PlayerTrack,
+                                    ),
                             ) {
+                                if (!cacheVisual.fullyCached && cacheVisual.prefixFraction > 0f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(cacheVisual.prefixFraction)
+                                            .fillMaxHeight()
+                                            .background(PlayerNavy.copy(alpha = 0.30f)),
+                                    )
+                                }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth(fraction)
@@ -728,7 +752,7 @@ fun PlayerScreen(
             PlayerGlyph(PlayerIcons.Playlist, "播放队列", 22.dp, PlayerIconGray) { showQueueSheet = true }
         }
 
-        // ── 播放设置浮层：倍速 / 均衡器 / 定时关闭 ─────────────
+        // ── 播放设置浮层：定时关闭 ─────────────
         if (showSettingsSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showSettingsSheet = false },
@@ -748,36 +772,10 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.height(16.dp))
 
-                    // 倍速：chips 单选，固定变速不变调
-                    SettingSectionLabel("倍速")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PlayerSettingsManager.SPEED_STEPS.forEach { step ->
-                            SettingChip(label = "${step}x", selected = speed == step) {
-                                playerViewModel.setSpeed(step)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(16.dp))
-
-                    // 均衡器：预设切换由 Service 写入 Equalizer；设备不支持时整区替换为提示
-                    SettingSectionLabel("均衡器")
-                    if (eqAvailable) {
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PlayerSettingsManager.EQ_PRESETS.forEach { preset ->
-                                SettingChip(label = preset.label, selected = eqPreset == preset) {
-                                    PlayerSettingsManager.setEqPreset(preset)
-                                }
-                            }
-                        }
-                    } else {
-                        Text("该设备不支持均衡器", fontSize = 13.sp, color = PlayerIconGray)
-                    }
-                    Spacer(Modifier.height(16.dp))
-
                     // 定时关闭：到点暂停（不杀服务、不清队列）；播完本曲 = 当前歌曲自然放完时暂停
                     SettingSectionLabel("定时关闭")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(15, 30, 60, 90).forEach { minutes ->
+                        listOf(30, 60, 90, 120, 240).forEach { minutes ->
                             SettingChip(label = "$minutes 分钟", selected = sleepTimer?.minutes == minutes) {
                                 playerViewModel.startSleepTimer(minutes)
                             }

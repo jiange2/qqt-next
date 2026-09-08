@@ -164,6 +164,17 @@ object MusicRepository {
         } catch (e: Exception) { null }
     }
 
+    /** 单曲详情（song_info）：歌词字段（mp3_lrc_txt / mp3_lrc_url）只在详情接口下发，列表接口不携带；
+     *  返回 null 表示请求失败（区别于成功但无数据）。后端此接口带「详情请求计一次播放」副作用（ADR 0014） */
+    suspend fun getSongInfo(songId: String, userId: Int = 0): Song? {
+        return try {
+            val data = ApiClient.buildData(mapOf("method_name" to "song_info", "song_id" to songId, "user_id" to userId))
+            val resp = service.callApi(data)
+            val first = resp.getAsJsonArray("ONLINE_MP3")?.firstOrNull() ?: return null
+            gson.fromJson(first, Song::class.java)
+        } catch (e: Exception) { null }
+    }
+
     /** 纯歌曲搜索（搜索页「查看更多歌曲」的全量分页通道）：按歌名模糊匹配，每页 10 条 */
     suspend fun searchSongs(query: String, page: Int, userId: Int = 0): List<Song> {
         return try {

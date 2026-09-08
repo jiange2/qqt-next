@@ -126,18 +126,20 @@ model Book {
   @@map("books")
 }
 
-// 章节（书籍阅读域 ADR 0011）：不设排序字段，展示序即 id 序（录入/切分顺序天然正确，
-// 不支持章节重排）；不独立上下架，可见性完全随书；删书级联删章
+// 章节（书籍阅读域 ADR 0011 + 修订）：chapterSort 为章节顺序（书内展示序，sort ASC + id ASC
+// 兜底，管理员可调，区别于维度顺序）；不独立上下架，可见性完全随书；删书级联删章
 model Chapter {
-  id        Int      @id @default(autoincrement())
-  bookId    Int      @map("book_id")
-  title     String   @db.VarChar(255)
-  content   String   @db.MediumText // 正文全文
-  createdAt DateTime @default(now()) @map("created_at")
+  id          Int      @id @default(autoincrement())
+  bookId      Int      @map("book_id")
+  chapterSort Int      @default(0) @map("chapter_sort") // 章节顺序：书内展示序，sort ASC + id ASC 兜底（ADR 0011 修订）
+  title       String   @db.VarChar(255)
+  content     String   @db.MediumText // 正文全文
+  createdAt   DateTime @default(now()) @map("created_at")
 
   book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
 
   @@index([bookId])
+  @@index([bookId, chapterSort])
   @@map("chapters")
 }
 

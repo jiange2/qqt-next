@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.viewmodel.PlayerViewModel
@@ -48,7 +49,7 @@ fun LatestScreen(
         contentPadding = PaddingValues(vertical = 6.dp),
     ) {
         items(songs) { song ->
-            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs) })
+            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.DEFAULT) })
         }
         if (isLoading) {
             item {
