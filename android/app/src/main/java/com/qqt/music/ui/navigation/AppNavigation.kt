@@ -47,7 +47,6 @@ import com.qqt.music.ui.screens.recent.RecentScreen
 import com.qqt.music.ui.screens.search.ArtistSongsScreen
 import com.qqt.music.ui.screens.search.SearchScreen
 import com.qqt.music.ui.screens.search.SearchSongsScreen
-import com.qqt.music.ui.screens.settings.SettingsScreen
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlinx.coroutines.launch
 
@@ -70,7 +69,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isSearchSongs = currentRoute?.startsWith("search_songs") == true
     val isArtistSongs = currentRoute?.startsWith("artist_songs") == true
     val isSearch = currentRoute == Screen.Search.route
-    val showBackButton = currentRoute == Screen.Settings.route || isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
+    val showBackButton = isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
     // 关闭时下层原样即时露出（无任何过渡动画），滚动位置等页面状态全程保留。
     // 系统返回由 PlayerScreen 内部 BackHandler 接管（统一走整页下滑收出），顶层无需重复拦截
@@ -88,7 +87,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = currentRoute != Screen.Settings.route && !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isBookList && !isReader && !isMyPlaylistDetail && !isSearchSongs && !isArtistSongs && !isSearch,
+            gesturesEnabled = !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isBookList && !isReader && !isMyPlaylistDetail && !isSearchSongs && !isArtistSongs && !isSearch,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -189,9 +188,6 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     }
                     composable(Screen.Favorites.route) {
                         FavoritesScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.Settings.route) {
-                        SettingsScreen()
                     }
                     composable(Screen.BannerSongs.route) {
                         BannerSongsScreen(playerViewModel = playerViewModel)

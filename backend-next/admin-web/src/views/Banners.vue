@@ -8,7 +8,7 @@
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column label="图片" width="100">
         <template #default="{ row }">
-          <el-image v-if="row.image" :src="imageUrl(row.image)" style="width: 80px" fit="cover" />
+          <el-image v-if="row.image" :src="deobfSrc(imageUrl(row.image))" style="width: 80px" fit="cover" />
         </template>
       </el-table-column>
       <el-table-column prop="title" label="标题" />
@@ -60,6 +60,7 @@ import { api, formBody, saveForm } from "../api";
 import { usePagedList } from "../useList";
 import AppPagination from "../components/AppPagination.vue";
 import { imageUrl } from "../media";
+import { deobfSrc } from "../deobf";
 import UploadField from "../components/UploadField.vue";
 
 type Row = { id: number; title: string; image: string; status: boolean; songs: { songId: number }[] };

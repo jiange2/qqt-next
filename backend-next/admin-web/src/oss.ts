@@ -151,3 +151,35 @@ export async function queryCacheControlBatch(
   }
   return { values, failed };
 }
+
+// 媒体混淆批量分片大小：逐 key 是流式下载+回写（音频可达数百 MB），调小分片控制单请求时长
+const ENCRYPT_SHARD = 10;
+
+export type EncryptBatchResult = { done: number; skipped: number; failed: CacheFail[] };
+
+/** 批量媒体混淆（仓库级 ADR 0011）：分片提交，服务端按 encrypted 元数据跳过已混淆对象（幂等），
+ *  返回实加密/跳过计数与逐 key 失败明细，整片请求异常折算为逐 key 失败 */
+export async function encryptBatch(
+  keys: string[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<EncryptBatchResult> {
+  const failed: CacheFail[] = [];
+  let done = 0;
+  let skipped = 0;
+  let processed = 0;
+  for (let i = 0; i < keys.length; i += ENCRYPT_SHARD) {
+    const shard = keys.slice(i, i + ENCRYPT_SHARD);
+    try {
+      const { data } = await api.post("/admin/oss/encrypt", { keys: shard });
+      done += data.done ?? 0;
+      skipped += data.skipped ?? 0;
+      failed.push(...(data.failed ?? []));
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "请求失败";
+      for (const key of shard) failed.push({ key, error });
+    }
+    processed += shard.length;
+    onProgress?.(processed, keys.length);
+  }
+  return { done, skipped, failed };
+}

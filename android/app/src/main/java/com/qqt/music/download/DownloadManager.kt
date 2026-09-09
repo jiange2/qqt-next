@@ -12,6 +12,7 @@ import com.qqt.music.MEDIA_REFERER
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.player.AudioCache
+import com.qqt.music.player.DeobfuscatingDataSourceFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -222,13 +223,17 @@ object DownloadManager {
         PrefsManager.setDownloadedSongs(_downloadedSongs.value)
     }
 
-    /** 被动缓存（AudioCache）作为上游：命中零流量，未命中走网络；下载过程不回写被动缓存 */
+    /** 被动缓存（AudioCache）作为上游：命中零流量，未命中走网络（解混淆后为明文）；下载过程不回写被动缓存 */
     private fun createPassiveUpstreamDataSource(): DataSource =
         CacheDataSource.Factory()
             .setCache(AudioCache.get(appContext))
+            // 与 MusicPlayerService 同口径的版本化缓存键（仓库级 ADR 0011 割接）
+            .setCacheKeyFactory { dataSpec -> AudioCache.cacheKey(dataSpec.uri.toString()) }
             .setUpstreamDataSourceFactory(
-                DefaultHttpDataSource.Factory()
-                    .setDefaultRequestProperties(mapOf("Referer" to MEDIA_REFERER))
+                DeobfuscatingDataSourceFactory(
+                    DefaultHttpDataSource.Factory()
+                        .setDefaultRequestProperties(mapOf("Referer" to MEDIA_REFERER))
+                )
             )
             .setCacheWriteDataSinkFactory(null)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)

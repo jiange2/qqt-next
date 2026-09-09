@@ -8,6 +8,7 @@ import androidx.media3.datasource.cache.ContentMetadata
 import com.qqt.music.data.api.ApiClient
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
+import com.qqt.music.update.AppUpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -48,6 +49,7 @@ object AccessFactReporter {
             "song_id" to song.id,
             "cache_hit" to if (hit) "1" else "0",
             "device_id" to PrefsManager.getOrCreateDeviceId(),
+            "app_version" to AppUpdateChecker.currentVersionName(context),
         )
         val budget = AudioCache.cacheBudget()
         if (budget >= 0) {

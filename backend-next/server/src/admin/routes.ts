@@ -17,12 +17,15 @@ import { mediaBase } from "../media/urls.js";
 import {
   deleteObject,
   getCacheControl,
+  getStream,
+  isObfuscated,
   listObjects,
   putObject,
   putStream,
   setCacheControl,
 } from "../media/oss.js";
 import { transferExternalToOss } from "../media/external.js";
+import { OBFUSCATED_META, obfuscateStream } from "../media/obfuscate.js";
 import { requireAdmin, signAdminToken } from "./auth.js";
 import { splitChapters, decodeTxt } from "../services/txtSplit.js";
 
@@ -107,10 +110,11 @@ async function saveTextFile(buffer: Buffer, originalName: string): Promise<strin
   return name;
 }
 
-/** 音频流式直传 OSS（ADR 0004；Q19：≤500MB；key = uploads/<rand>_原名） */
+/** 音频流式直传 OSS（ADR 0004；Q19：≤500MB；key = uploads/<rand>_原名）。
+ *  写入前逐字节 +31 混淆（仓库级 ADR 0011），encrypted 元数据与内容同 put 原子写入 */
 async function saveAudioStream(part: MultipartFile): Promise<string> {
   const name = await resolveName("uploads", part.filename || "");
-  await putStream(`uploads/${name}`, part.file);
+  await putStream(`uploads/${name}`, part.file.pipe(obfuscateStream()), { meta: OBFUSCATED_META });
   return name;
 }
 
@@ -1540,6 +1544,44 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     reply.send({ items, failed });
   });
 
+  // 批量媒体混淆（仓库级 ADR 0011）：逐 key head 查 encrypted 元数据，已混淆跳过（幂等可反复执行）；
+  // 否则 getStream → +31 流 → putStream 回写（encrypted 元数据与目录默认缓存头同 put 原子写入）。
+  // 失败逐条返回不中断整片，与缓存头批量同款分片驱动；lrc/ 不参与（另有真加密，见「歌词密文」）
+  const parseEncryptKeys = (raw: unknown): string[] | null => {
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 200) return null;
+    const keys = raw.map(String);
+    return keys.every((key) => {
+      const dir = key.split("/")[0] ?? "";
+      return dir === "uploads" || dir === "images";
+    })
+      ? keys
+      : null;
+  };
+  app.post("/admin/oss/encrypt", { preHandler: requireAdmin }, async (req, reply) => {
+    const b = (req.body ?? {}) as { keys?: unknown };
+    const keys = parseEncryptKeys(b.keys);
+    if (!keys) {
+      return void bad(reply, "keys 必须为 1~200 个、位于 uploads/ 或 images/（含 thumbs）内的 key 数组");
+    }
+    const failed: { key: string; error: string }[] = [];
+    let done = 0;
+    let skipped = 0;
+    for (const key of keys) {
+      try {
+        if (await isObfuscated(key)) {
+          skipped++;
+          continue;
+        }
+        const stream = await getStream(key);
+        await putStream(key, stream.pipe(obfuscateStream()), { meta: OBFUSCATED_META });
+        done++;
+      } catch (e) {
+        failed.push({ key, error: e instanceof Error ? e.message : "encrypt failed" });
+      }
+    }
+    reply.send({ ok: failed.length === 0, done, skipped, failed });
+  });
+
   // OneSignal 推送
   app.post("/admin/notifications", { preHandler: requireAdmin }, sendNotification);
 
@@ -1576,6 +1618,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         : prisma.$queryRaw<FactRow[]>`
             SELECT f.id AS id, f.song_id AS songId, s.title AS songTitle,
                    f.device_id AS deviceId, f.cache_hit AS cacheHit,
+                   f.app_version AS appVersion,
                    f.ip_address AS ipAddress, f.accessed_at AS accessedAt
             FROM access_facts f
             LEFT JOIN songs s ON s.id = f.song_id
@@ -1596,6 +1639,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     const rows = await prisma.$queryRaw<DeviceRow[]>`
       SELECT f.device_id AS deviceId, f.allocated_storage + 0 AS allocatedStorage,
              f.used_storage + 0 AS usedStorage, f.user_agent AS userAgent,
+             f.app_version AS appVersion, IFNULL(so.duration, 0) AS usedDuration,
              f.ip_address AS ipAddress, f.accessed_at AS lastSeen, s.facts AS facts,
              s.first_seen AS firstSeen,
              f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND AS expectedOfflineAt
@@ -1616,6 +1660,8 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
         ...r,
         allocatedStorage: r.allocatedStorage == null ? null : Number(r.allocatedStorage),
         usedStorage: r.usedStorage == null ? null : Number(r.usedStorage),
+        // IFNULL 表达式的协议类型为 LONGLONG → BigInt 抵达，与 facts/COUNT(*) 同坑
+        usedDuration: Number(r.usedDuration),
         facts: Number(r.facts),
         isOnline: new Date(r.expectedOfflineAt).getTime() > now,
       }))
@@ -1656,6 +1702,7 @@ type FactRow = {
   songTitle: string | null;
   deviceId: string;
   cacheHit: boolean | number;
+  appVersion: string | null;
   ipAddress: string;
   accessedAt: Date;
 };
@@ -1665,6 +1712,8 @@ type DeviceRow = {
   allocatedStorage: number | string | bigint | null;
   usedStorage: number | string | bigint | null;
   userAgent: string | null;
+  appVersion: string | null;
+  usedDuration: number | string | bigint;
   ipAddress: string;
   lastSeen: Date;
   facts: number | string | bigint;

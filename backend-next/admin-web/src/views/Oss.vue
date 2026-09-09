@@ -34,6 +34,15 @@
         @click="setDialogVisible = true"
       >设置缓存头</el-button>
       <el-button :disabled="!selected.size || batchRunning" @click="runQuery()">查看缓存头</el-button>
+      <!-- 批量媒体混淆（仓库级 ADR 0011）：勾选集加密 / 一键全量（lrc 不参与，已混淆自动跳过，幂等可续跑） -->
+      <el-button
+        type="warning"
+        plain
+        :disabled="!selected.size || batchRunning"
+        @click="runEncrypt()"
+      >批量加密</el-button>
+      <el-button type="warning" :disabled="batchRunning" @click="encryptAll">加密全部未混淆</el-button>
+      <el-button :disabled="batchRunning" @click="exportRefreshList">导出 CDN 刷新列表</el-button>
       <span v-if="selected.size" class="sel-count">已选 {{ selected.size }}</span>
       <!-- 视图偏好持久化在 localStorage，默认网格 -->
       <el-radio-group v-model="viewMode" class="view-toggle">
@@ -55,7 +64,7 @@
     />
     <el-alert v-if="!batchRunning && failures.length" type="error" class="batch-alert" @close="failures = []">
       <template #title>
-        <span>缓存头{{ lastAction === "set" ? "设置" : "查询" }}失败 {{ failures.length }} 个（仅展示前 5 条）</span>
+        <span>{{ failTitle }}失败 {{ failures.length }} 个（仅展示前 5 条）</span>
         <el-button size="small" link type="primary" @click="retryFailures">重试失败项</el-button>
       </template>
       <div v-for="f in failures.slice(0, 5)" :key="f.key" class="fail-line">{{ f.key }}：{{ f.error }}</div>
@@ -113,9 +122,10 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { Grid, Tickets } from "@element-plus/icons-vue";
 import type { UploadFile } from "element-plus";
 import { api } from "../api";
-import { objectUrl } from "../media";
+import { dirUrl, objectUrl } from "../media";
 import {
   OSS_DIRS,
+  encryptBatch,
   queryCacheControlBatch,
   setCacheControlBatch,
   useOssList,
@@ -147,7 +157,7 @@ const selected = ref(new Set<string>());
 const batchRunning = ref(false);
 const progress = ref({ done: 0, total: 0 });
 const failures = ref<{ key: string; error: string }[]>([]);
-const lastAction = ref<"set" | "query">("query");
+const lastAction = ref<"set" | "query" | "encrypt">("query");
 const setDialogVisible = ref(false);
 const preset = ref(31536000);
 const customValue = ref<number | undefined>(undefined);
@@ -155,6 +165,9 @@ const customUnit = ref(86400);
 
 const progressPct = computed(() =>
   progress.value.total ? Math.round((progress.value.done / progress.value.total) * 100) : 0,
+);
+const failTitle = computed(() =>
+  lastAction.value === "set" ? "缓存头设置" : lastAction.value === "encrypt" ? "加密" : "缓存头查询",
 );
 const allSelected = computed(
   () => oss.filtered.length > 0 && oss.filtered.every((o) => selected.value.has(o.key)),
@@ -249,9 +262,73 @@ function queryOne(row: OssObject): void {
   void runQuery([row.key]);
 }
 
+// ===== 批量媒体混淆（仓库级 ADR 0011）：与缓存头批量共用进度/失败 UI；服务端跳过已混淆对象 =====
+async function runEncrypt(keys?: string[]): Promise<void> {
+  const target = keys ?? [...selected.value];
+  if (!target.length || batchRunning.value) return;
+  batchRunning.value = true;
+  lastAction.value = "encrypt";
+  failures.value = [];
+  progress.value = { done: 0, total: target.length };
+  try {
+    const { done, skipped, failed } = await encryptBatch(target, (d, t) => {
+      progress.value = { done: d, total: t };
+    });
+    failures.value = failed;
+    if (!failed.length) ElMessage.success(`已加密 ${done} 个，跳过已加密 ${skipped} 个`);
+  } finally {
+    batchRunning.value = false;
+  }
+}
+
+/** 媒体目录全量列举（lrc 不参与混淆；images 前缀递归含 thumbs）；超出列举上限时告警并只处理已列出部分 */
+async function fetchMediaKeys(): Promise<string[]> {
+  const keys: string[] = [];
+  let truncated = false;
+  for (const prefix of ["uploads", "images"]) {
+    const { data } = await api.get("/admin/oss/objects", { params: { prefix } });
+    keys.push(...(data.items as { key: string }[]).map((o) => o.key));
+    truncated = truncated || !!data.truncated;
+  }
+  if (truncated) ElMessage.warning("对象数超出列举上限，仅处理已列出的部分");
+  return keys;
+}
+
+async function encryptAll(): Promise<void> {
+  if (batchRunning.value) return;
+  await ElMessageBox.confirm(
+    "将把 uploads/、images/（含缩略图）全部未混淆对象逐字节 +31 加密，歌词 lrc/ 不参与；已加密对象自动跳过。音频大文件耗时较长，中断后重跑即可续传。",
+    "加密全部未混淆",
+    { type: "warning" },
+  );
+  const keys = await fetchMediaKeys();
+  if (!keys.length) return void ElMessage.info("没有可处理的对象");
+  await runEncrypt(keys);
+}
+
+/** 全量 URL 列表导出（.txt）：供 CDN 控制台刷新同 key 重写后的旧缓存，头部附目录刷新写法 */
+async function exportRefreshList(): Promise<void> {
+  const keys = await fetchMediaKeys();
+  const lines = [
+    `# CDN URL 刷新列表（共 ${keys.length} 条）：粘贴到阿里云 CDN 控制台「刷新预热 → URL 刷新」，单次上限 2000 条，超量分批提交`,
+    "# 备选：目录刷新（3 条覆盖全部媒体目录，日配额 100 条）",
+    `# ${dirUrl("uploads")}`,
+    `# ${dirUrl("images")}`,
+    `# ${dirUrl("images/thumbs")}`,
+    ...keys.map((k) => objectUrl(k)),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "cdn-refresh-urls.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 async function retryFailures(): Promise<void> {
   const keys = failures.value.map((f) => f.key);
   if (lastAction.value === "set") await runSet(keys);
+  else if (lastAction.value === "encrypt") await runEncrypt(keys);
   else await runQuery(keys);
 }
 

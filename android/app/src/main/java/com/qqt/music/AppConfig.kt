@@ -11,4 +11,12 @@ object AppConfig {
     /** 歌词文件内容加密口令（仓库 docs/adr/0010）：必须与服务端 LRC_CONTENT_SECRET 一致，
      *  否则密文歌词解密失败显示「歌词加载失败」；存量明文歌词不受影响 */
     const val LRC_CONTENT_SECRET = "518b465562a5ec61b6d750fa68533bc1"
+
+    /** 媒体 CDN host（仓库级 ADR 0011）：字节解混淆只对该 host 的响应生效，其他地址原样透传。
+     *  必须与服务端 OSS_PUBLIC_BASE 的域名一致，换值 = 发版 */
+    const val MEDIA_HOST = "cdn.qqt.yunshangzhiai7.top"
+
+    /** 媒体字节混淆位移量（仓库级 ADR 0011）：OSS 存储逐字节 +31，客户端读出路径 -31 还原；
+     *  必须与后端 obfuscate.ts 的 SHIFT 一致 */
+    const val MEDIA_BYTE_SHIFT = 31
 }

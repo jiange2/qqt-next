@@ -38,7 +38,7 @@
       <el-table-column type="index" label="#" width="50" />
       <el-table-column v-if="!isChapters" label="图片" width="64">
         <template #default="{ row }">
-          <el-image v-if="row.image" :src="thumbUrl(row.image)" style="width: 40px" fit="cover" />
+          <el-image v-if="row.image" :src="deobfSrc(thumbUrl(row.image))" style="width: 40px" fit="cover" />
         </template>
       </el-table-column>
       <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
@@ -112,6 +112,7 @@ import Sortable from "sortablejs";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { api } from "../api";
 import { thumbUrl } from "../media";
+import { deobfSrc } from "../deobf";
 
 type Row = { id: number; name: string; image: string; status: boolean; songCount?: number };
 

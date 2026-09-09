@@ -391,6 +391,7 @@ model AccessFact {
   cacheHit         Boolean  @default(false) @map("cache_hit")
   allocatedStorage BigInt?  @map("allocated_storage") // 上报时刻缓存预算快照（字节）
   usedStorage      BigInt?  @map("used_storage") // 上报时刻被动缓存实际占用（字节）
+  appVersion       String?  @map("app_version") @db.VarChar(32) // 上报时刻 App 版本（versionName；老事实/未上报客户端为 NULL）
   ipAddress        String   @map("ip_address") @db.VarChar(45)
   userAgent        String?  @map("user_agent") @db.Text
   accessedAt       DateTime @default(now()) @map("accessed_at")

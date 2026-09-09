@@ -15,7 +15,7 @@
       <template v-if="typeof modelValue === 'string'">
         <el-image
           v-if="isImage"
-          :src="thumbUrl(modelValue)"
+          :src="deobfSrc(thumbUrl(modelValue))"
           style="width: 48px; height: 48px"
           fit="cover"
         />
@@ -46,6 +46,7 @@ import type { UploadFile } from "element-plus";
 import { UploadFilled } from "@element-plus/icons-vue";
 import { api } from "../api";
 import { objectUrl, thumbUrl } from "../media";
+import { deobfSrc } from "../deobf";
 import OssPicker from "./OssPicker.vue";
 
 const props = defineProps<{

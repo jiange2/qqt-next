@@ -8,8 +8,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import com.qqt.music.AppConfig
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.download.DownloadManager
@@ -78,6 +80,9 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     /** 分钟模式定时倒计时协程；播完本曲模式无倒计时，由切曲事件结算 */
     private var sleepJob: Job? = null
+
+    /** 错误重试自愈进行中的曲子（无 fragment 的原始 URI，ADR 0011）；READY 即痊愈清空 */
+    private var selfHealUri: String? = null
 
     init {
         startPositionPolling()
@@ -148,10 +153,34 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 Log.d(TAG, "🎵 playback state: $state")
                 // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）
                 if (playbackState == Player.STATE_READY) {
+                    selfHealUri = null
                     _currentSong.value?.let { song ->
                         AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
                     }
                 }
+            }
+
+            // 错误重试自愈（ADR 0011）：割接窗口连明文 CDN 时写下的毒化缓存条目不随 CDN 刷新消失，
+            // 须端侧清除后重取。护栏：仅解析/解码类错误参与（乱码数据的确切表现，IO 类是网络问题）；
+            // 仅媒体 host；同曲再败升级 #raw 通道（旁路 -31 直读、独立缓存键），#raw 再败即停防循环。
+            override fun onPlayerError(error: PlaybackException) {
+                val controller = mediaController ?: return
+                val item = controller.currentMediaItem ?: return
+                val uri = item.localConfiguration?.uri ?: return
+                val base = uri.buildUpon().fragment(null).build().toString()
+                if (error.errorCode !in 3000..4999 || uri.host != AppConfig.MEDIA_HOST) return
+                if (base == selfHealUri && uri.fragment == "raw") return
+                Log.w(TAG, "🩹 parse/decode error ${error.errorCode}, self-heal: ${uri.lastPathSegment}")
+                AudioCache.removeEntry(base)
+                if (base == selfHealUri) {
+                    controller.replaceMediaItem(
+                        controller.currentMediaItemIndex,
+                        item.buildUpon().setUri(uri.buildUpon().fragment("raw").build()).build()
+                    )
+                }
+                selfHealUri = base
+                controller.prepare()
+                controller.play()
             }
         })
     }
@@ -182,7 +211,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     /**
      * 刷新缓存染色状态：已下载歌曲（file:// 直读）直接整曲本地可得；
-     * 流式播放按缓存 key（播放 URI 字符串，与 CacheDataSource 默认 key 一致）查命中与前缀。
+     * 流式播放按缓存 key（播放 URI 字符串，经 AudioCache.cacheKey 版本化，与 CacheDataSource 键同口径）
+     * 查命中与前缀。
      */
     private fun refreshCacheVisual() {
         val song = _currentSong.value
@@ -354,11 +384,16 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 PlayerSettingsManager.clearSleepTimer()
                 Log.d(TAG, "⏱️ end-of-track timer fired, paused")
             }
-            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
-            Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
-            -> {
+            Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> {
                 PlayerSettingsManager.clearSleepTimer()
                 Log.d(TAG, "⏱️ end-of-track timer cancelled by user navigation (reason=$reason)")
+            }
+            Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> {
+                // #raw 自愈升级重试引发的过渡是程序行为，不算用户主动干预，不撤销定时（ADR 0011）
+                if (mediaController?.currentMediaItem?.localConfiguration?.uri?.fragment != "raw") {
+                    PlayerSettingsManager.clearSleepTimer()
+                    Log.d(TAG, "⏱️ end-of-track timer cancelled by user navigation (reason=$reason)")
+                }
             }
         }
     }

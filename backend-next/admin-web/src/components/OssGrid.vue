@@ -9,8 +9,8 @@
             <el-image
               v-if="!isPick"
               class="pic"
-              :src="objectUrl(row.key)"
-              :preview-src-list="[objectUrl(row.key)]"
+              :src="deobfSrc(objectUrl(row.key))"
+              :preview-src-list="[deobfSrc(objectUrl(row.key))]"
               preview-teleported
               fit="cover"
               loading="lazy"
@@ -18,7 +18,7 @@
             <img
               v-else
               class="pic"
-              :src="objectUrl(row.key)"
+              :src="deobfSrc(objectUrl(row.key))"
               loading="lazy"
               alt=""
               @click="emit('select', baseName(row.key))"
@@ -28,7 +28,7 @@
               class="zoom"
               :size="18"
               title="查看原图"
-              @click.stop="viewer = objectUrl(row.key)"
+              @click.stop="viewer = deobfSrc(objectUrl(row.key))"
             >
               <ZoomIn />
             </el-icon>
@@ -94,8 +94,8 @@
           <el-image
             v-if="isImage(row.key)"
             class="thumb"
-            :src="objectUrl(row.key)"
-            :preview-src-list="[objectUrl(row.key)]"
+            :src="deobfSrc(objectUrl(row.key))"
+            :preview-src-list="[deobfSrc(objectUrl(row.key))]"
             preview-teleported
             fit="cover"
             loading="lazy"
@@ -152,6 +152,7 @@ import { computed, ref } from "vue";
 import { Document, ZoomIn } from "@element-plus/icons-vue";
 import type { CheckboxValueType } from "element-plus";
 import { objectUrl } from "../media";
+import { deobfSrc } from "../deobf";
 import { fmtSize, fmtTime, type OssObject, type useOssList } from "../oss";
 import AppPagination from "./AppPagination.vue";
 

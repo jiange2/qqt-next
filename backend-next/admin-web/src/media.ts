@@ -33,3 +33,8 @@ export function objectUrl(key: string): string {
   const name = i >= 0 ? key.slice(i + 1) : key;
   return `${mediaBase}${dir}${encodeURIComponent(name)}`;
 }
+
+/** 目录刷新用：基地址 + 目录段（带尾斜杠），CDN 控制台目录刷新写法 */
+export function dirUrl(dir: string): string {
+  return `${mediaBase}${dir}/`;
+}

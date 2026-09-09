@@ -12,8 +12,7 @@ sealed class Screen(val route: String, val title: String) {
     object Album : Screen("album", "音乐专辑")
     object MyList : Screen("mylist", "我的歌单")
     object Favorites : Screen("favorites", "歌曲收藏")
-    object Settings : Screen("settings", "设置中心")
-    
+
     // Full-screen player
     object Player : Screen("player", "播放器")
 
@@ -62,7 +61,7 @@ sealed class Screen(val route: String, val title: String) {
                 "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
                 "category" -> "音乐分类"; "latest" -> "最新歌曲"
                 "album" -> "音乐专辑"; "mylist" -> "我的歌单"
-                "favorites" -> "歌曲收藏"; "settings" -> "设置中心"; "player" -> "播放器"
+                "favorites" -> "歌曲收藏"; "player" -> "播放器"
                 "search" -> "搜索"
                 else -> "倾轻听2"
             }

@@ -29,6 +29,17 @@ data class CacheVisual(
  * 存放于 filesDir 而非 cacheDir：部分厂商 ROM 会定期清理 cacheDir（ADR 0003）。
  */
 object AudioCache {
+
+    /**
+     * 被动缓存键版本后缀（仓库级 ADR 0011 割接）：缓存语义（字节混淆参数、媒体 host 等）变更时 +1。
+     * 新条目一律写新键；旧版本键由 [create] 启动时后台清扫一次性清除并腾回 LRU 配额。
+     * v3：作废混淆初版（无嗅探、连明文 CDN 测试）写下的乱码条目。
+     */
+    private const val CACHE_KEY_VERSION = 3
+
+    /** 被动缓存键（与 CacheDataSource 的 CacheKeyFactory 同口径，缓存可视化查询共用） */
+    fun cacheKey(url: String): String = "$url#v$CACHE_KEY_VERSION"
+
     @Volatile
     private var instance: SimpleCache? = null
 
@@ -48,20 +59,34 @@ object AudioCache {
         return SimpleCache(
             File(context.filesDir, "audio_cache"),
             LeastRecentlyUsedCacheEvictor(budget)
-        )
+        ).also { cache ->
+            // 旧版本键一次性清扫（后台线程）：SimpleCache 线程安全，本时点无播放占用；
+            // 极端竞态下被锁 span 清不掉的残余由 LRU 驱逐兜底
+            Thread {
+                cache.keys.filterNot { it.endsWith("#v$CACHE_KEY_VERSION") }
+                    .forEach { cache.removeResource(it) }
+            }.start()
+        }
     }
 
     /** 缓存预算快照（访问事实上报用），未初始化返回 -1（上报侧转为缺省） */
     fun cacheBudget(): Long = budgetBytes
 
+    /** 删除一条缓存（ADR 0011 错误重试自愈）：只在本进程已初始化时操作，不触发初始化副作用 */
+    fun removeEntry(url: String) {
+        instance?.removeResource(cacheKey(url))
+    }
+
     /**
      * 播放器进度条缓存可视化查询（ADR 0013）：
+     * 入参为播放 URI 字符串，内部经 [cacheKey] 版本化后与 CacheDataSource 键同口径。
      * 整曲命中与访问事实上报同口径（C4）——元数据 contentLength 已知且 [0, length) 全区间命中；
      * 缓存前缀 = 自 0 到首个缓存空洞的连续已缓存字节 ÷ 整曲长度，跨会话留存。
      * SimpleCache 未初始化（本进程尚未装载缓存）时整表视为未缓存，不触发初始化副作用。
      */
-    fun cacheVisual(key: String): CacheVisual {
+    fun cacheVisual(url: String): CacheVisual {
         val cache = instance ?: return CacheVisual.NOT_CACHED
+        val key = cacheKey(url)
         val contentLength = ContentMetadata.getContentLength(cache.getContentMetadata(key))
         if (contentLength == C.LENGTH_UNSET.toLong() || contentLength <= 0L) {
             return CacheVisual.NOT_CACHED

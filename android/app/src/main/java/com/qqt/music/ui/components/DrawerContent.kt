@@ -108,9 +108,6 @@ fun DrawerContent(
             Triple(Icons.Default.PlaylistAdd, "我的歌单", Screen.MyList.route),
             Triple(Icons.Default.CloudDownload, "我的下载", Screen.Download.route),
             Triple(Icons.Default.Favorite, "歌曲收藏", Screen.Favorites.route),
-            Triple(Icons.Default.LibraryMusic, "建议歌曲", Screen.Latest.route),
-            Triple(Icons.Default.Settings, "设置中心", Screen.Settings.route),
-            Triple(Icons.Default.Login, "登录", Screen.Home.route),
         )
 
         items.forEach { (icon, label, route) ->

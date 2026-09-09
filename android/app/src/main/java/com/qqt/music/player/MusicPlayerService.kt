@@ -12,6 +12,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.CacheBitmapLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,10 +45,16 @@ class MusicPlayerService : MediaSessionService() {
         // 1. 构建缓存数据源
         val cacheDataSourceFactory = CacheDataSource.Factory()
             .setCache(AudioCache.get(this))
-            // CDN 防盗链：音频请求携带约定 Referer（仓库级 ADR 0006）
+            // 缓存键版本化（仓库级 ADR 0011 割接）：与 AudioCache.cacheKey 同口径，
+            // 缓存语义变更时旧键条目由 AudioCache 启动清扫一次性作废
+            .setCacheKeyFactory { dataSpec -> AudioCache.cacheKey(dataSpec.uri.toString()) }
+            // CDN 防盗链 Referer + 字节解混淆上游（仓库级 ADR 0006 / 0011）：
+            // 网络字节先还原再入缓存，被动缓存与已下载文件保持明文，存量明文缓存仍有效
             .setUpstreamDataSourceFactory(
-                DefaultHttpDataSource.Factory()
-                    .setDefaultRequestProperties(mapOf("Referer" to MEDIA_REFERER))
+                DeobfuscatingDataSourceFactory(
+                    DefaultHttpDataSource.Factory()
+                        .setDefaultRequestProperties(mapOf("Referer" to MEDIA_REFERER))
+                )
             )
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             // 分片提交 1MiB（默认 5MiB）：CacheDataSink 只在分片写满或流关闭时 commitFile，
@@ -87,6 +94,9 @@ class MusicPlayerService : MediaSessionService() {
 
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivityPendingIntent)
+            // 通知封面走解混淆 + Referer 加载器（仓库级 ADR 0006 / 0011）；
+            // CacheBitmapLoader 缓存结果，避免每次通知刷新重复下载
+            .setBitmapLoader(CacheBitmapLoader(MediaBitmapLoader()))
             .build()
 
         // 3.5 播放模式：不再硬编码，初始应用 PlayerSettingsManager 持久化值，随后收集变化热切换（ADR 0008）；

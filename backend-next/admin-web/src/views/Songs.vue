@@ -28,7 +28,7 @@
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column label="缩略图" width="80">
         <template #default="{ row }">
-          <el-image v-if="row.thumbnail" :src="thumbUrl(row.thumbnail)" style="width: 48px" fit="cover" />
+          <el-image v-if="row.thumbnail" :src="deobfSrc(thumbUrl(row.thumbnail))" style="width: 48px" fit="cover" />
         </template>
       </el-table-column>
       <el-table-column prop="title" label="歌名" min-width="140" />
@@ -169,6 +169,7 @@ import { api, formBody, saveForm } from "../api";
 import { usePagedList } from "../useList";
 import AppPagination from "../components/AppPagination.vue";
 import { thumbUrl } from "../media";
+import { deobfSrc } from "../deobf";
 import UploadField from "../components/UploadField.vue";
 
 type Row = {

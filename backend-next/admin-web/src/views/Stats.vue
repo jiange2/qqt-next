@@ -75,6 +75,9 @@
             <el-tag size="small" :type="row.isOnline ? 'success' : 'info'">{{ row.isOnline ? "在线" : "离线" }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="版本" width="80">
+          <template #default="{ row }">{{ row.appVersion || "未知" }}</template>
+        </el-table-column>
         <el-table-column label="缓存预算" width="100">
           <template #default="{ row }">{{ fmtBytes(row.allocatedStorage) }}</template>
         </el-table-column>
@@ -86,6 +89,9 @@
         </el-table-column>
         <el-table-column label="首次创建" width="170">
           <template #default="{ row }">{{ new Date(row.firstSeen).toLocaleString() }}</template>
+        </el-table-column>
+        <el-table-column label="所用时长" width="90">
+          <template #default="{ row }">{{ fmtDuration(row.usedDuration) }}</template>
         </el-table-column>
         <el-table-column label="预期下线" width="170">
           <template #default="{ row }">{{ new Date(row.expectedOfflineAt).toLocaleString() }}</template>
@@ -116,6 +122,9 @@
         </el-table-column>
         <el-table-column label="IP" width="140">
           <template #default="{ row }"><span class="mono">{{ row.ipAddress }}</span></template>
+        </el-table-column>
+        <el-table-column label="版本" width="80">
+          <template #default="{ row }">{{ row.appVersion || "未知" }}</template>
         </el-table-column>
         <el-table-column label="命中" width="90">
           <template #default="{ row }">
@@ -224,6 +233,8 @@ type DeviceRow = {
   allocatedStorage: number | string | null;
   usedStorage: number | string | null;
   userAgent: string | null;
+  appVersion: string | null;
+  usedDuration: number | string;
   ipAddress: string;
   lastSeen: string;
   facts: number | string;
@@ -253,6 +264,13 @@ function fmtBytes(v: number | string | null): string {
   return n + " B";
 }
 
+// 预期下线推导实际采用的 songs.duration（秒）；0 = 时长缺失（仅 +1 分钟冗余）
+function fmtDuration(v: number | string | null): string {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "未知";
+  return `${Math.floor(n / 60)}:${String(Math.round(n) % 60).padStart(2, "0")}`;
+}
+
 // ---- 访问明细 ----
 
 type FactRow = {
@@ -261,6 +279,7 @@ type FactRow = {
   songTitle: string | null;
   deviceId: string;
   cacheHit: boolean | number;
+  appVersion: string | null;
   ipAddress: string;
   accessedAt: string;
 };

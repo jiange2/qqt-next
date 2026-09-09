@@ -18,6 +18,7 @@ export async function recordSongAccess(ctx: LegacyCtx): Promise<unknown> {
   const songId = Number(ctx.data["song_id"]);
   const deviceId = (ctx.data["device_id"] ?? "").trim();
   if (!Number.isFinite(songId) || songId <= 0 || !deviceId) return { success: "0" };
+  const appVersion = (ctx.data["app_version"] ?? "").trim().slice(0, 32) || null;
 
   await prisma.accessFact.create({
     data: {
@@ -26,6 +27,7 @@ export async function recordSongAccess(ctx: LegacyCtx): Promise<unknown> {
       cacheHit: ctx.data["cache_hit"] === "1",
       allocatedStorage: optionalInt(ctx.data["allocated_storage"]),
       usedStorage: optionalInt(ctx.data["used_storage"]),
+      appVersion,
       ipAddress: ctx.ip,
       userAgent: ctx.userAgent || null,
     },
