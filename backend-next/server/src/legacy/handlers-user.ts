@@ -215,7 +215,7 @@ export async function favouritePost(ctx: LegacyCtx): Promise<unknown> {
 // ---------------------------------------------------------------- get_favourite_post
 
 export async function getFavouritePost(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const userId = Number(data["user_id"]);
   if (!Number.isFinite(userId)) return [];
   const type = data["type"] || "song";
@@ -226,7 +226,17 @@ export async function getFavouritePost(ctx: LegacyCtx): Promise<unknown> {
     orderBy: { id: "desc" },
     include: { song: { include: songInclude } },
   });
-  const valid = favs.filter((f) => f.song && f.song.status && f.song.category?.status);
+  // 归属链过滤（ADR 0009）：状态链 song + album + category 均启用；
+  // 隐私模式额外要求全链非隐私（ADR 0012）；补齐旧实现遗漏的 album.status 检查
+  const valid = favs.filter((f) => {
+    if (!f.song) return false;
+    const s = f.song;
+    if (!s.status || !s.album?.status || !s.category?.status) return false;
+    if (settings.privacyMode === "true") {
+      if (s.isPrivate || s.album?.isPrivate || s.category?.isPrivate) return false;
+    }
+    return true;
+  });
   const favourites = new Set(valid.map((f) => f.postId));
   return valid.slice((page - 1) * 10, page * 10).map((f) => ({
     total_songs: S(valid.length),
@@ -237,7 +247,7 @@ export async function getFavouritePost(ctx: LegacyCtx): Promise<unknown> {
 // ---------------------------------------------------------------- get_recent_songs
 
 export async function getRecentSongs(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const ids = (data["songs_ids"] ?? "")
     .split(",")
     .map((s) => Number.parseInt(s.trim(), 10))
@@ -245,7 +255,8 @@ export async function getRecentSongs(ctx: LegacyCtx): Promise<unknown> {
   if (ids.length === 0) return [];
   const page = Math.max(1, Number.parseInt(data["page"] ?? "1", 10) || 1);
 
-  const where = { id: { in: ids }, status: true, category: { status: true } };
+  // 归属链过滤（ADR 0009/0012）：用 songAppVisibleFilter 统一处理状态链 + 隐私模式
+  const where = { ...songAppVisibleFilter(settings), id: { in: ids } };
   const total = await prisma.song.count({ where });
   const rows = await prisma.song.findMany({
     where,

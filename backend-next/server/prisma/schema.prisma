@@ -56,6 +56,7 @@ model Setting {
   appRedirectUrl        String  @map("app_redirect_url") @db.Text
   cancelUpdateStatus    String  @map("cancel_update_status") @default("false") @db.VarChar(10)
   songDownload          String  @map("song_download") @default("true") @db.VarChar(255)
+  privacyMode           String  @default("false") @map("privacy_mode") @db.VarChar(10)
 
   @@map("settings")
 }
@@ -68,6 +69,7 @@ model Category {
   image       String   @db.VarChar(255)
   type        String   @default("music") @db.VarChar(20) // music | book（书籍阅读域 ADR 0011）：书籍分类下挂书籍而非专辑
   status      Boolean  @default(true)
+  isPrivate   Boolean  @default(false) @map("is_private")
   createdAt   DateTime @default(now()) @map("created_at")
   songs       Song[]
   albums      Album[]  // 分类-专辑层级（backend-next ADR 0009）：分类下放专辑而非歌曲
@@ -96,6 +98,7 @@ model Album {
   name         String        @map("name") @db.VarChar(255)
   image        String        @db.VarChar(255)
   status       Boolean       @default(true)
+  isPrivate    Boolean       @default(false) @map("is_private")
   createdAt    DateTime      @default(now()) @map("created_at")
   artists      AlbumArtist[]
   songs        Song[]
@@ -164,6 +167,7 @@ model Song {
   totalRate     Int        @default(0) @map("total_rate")
   rateAvg       Int        @default(0) @map("rate_avg")
   status        Boolean    @default(true)
+  isPrivate     Boolean    @default(false) @map("is_private")
   createdAt     DateTime   @default(now()) @map("created_at")
   updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at")
 

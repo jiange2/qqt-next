@@ -15,6 +15,8 @@
       <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchCover">批量绑定封面（{{ selected.length }}）</el-button>
       <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchCategory">批量修改分类（{{ selected.length }}）</el-button>
       <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchAlbum">批量修改专辑（{{ selected.length }}）</el-button>
+      <el-button type="warning" plain :disabled="selected.length === 0" @click="batchSetPrivate(true)">批量设为隐私（{{ selected.length }}）</el-button>
+      <el-button type="success" plain :disabled="selected.length === 0" @click="batchSetPrivate(false)">批量取消隐私（{{ selected.length }}）</el-button>
       <el-button
         type="warning"
         :disabled="selectedExternal.length === 0"
@@ -43,6 +45,11 @@
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="row.status ? 'success' : 'info'">{{ row.status ? "上架" : "下架" }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="隐私" width="70">
+        <template #default="{ row }">
+          <el-tag :type="row.isPrivate ? 'warning' : 'success'" size="small">{{ row.isPrivate ? "隐私" : "公开" }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="220">
@@ -152,6 +159,7 @@
           <UploadField v-model="lrcFile" accept=".lrc,text/plain" dir="lrc" />
         </el-form-item>
         <el-form-item label="上架"><el-switch v-model="form.status" /></el-form-item>
+        <el-form-item label="隐私"><el-switch v-model="form.isPrivate" /></el-form-item>
       </el-form>
       <el-progress v-if="pct > 0 && pct < 100" :percentage="pct" style="margin-top: 4px" />
       <template #footer>
@@ -179,6 +187,7 @@ type Row = {
   category?: { id: number; name: string } | null;
   album?: { id: number; name: string } | null;
   artists: { artistId: number }[];
+  isPrivate: boolean;
 };
 type Opt = { id: number; name: string };
 
@@ -201,7 +210,7 @@ const thumbFile = ref<File | string | null>(null);
 const lrcFile = ref<File | string | null>(null);
 const form = reactive({
   id: 0, title: "", type: "local", categoryId: null as number | null, albumId: null as number | null,
-  artistIds: [] as number[], audioUrl: "", description: "", lrcText: "", status: true,
+  artistIds: [] as number[], audioUrl: "", description: "", lrcText: "", status: true, isPrivate: true,
 });
 
 // ---- 转入 OSS（ADR 0006）：单首直接调端点，批量由前端逐首驱动以展示进度
@@ -306,6 +315,21 @@ async function saveBatchAlbum(): Promise<void> {
   }
 }
 
+async function batchSetPrivate(isPrivate: boolean): Promise<void> {
+  const label = isPrivate ? "设为隐私" : "取消隐私";
+  batchSaving.value = true;
+  try {
+    await api.patch("/admin/songs/batch", {
+      ids: selected.value.map((r) => r.id),
+      isPrivate,
+    });
+    ElMessage.success(`已${label} ${selected.value.length} 首歌曲`);
+    await load();
+  } finally {
+    batchSaving.value = false;
+  }
+}
+
 async function transferOne(row: Row): Promise<boolean> {
   try {
     await api.post(`/admin/songs/${row.id}/to-oss`);
@@ -362,7 +386,7 @@ function openEdit(row: Row) {
   Object.assign(form, {
     id: row.id, title: row.title, type: row.type, categoryId: row.categoryId ?? null,
     albumId: row.albumId, artistIds: row.artists.map((a) => a.artistId),
-    audioUrl: "", description: row.description, lrcText: row.lrcText ?? "", status: row.status,
+    audioUrl: "", description: row.description, lrcText: row.lrcText ?? "", status: row.status, isPrivate: row.isPrivate,
   });
   // 回填当前绑定值（DB 存的文件名即媒体 Key），空串归 null；未改动保存为同值幂等提交
   audioFile.value = row.type === "local" ? row.audioUrl || null : null;
@@ -380,7 +404,7 @@ async function save() {
     const fields: Record<string, unknown> = {
       title: form.title, type: form.type, category_id: form.categoryId ?? 0,
       artist_ids: form.artistIds.join(","), description: form.description,
-      status: form.status ? 1 : 0,
+      status: form.status ? 1 : 0, is_private: form.isPrivate ? 1 : 0,
     };
     if (form.type !== "local") fields["audio_url"] = form.audioUrl;
     else if (typeof audioFile.value === "string") fields["audio_url"] = audioFile.value; // 绑定已有 OSS 音频

@@ -28,6 +28,11 @@
           <el-tag :type="row.status ? 'success' : 'info'">{{ row.status ? "启用" : "停用" }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="隐私" width="70">
+        <template #default="{ row }">
+          <el-tag :type="row.isPrivate ? 'warning' : 'success'" size="small">{{ row.isPrivate ? "隐私" : "公开" }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="210">
         <template #default="{ row }">
           <el-button size="small" @click="openDimension(row)">{{ row.type === "book" ? "书籍" : "专辑" }}</el-button>
@@ -51,6 +56,9 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+        <el-form-item label="隐私">
+          <el-switch v-model="form.isPrivate" active-text="隐私" inactive-text="公开" />
         </el-form-item>
         <el-form-item label="图片">
           <UploadField v-model="imageFile" accept="image/*" dir="images/thumbs" />
@@ -79,7 +87,7 @@ import { deobfSrc } from "../deobf";
 import UploadField from "../components/UploadField.vue";
 import DimensionDrawer from "../components/DimensionDrawer.vue";
 
-type Row = { id: number; name: string; type: string; image: string; status: boolean };
+type Row = { id: number; name: string; type: string; image: string; status: boolean; isPrivate: boolean };
 
 // 类型筛选（书籍阅读域 ADR 0011）：音乐/书籍分类分流管理
 const typeFilter = ref<string>();
@@ -92,8 +100,8 @@ const saving = ref(false);
 const pct = ref(0);
 // File = 新上传；string = 已绑定 OSS key（formBody 会转为 image 文本字段提交）
 const imageFile = ref<File | string | null>(null);
-const form = reactive<{ id: number; name: string; type: string; status: boolean }>({
-  id: 0, name: "", type: "music", status: true,
+const form = reactive<{ id: number; name: string; type: string; status: boolean; isPrivate: boolean }>({
+  id: 0, name: "", type: "music", status: true, isPrivate: true,
 });
 
 function search() {
@@ -102,13 +110,13 @@ function search() {
 }
 
 function openCreate() {
-  Object.assign(form, { id: 0, name: "", type: "music", status: true });
+  Object.assign(form, { id: 0, name: "", type: "music", status: true, isPrivate: true });
   imageFile.value = null;
   dialog.value = true;
 }
 
 function openEdit(row: Row) {
-  Object.assign(form, { id: row.id, name: row.name, type: row.type, status: row.status });
+  Object.assign(form, { id: row.id, name: row.name, type: row.type, status: row.status, isPrivate: row.isPrivate });
   imageFile.value = row.image || null; // 回填当前绑定的 OSS 对象（空串归 null）
   dialog.value = true;
 }
@@ -118,7 +126,7 @@ async function save() {
   try {
     // type 编辑时也传：服务端编辑路径不触碰 type（类型仅创建可定，ADR 0011）
     const body = formBody(
-      { name: form.name, type: form.type, status: form.status ? 1 : 0 },
+      { name: form.name, type: form.type, status: form.status ? 1 : 0, is_private: form.isPrivate ? 1 : 0 },
       { image: imageFile.value },
     );
     await saveForm("/admin/categories", body, form.id || undefined, pct);

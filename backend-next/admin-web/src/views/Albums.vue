@@ -39,6 +39,11 @@
           <el-tag :type="row.status ? 'success' : 'info'">{{ row.status ? "启用" : "停用" }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="隐私" width="70">
+        <template #default="{ row }">
+          <el-tag :type="row.isPrivate ? 'warning' : 'success'" size="small">{{ row.isPrivate ? "隐私" : "公开" }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="210">
         <template #default="{ row }">
           <el-button size="small" @click="openSongs(row)">歌曲</el-button>
@@ -66,6 +71,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="状态"><el-switch v-model="form.status" /></el-form-item>
+        <el-form-item label="隐私"><el-switch v-model="form.isPrivate" /></el-form-item>
         <el-form-item label="封面">
           <UploadField v-model="imageFile" accept="image/*" dir="images/thumbs" />
         </el-form-item>
@@ -98,6 +104,7 @@ type Row = {
   name: string;
   image: string;
   status: boolean;
+  isPrivate: boolean;
   artists: { artistId: number }[];
   category: { id: number; name: string } | null;
   _count: { songs: number };
@@ -122,8 +129,8 @@ const saving = ref(false);
 const pct = ref(0);
 // File = 新上传；string = 已绑定 OSS key（formBody 会转为 image 文本字段提交）
 const imageFile = ref<File | string | null>(null);
-const form = reactive<{ id: number; name: string; status: boolean; artistIds: number[]; categoryId: number }>({
-  id: 0, name: "", status: true, artistIds: [], categoryId: 0,
+const form = reactive<{ id: number; name: string; status: boolean; isPrivate: boolean; artistIds: number[]; categoryId: number }>({
+  id: 0, name: "", status: true, isPrivate: true, artistIds: [], categoryId: 0,
 });
 
 function artistNames(row: Row): string {
@@ -131,7 +138,7 @@ function artistNames(row: Row): string {
   return row.artists.map((x) => map.get(x.artistId) ?? `#${x.artistId}`).join(", ");
 }
 function openCreate() {
-  Object.assign(form, { id: 0, name: "", status: true, artistIds: [], categoryId: 0 });
+  Object.assign(form, { id: 0, name: "", status: true, isPrivate: true, artistIds: [], categoryId: 0 });
   imageFile.value = null;
   dialog.value = true;
 }
@@ -140,6 +147,7 @@ function openEdit(row: Row) {
     id: row.id,
     name: row.name,
     status: row.status,
+    isPrivate: row.isPrivate,
     artistIds: row.artists.map((a) => a.artistId),
     categoryId: row.category?.id ?? 0,
   });
@@ -153,6 +161,7 @@ async function save() {
       {
         name: form.name,
         status: form.status ? 1 : 0,
+        is_private: form.isPrivate ? 1 : 0,
         artist_ids: form.artistIds.join(","),
         category_id: form.categoryId, // 0 = 未分类，服务端映射 null
       },

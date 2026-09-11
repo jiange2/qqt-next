@@ -204,6 +204,7 @@ async function upsertCategory(req: FastifyRequest, reply: FastifyReply): Promise
   const data = {
     name,
     status: fields["status"] !== "0" && fields["status"] !== "false",
+    isPrivate: fields["is_private"] !== "0" && fields["is_private"] !== "false",
     ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
   const id = upsertId(req, fields);
@@ -250,6 +251,7 @@ async function upsertAlbum(req: FastifyRequest, reply: FastifyReply): Promise<vo
     name,
     categoryId,
     status: fields["status"] !== "0" && fields["status"] !== "false",
+    isPrivate: fields["is_private"] !== "0" && fields["is_private"] !== "false",
     ...(boundImage(saved, fields) ? { image: boundImage(saved, fields) } : {}),
   };
   const id = upsertId(req, fields);
@@ -340,6 +342,7 @@ async function upsertSong(req: FastifyRequest, reply: FastifyReply): Promise<voi
     description: fields["description"] ?? "",
     lrcText: fields["lrc_text"] ? str(fields["lrc_text"]) : null,
     status: fields["status"] !== "0" && fields["status"] !== "false",
+    isPrivate: fields["is_private"] !== "0" && fields["is_private"] !== "false",
   };
   // 编辑：留空的文件字段不进 data（Prisma 忽略 undefined，保留原值）；新建：audioUrl 必填、thumbnail 落空串（列无默认值）
   const song = existing
@@ -375,13 +378,14 @@ const songBatchSchema = z.object({
   thumbnail: z.string().min(1).optional(),
   categoryId: z.number().int().nullable().optional(),
   albumId: z.number().int().nullable().optional(),
+  isPrivate: z.boolean().optional(),
 });
 
 async function batchSong(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const parsed = songBatchSchema.safeParse(req.body);
-  if (!parsed.success) return void bad(reply, "ids required; thumbnail/categoryId optional");
-  const { ids, thumbnail, categoryId, albumId } = parsed.data;
-  if (thumbnail === undefined && categoryId === undefined && albumId === undefined) {
+  if (!parsed.success) return void bad(reply, "ids required; thumbnail/categoryId/albumId/isPrivate optional");
+  const { ids, thumbnail, categoryId, albumId, isPrivate } = parsed.data;
+  if (thumbnail === undefined && categoryId === undefined && albumId === undefined && isPrivate === undefined) {
     return void bad(reply, "nothing to update");
   }
   // ADR 0007「专辑歌曲须先有分类」约束已废弃（ADR 0009），仅保留存在性校验
@@ -403,6 +407,7 @@ async function batchSong(req: FastifyRequest, reply: FastifyReply): Promise<void
     // 同分类：换专辑插入最前（min(sort)-1）；移出专辑时归零
     data.albumSort = albumId === null ? 0 : await nextDimensionSort("album", albumId);
   }
+  if (isPrivate !== undefined) data.isPrivate = isPrivate;
   const r = await prisma.song.updateMany({ where: { id: { in: ids } }, data });
   reply.send({ count: r.count });
 }
@@ -877,6 +882,7 @@ async function putSettings(req: FastifyRequest, reply: FastifyReply): Promise<vo
     "nativeAd", "nativeAdType", "nativeAdId", "nativeFacebookId", "nativePosition",
     "appUpdateStatus", "appNewVersion", "appUpdateDesc", "appRedirectUrl",
     "cancelUpdateStatus", "songDownload",
+    "privacyMode",
   ] as const;
   const data: Record<string, unknown> = {};
   for (const key of allow) {

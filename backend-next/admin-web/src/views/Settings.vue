@@ -71,6 +71,15 @@
           <el-form-item label="OneSignal REST Key"><el-input v-model="f.onesignalRestKey" show-password /></el-form-item>
         </el-form>
       </el-tab-pane>
+
+      <el-tab-pane label="隐私模式">
+        <el-form label-width="140px">
+          <el-form-item label="隐私模式开关">
+            <el-switch v-model="f.privacyMode" active-value="true" inactive-value="false" active-text="开启" inactive-text="关闭" />
+          </el-form-item>
+          <div class="hint">开启后 App 端仅显示标记为「公开」的内容。歌曲、专辑、分类的隐私标记独立于上下架状态。新上传的内容默认为隐私。</div>
+        </el-form>
+      </el-tab-pane>
     </el-tabs>
 
     <div style="margin-top: 12px">
@@ -97,6 +106,7 @@ type Settings = {
   nativeAdId: string; nativeFacebookId: string; nativePosition: number;
   appUpdateStatus: string; appNewVersion: number; appUpdateDesc: string;
   appRedirectUrl: string; cancelUpdateStatus: string; songDownload: string;
+  privacyMode: string;
 };
 
 const empty: Settings = {
@@ -109,7 +119,7 @@ const empty: Settings = {
   interstitalAdType: "admob", interstitalFacebookId: "", nativeAd: "false",
   nativeAdType: "admob", nativeAdId: "", nativeFacebookId: "", nativePosition: 5,
   appUpdateStatus: "false", appNewVersion: 1, appUpdateDesc: "", appRedirectUrl: "",
-  cancelUpdateStatus: "false", songDownload: "true",
+  cancelUpdateStatus: "false", songDownload: "true", privacyMode: "false",
 };
 
 const f = reactive<Settings>({ ...empty });

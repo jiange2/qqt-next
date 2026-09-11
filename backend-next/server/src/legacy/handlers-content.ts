@@ -1,7 +1,7 @@
 // Legacy 门面 —— 内容类 method（Q21：与 api.php 逐一对齐，共 20 个）
 // 每个函数与旧 api.php 对应分支语义等价；已知缺陷不复刻（ADR 0003 决定 1）
 import { prisma } from "../prisma.js";
-import type { Prisma } from "@prisma/client";
+import type { Prisma, Setting } from "@prisma/client";
 import { getSettings, parseOrderBy } from "../services/settings.js";
 import {
   albumToLegacy,
@@ -25,7 +25,7 @@ export type LegacyCtx = {
 };
 
 const songInclude = {
-  category: { select: { id: true, name: true, image: true, status: true } },
+  category: { select: { id: true, name: true, image: true, status: true, isPrivate: true } },
   album: true,
   artists: {
     orderBy: { sort: "asc" as const },
@@ -57,14 +57,25 @@ export async function favouriteSetOf(userIdRaw?: string): Promise<FavouriteSet |
 }
 
 // 归属链（backend-next ADR 0009）：歌曲对 App 可见要求自身、所属专辑、专辑所属分类均启用；
-// 未归专辑歌曲与未分类专辑内歌曲经此过滤天然不可见
-const songStatusFilter = {
-  status: true,
-  album: { status: true, category: { status: true } },
-} as const;
+// 未归专辑歌曲与未分类专辑内歌曲经此过滤天然不可见。隐私模式下额外要求全链非隐私（ADR 0012）。
+function songAppVisibleFilter(settings: Setting): Prisma.SongWhereInput {
+  if (settings.privacyMode === "true") {
+    return {
+      status: true,
+      isPrivate: false,
+      album: { status: true, isPrivate: false, category: { status: true, isPrivate: false } },
+    };
+  }
+  return { status: true, album: { status: true, category: { status: true } } };
+}
 
 /** 专辑对 App 可见要求自身启用且已归入启用分类（未分类专辑仅存在于后台，ADR 0009） */
-const albumStatusFilter = { status: true, category: { status: true } } as const;
+function albumAppVisibleFilter(settings: Setting): Prisma.AlbumWhereInput {
+  if (settings.privacyMode === "true") {
+    return { status: true, isPrivate: false, category: { status: true, isPrivate: false } };
+  }
+  return { status: true, category: { status: true } };
+}
 
 // ---------------------------------------------------------------- home / home_new
 
@@ -79,7 +90,7 @@ export async function home(ctx: LegacyCtx): Promise<unknown> {
     orderBy: { id: "desc" },
     include: {
       songs: {
-        where: { song: songStatusFilter },
+        where: { song: songAppVisibleFilter(settings) },
         orderBy: { sort: "asc" },
         include: { song: { include: songInclude } },
       },
@@ -87,7 +98,7 @@ export async function home(ctx: LegacyCtx): Promise<unknown> {
   });
 
   const albums = await prisma.album.findMany({
-    where: albumStatusFilter,
+    where: albumAppVisibleFilter(settings),
     orderBy: { id: "desc" },
     take: limit,
   });
@@ -99,7 +110,7 @@ export async function home(ctx: LegacyCtx): Promise<unknown> {
 
   const trending = await prisma.trendingSong.findMany({
     // 1:1 嵌套 include 不支持 where（Prisma 6 类型限制），改在外层过滤下架歌曲
-    where: { song: songStatusFilter },
+    where: { song: songAppVisibleFilter(settings) },
     orderBy: { sort: "asc" },
     take: 50,
     include: { song: { include: songInclude } },
@@ -116,11 +127,12 @@ export async function home(ctx: LegacyCtx): Promise<unknown> {
 // ---------------------------------------------------------------- 列表类
 
 export async function allSongs(ctx: LegacyCtx): Promise<unknown> {
-  const { base } = ctx;
+  const { base, settings } = ctx;
   const favourites = await favouriteSetOf(ctx.data["user_id"]);
-  const total = await prisma.song.count({ where: songStatusFilter });
+  const where = songAppVisibleFilter(settings);
+  const total = await prisma.song.count({ where });
   const rows = await prisma.song.findMany({
-    where: songStatusFilter,
+    where,
     orderBy: { id: "desc" },
     ...limitOffset(pageOf(ctx.data), 10),
     include: songInclude,
@@ -134,9 +146,10 @@ export async function allSongs(ctx: LegacyCtx): Promise<unknown> {
 export async function latest(ctx: LegacyCtx): Promise<unknown> {
   const { base, settings } = ctx;
   const favourites = await favouriteSetOf(ctx.data["user_id"]);
-  const total = await prisma.song.count({ where: songStatusFilter });
+  const where = songAppVisibleFilter(settings);
+  const total = await prisma.song.count({ where });
   const rows = await prisma.song.findMany({
-    where: songStatusFilter,
+    where,
     orderBy: { id: "desc" },
     ...limitOffset(pageOf(ctx.data), settings.apiLatestLimit),
     include: songInclude,
@@ -168,7 +181,7 @@ export async function bannerSongs(ctx: LegacyCtx): Promise<unknown> {
     where: { id: bannerId, status: true },
     include: {
       songs: {
-        where: { song: songStatusFilter },
+        where: { song: songAppVisibleFilter(settings) },
         orderBy: { sort: "asc" },
         include: { song: { include: songInclude } },
       },
@@ -199,10 +212,13 @@ export async function bannerSongs(ctx: LegacyCtx): Promise<unknown> {
 
 export async function catList(ctx: LegacyCtx): Promise<unknown> {
   const { base, settings } = ctx;
-  const total = await prisma.category.count({ where: { status: true } });
+  const catWhere: Prisma.CategoryWhereInput = settings.privacyMode === "true"
+    ? { status: true, isPrivate: false }
+    : { status: true };
+  const total = await prisma.category.count({ where: catWhere });
   const orderBy = parseOrderBy(settings.apiCatOrderBy, { id: "id", name: "name" });
   const rows = await prisma.category.findMany({
-    where: { status: true },
+    where: catWhere,
     orderBy,
     ...limitOffset(pageOf(ctx.data), 10),
   });
@@ -220,10 +236,10 @@ export async function catList(ctx: LegacyCtx): Promise<unknown> {
 // 分类专辑列表（backend-next ADR 0009，替代已删除的 cat_songs）：分类下放专辑而非歌曲，
 // 行结构复用 album_list（Android 端 Album 模型零改动）；维度顺序范式与 album_songs 对称
 export async function catAlbums(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const catId = Number(data["cat_id"]);
   if (!Number.isFinite(catId)) return [];
-  const where: Prisma.AlbumWhereInput = { ...albumStatusFilter, categoryId: catId };
+  const where: Prisma.AlbumWhereInput = { ...albumAppVisibleFilter(settings), categoryId: catId };
   const total = await prisma.album.count({ where });
   const rows = await prisma.album.findMany({
     where,
@@ -243,11 +259,14 @@ export async function catAlbums(ctx: LegacyCtx): Promise<unknown> {
 
 /** 分类书籍列表：分页/形态完全对齐 cat_albums，行字段换书籍域命名；封面与其它业务图同库 images/（ADR 0011 修订：目录归一） */
 export async function catBooks(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const catId = Number(data["cat_id"]);
   if (!Number.isFinite(catId)) return [];
+  const catFilter: Prisma.CategoryWhereInput = settings.privacyMode === "true"
+    ? { status: true, isPrivate: false }
+    : { status: true };
   // 书籍可见性 = 书籍启用且所属分类启用（对齐 albumStatusFilter，ADR 0009/0011）
-  const where: Prisma.BookWhereInput = { status: true, category: { status: true }, categoryId: catId };
+  const where: Prisma.BookWhereInput = { status: true, category: catFilter, categoryId: catId };
   const total = await prisma.book.count({ where });
   const rows = await prisma.book.findMany({
     where,
@@ -267,10 +286,14 @@ export async function catBooks(ctx: LegacyCtx): Promise<unknown> {
 
 /** 全书章节目录：按章节顺序一次下发（chapterSort ASC + id ASC 兜底，ADR 0011 修订）；书籍或分类不可见返回空 */
 export async function bookChapters(ctx: LegacyCtx): Promise<unknown> {
+  const { settings } = ctx;
   const bookId = Number(ctx.data["book_id"]);
   if (!Number.isFinite(bookId)) return [];
+  const catFilter: Prisma.CategoryWhereInput = settings.privacyMode === "true"
+    ? { status: true, isPrivate: false }
+    : { status: true };
   const book = await prisma.book.findFirst({
-    where: { id: bookId, status: true, category: { status: true } },
+    where: { id: bookId, status: true, category: catFilter },
   });
   if (!book) return [];
   const rows = await prisma.chapter.findMany({
@@ -286,11 +309,15 @@ export async function bookChapters(ctx: LegacyCtx): Promise<unknown> {
 
 /** 单章正文：handler 返回单对象，routes 层自动外包数组（同 song_info 范式） */
 export async function bookChapter(ctx: LegacyCtx): Promise<unknown> {
+  const { settings } = ctx;
   const chapterId = Number(ctx.data["chapter_id"]);
   if (!Number.isFinite(chapterId)) return {};
+  const catFilter: Prisma.CategoryWhereInput = settings.privacyMode === "true"
+    ? { status: true, isPrivate: false }
+    : { status: true };
   // 经章节反查归属链校验可见性：下架书/停用分类的章节不可读
   const ch = await prisma.chapter.findFirst({
-    where: { id: chapterId, book: { status: true, category: { status: true } } },
+    where: { id: chapterId, book: { status: true, category: catFilter } },
     select: { id: true, title: true, content: true },
   });
   if (!ch) return {};
@@ -322,11 +349,11 @@ export async function artistList(ctx: LegacyCtx): Promise<unknown> {
 }
 
 export async function artistAlbumList(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const artistId = Number(data["artist_id"]);
   if (!Number.isFinite(artistId)) return [];
   const where: Prisma.AlbumWhereInput = {
-    ...albumStatusFilter,
+    ...albumAppVisibleFilter(settings),
     artists: { some: { artistId } },
   };
   const total = await prisma.album.count({ where });
@@ -347,11 +374,11 @@ export async function artistAlbumList(ctx: LegacyCtx): Promise<unknown> {
 }
 
 export async function artistNameSongs(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const favourites = await favouriteSetOf(data["user_id"]);
   const artistName = data["artist_name"] ?? "";
   const where: Prisma.SongWhereInput = {
-    ...songStatusFilter,
+    ...songAppVisibleFilter(settings),
     artists: { some: { artist: { name: artistName } } },
   };
   const total = await prisma.song.count({ where });
@@ -373,9 +400,11 @@ export async function artistNameSongs(ctx: LegacyCtx): Promise<unknown> {
 const ALBUM_SONGS_MAX = 2000;
 
 export async function albumList(ctx: LegacyCtx): Promise<unknown> {
-  const total = await prisma.album.count({ where: albumStatusFilter });
+  const { settings } = ctx;
+  const where = albumAppVisibleFilter(settings);
+  const total = await prisma.album.count({ where });
   const rows = await prisma.album.findMany({
-    where: albumStatusFilter,
+    where,
     orderBy: { id: "desc" },
     ...limitOffset(pageOf(ctx.data), 10),
   });
@@ -389,14 +418,13 @@ export async function albumList(ctx: LegacyCtx): Promise<unknown> {
 }
 
 export async function albumSongs(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const favourites = await favouriteSetOf(data["user_id"]);
   const albumId = Number(data["album_id"]);
   if (!Number.isFinite(albumId)) return [];
   const where: Prisma.SongWhereInput = {
-    ...songStatusFilter,
+    ...songAppVisibleFilter(settings),
     albumId,
-    album: { status: true },
   };
   const total = await prisma.song.count({ where });
   // 维度顺序优先（backend-next ADR 0007）：管理员手动排序生效；id DESC 兜底（未排序存量新歌在前）；旧实现按歌名排序已废弃
@@ -430,7 +458,7 @@ export async function playlist(ctx: LegacyCtx): Promise<unknown> {
 }
 
 export async function playlistSongs(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const favourites = await favouriteSetOf(data["user_id"]);
   const playlistId = Number(data["playlist_id"]);
   if (!Number.isFinite(playlistId)) return [];
@@ -438,7 +466,7 @@ export async function playlistSongs(ctx: LegacyCtx): Promise<unknown> {
     where: { id: playlistId, status: true },
     include: {
       songs: {
-        where: { song: songStatusFilter },
+        where: { song: songAppVisibleFilter(settings) },
         orderBy: { sort: "asc" },
         include: { song: { include: songInclude } },
       },
@@ -462,11 +490,11 @@ export async function playlistSongs(ctx: LegacyCtx): Promise<unknown> {
 // ---------------------------------------------------------------- 歌曲详情
 
 export async function songDetail(ctx: LegacyCtx): Promise<unknown> {
-  const { base, data } = ctx;
+  const { base, data, settings } = ctx;
   const songId = Number(data["song_id"]);
   if (!Number.isFinite(songId)) return [];
   const song = await prisma.song.findFirst({
-    where: { id: songId, ...songStatusFilter },
+    where: { id: songId, ...songAppVisibleFilter(settings) },
     include: songInclude,
   });
   if (!song) return [];
@@ -488,8 +516,17 @@ export async function songDetail(ctx: LegacyCtx): Promise<unknown> {
 }
 
 export async function songDownload(ctx: LegacyCtx): Promise<unknown> {
+  const { settings } = ctx;
   const songId = Number(ctx.data["song_id"]);
   if (!Number.isFinite(songId)) return [];
+  // 隐私模式下先校验歌曲可见性（ADR 0012），不可见则拒返下载计数
+  if (settings.privacyMode === "true") {
+    const visible = await prisma.song.findFirst({
+      where: { id: songId, status: true, isPrivate: false, album: { status: true, isPrivate: false, category: { status: true, isPrivate: false } } },
+      select: { id: true },
+    });
+    if (!visible) return [];
+  }
   const song = await prisma.song.update({
     where: { id: songId },
     data: { totalDownload: { increment: 1 } },
@@ -508,7 +545,7 @@ export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
   const page = pageOf(data);
 
   if (type === "songs") {
-    const where: Prisma.SongWhereInput = { ...songStatusFilter, title: { contains: text } };
+    const where: Prisma.SongWhereInput = { ...songAppVisibleFilter(settings), title: { contains: text } };
     const total = await prisma.song.count({ where });
     const rows = await prisma.song.findMany({
       where,
@@ -532,7 +569,7 @@ export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
 
   if (type === "album") {
     const where: Prisma.AlbumWhereInput = {
-      ...albumStatusFilter,
+      ...albumAppVisibleFilter(settings),
       name: { contains: text },
     };
     const total = await prisma.album.count({ where });
@@ -556,13 +593,13 @@ export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
   // 此处补齐以对齐语义（复刻初期缺陷：组合搜索歌曲不按关键词过滤）
   const [songs, albums, artists] = await Promise.all([
     prisma.song.findMany({
-      where: { ...songStatusFilter, title: { contains: text } },
+      where: { ...songAppVisibleFilter(settings), title: { contains: text } },
       orderBy: { title: "asc" },
       ...limitOffset(page, 10),
       include: songInclude,
     }),
     prisma.album.findMany({
-      where: { ...albumStatusFilter, name: { contains: text } },
+      where: { ...albumAppVisibleFilter(settings), name: { contains: text } },
       orderBy: { name: "asc" },
       take: 20,
       include: { artists: { orderBy: { sort: "asc" } } },
@@ -573,7 +610,6 @@ export async function songSearch(ctx: LegacyCtx): Promise<unknown> {
       take: 20,
     }),
   ]);
-  void settings;
   return {
     search_songs: songs.map((s) => songToLegacy(s, { base, favourites })),
     search_album: albums.map((a) => ({
