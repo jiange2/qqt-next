@@ -2,6 +2,7 @@ package com.qqt.music.viewmodel
 
 import android.app.Application
 import android.net.Uri
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -18,6 +19,7 @@ import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.AudioCache
 import com.qqt.music.player.CacheVisual
+import com.qqt.music.player.CarLyricsSync
 import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
@@ -84,6 +86,9 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     /** 错误重试自愈进行中的曲子（无 fragment 的原始 URI，ADR 0011）；READY 即痊愈清空 */
     private var selfHealUri: String? = null
 
+    /** 切曲去重基线（ADR 0016）：CarLyricsSync 逐行经元数据更新写歌词，1.4.0 Controller 层误判为切曲 */
+    private var lastTransitionItem: MediaItem? = null
+
     init {
         startPositionPolling()
         // 连接到 Service：SessionToken 绑定会自行拉起服务（ADR 0014），无需显式 startForegroundService
@@ -115,6 +120,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     // ========== 播放器监听器 ==========
     private fun setupPlayerListener() {
+        // 去重基线置为当前在播条目：ViewModel 重建/重连不是装载，不补发访问事实（ADR 0016）
+        lastTransitionItem = mediaController?.currentMediaItem
         mediaController?.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 _isPlaying.value = playing
@@ -125,11 +132,24 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // UI 状态无条件更新：队列相邻重复同曲的伪切曲也伴随队列位置变化（ADR 0016）
                 val idx = mediaController?.currentMediaItemIndex ?: 0
                 _currentIndex.value = idx
                 val song = currentQueue.getOrNull(idx)
                 _currentSong.value = song
                 _duration.value = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
+                // 伪切曲抑制（ADR 0016）：1.4.0 Controller 用 MediaItem.equals（含元数据）判切曲，
+                // CarLyricsSync 逐行写歌词均被误判。同 mediaId 且元数据有变 ⇒ 歌词行更新，跳过副作用；
+                // 基线在伪切曲时同样更新，否则真实重选同曲（元数据与基线相等）会被误吞，
+                // 破坏「手动切歌撤销定时」语义（见 CONTEXT.md「切歌」）
+                val prev = lastTransitionItem
+                lastTransitionItem = mediaItem
+                if (prev != null && mediaItem != null &&
+                    prev.mediaId == mediaItem.mediaId &&
+                    prev.mediaMetadata != mediaItem.mediaMetadata
+                ) {
+                    return
+                }
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
                 // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）
                 song?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
@@ -359,11 +379,15 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
         MediaItem.Builder()
             .setUri(resolveUri(track))
+            // 稳定媒体身份：mediaId 默认空串（所有条目同 id），切歌去重判据依赖它（ADR 0016）
+            .setMediaId(track.id)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
                     .setArtist(track.artist)
                     .setArtworkUri(Uri.parse(track.thumbnailBig))
+                    // 歌曲 ID 随元数据下发，Service 侧 CarLyricsSync 据此拉歌词（ADR 0016）
+                    .setExtras(Bundle().apply { putString(CarLyricsSync.EXTRA_SONG_ID, track.id) })
                     .build()
             )
             .build()

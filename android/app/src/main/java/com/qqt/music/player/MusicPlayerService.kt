@@ -108,6 +108,10 @@ class MusicPlayerService : MediaSessionService() {
             PlayerSettingsManager.playMode.collect { applyPlayMode(it) }
         }
 
+        // 3.6 车机歌词同步（ADR 0016）：借专辑行承载当前句、作者行承载下一句；由 serviceScope 协程
+        // 持有，无需保存引用
+        CarLyricsSync(player, serviceScope)
+
         // 4. 监听播放进度和元数据变化
         player.addListener(object : androidx.media3.common.Player.Listener {
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {

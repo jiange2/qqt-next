@@ -40,7 +40,7 @@ object AccessFactReporter {
         val hit = if (playbackUri.scheme == "file") {
             true
         } else {
-            val key = playbackUri.toString()
+            val key = AudioCache.cacheKey(playbackUri.toString())
             val length = ContentMetadata.getContentLength(cache.getContentMetadata(key))
             length != C.LENGTH_UNSET.toLong() && cache.isCached(key, 0, length)
         }

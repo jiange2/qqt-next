@@ -3,6 +3,7 @@ package com.qqt.music.ui.screens.player
 import android.app.Activity
 import android.content.Context
 import android.graphics.drawable.BitmapDrawable
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -121,7 +122,7 @@ import kotlinx.coroutines.withContext
  * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下拉返回/下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
  * 全页下拉返回（CONTEXT.md「下拉返回」，不跟手）：下拖到位或甩动后触发统一收出，矮屏内容滚到顶后继续下拉才触发。
  * 正常屏中部播放区固定高度、整体不可拖动（四段间距 = 最小值 + weight 均摊剩余，估算误差由间距吸收）；
- * 矮屏内容整体滚动托底。状态栏图标在本页保持深色，离开时还原。
+ * 矮屏内容整体滚动托底。状态栏图标在本页保持深色，离开时还原；歌词页可见且播放进行中（含装载与缓冲）时屏幕常亮，滑回歌曲页、暂停或关闭本页即恢复系统熄屏（CONTEXT.md「屏幕常亮」）。
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -131,6 +132,7 @@ fun PlayerScreen(
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isPlaying by playerViewModel.isPlaying.collectAsState()
+    val isBuffering by playerViewModel.isBuffering.collectAsState()
     val currentPosition by playerViewModel.currentPosition.collectAsState()
     val duration by playerViewModel.duration.collectAsState()
     val cacheVisual by playerViewModel.cacheVisual.collectAsState()
@@ -314,6 +316,17 @@ fun PlayerScreen(
             val previous = controller.isAppearanceLightStatusBars
             controller.isAppearanceLightStatusBars = true
             onDispose { controller.isAppearanceLightStatusBars = previous }
+        }
+    }
+
+    // 屏幕常亮（CONTEXT.md「屏幕常亮」）：歌词页可见且播放进行中（含装载与缓冲）时豁免系统熄屏，
+    // 滑回歌曲页、暂停或收出覆盖层即恢复；窗口级 FLAG_KEEP_SCREEN_ON，离开组合时由 onDispose 清除
+    val keepScreenOn = lyricsPageVisible && (isPlaying || isBuffering)
+    if (!view.isInEditMode) {
+        DisposableEffect(keepScreenOn) {
+            val window = (view.context as Activity).window
+            if (keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
         }
     }
 
