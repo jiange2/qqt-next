@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，下拉收起整页滑出即时露出（无过渡动画）。5 个底部 Tab + 4 个抽屉项 + 7 个详情页（横幅歌曲/专辑歌曲/分类专辑/歌单详情/搜索/歌曲结果/艺术家歌曲）共 16 个页面目的地（全屏播放器为导航外覆盖层，非路由目的地）。
+App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，收起整页滑出即时露出（无过渡动画）。5 个底部 Tab + 4 个抽屉项 + 7 个详情页（横幅歌曲/专辑歌曲/分类专辑/歌单详情/搜索/歌曲结果/艺术家歌曲）共 16 个页面目的地（全屏播放器为导航外覆盖层，非路由目的地）。
 
 ## 关键文件
 
@@ -16,7 +16,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：5个 Tab，中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页与下拉返回手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
+| `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
 | `ui/screens/player/LrcParser.kt` | LRC 歌词解析（`[mm:ss]`/`[mm:ss.xx]`/`[mm:ss.xxx]` 与一行多时间标签） |
 | `ui/components/SongListItem.kt` | 歌曲列表行（缩略图 + 标题 + 艺术家 + 评分 + 下载按钮） |
@@ -48,7 +48,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 
 ```kotlin
 // 常驻下层（抽屉 + 页面 + MiniPlayer）+ 播放器全屏覆盖层：下层页面原样保持，
-// 播放器不走导航（playerOverlay 状态控制），下拉收起滑出即时露出下层页面
+// 播放器不走导航（playerOverlay 状态控制），收起滑出即时露出下层页面
 Box(modifier = Modifier.fillMaxSize()) {
     // 常规页面：显示 Drawer + 布局列（顶部 Scaffold + 底部 MiniPlayer）
     ModalNavigationDrawer {
@@ -154,8 +154,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
 - 顶栏：下箭头收起 + 「歌曲 / 歌词」页签（真实导航：点击切页带翻页动画，选中程度取自 Pager 滑动进度连续过渡——字号/颜色插值、字重过半切换）+ 刷新图标（清当前歌歌词会话缓存并重取：内嵌重解析、外链重下载）
 - 双页 Pager（横滑切页）：中部播放区首槽位为 HorizontalPager，歌曲页在左（page 0）、歌词页在右（page 1），默认落在歌曲页；歌曲页向左滑进歌词页、歌词页向右滑回歌曲页；标题区及以下区块在 Pager 外共享、不随翻页移动；槽位高度与封面一致（见高度自适应）。横滑手势由根级 scrollable(Horizontal) 经翻转包裹（pagerDragState）驱动 pagerState——scrollable 与 Pager 的滚动量符号相反，直驱会内容反向跟手（Pager 自带手势 userScrollEnabled=false），两页全域生效（含主控行、Slider 上方）；Slider 等子级水平控件优先消费不误触；拖动/fling 结束后自动 snap 回最近页（isScrollInProgress 监听）
 - 歌词页（歌词区，LyricsPanel.kt）：居中歌词行（14sp→当前行 17sp 过渡），当前行品牌橙加粗、其余 PlayerIconGray；随播放进度自动滚动居中当前行（切歌/首次就绪瞬时定位，其后 200ms 动画）；用户手动滚动后 3 秒内暂停自动跟随，期满后若仍在拖动则等下次行变化恢复；点击任意行 seek 到该行起始时间；数据 `lrcText` 优先、为空下载 `lrcUrl` 解析，均无或失败显示「暂无歌词」占位；按歌曲 ID 会话内存缓存（LyricsCache，不落盘、不进缓存预算）
-- 覆盖层进出（抽屉式）：打开时整页从屏幕底部滑入（200ms，FastOutSlowIn）；关闭路径（下拉返回/顶栏下箭头/系统返回）统一为整页向下滑出（同参数），动画结束才回调置 `playerOverlay=false`；系统返回由 PlayerScreen 内 BackHandler 接管（播放模式菜单开着时优先关菜单，其余一律触发收出）；下层页面全程原样保持
-- 下拉返回：全页（两页全域）向下拖动，子级滚动容器（矮屏 verticalScroll、歌词 LazyColumn）滚到顶后剩余下拉量经 NestedScrollConnection 累计，位移达屏高约 22% 或松手甩动速度达 1200dp/s 即触发关闭（整页向下滑出，见覆盖层进出）；页面不跟手；收出动画期间系统返回被 BackHandler 拦截；正常屏无滚动容器，由恒消费 0 的 scrollable 充当 NestedScroll 事件源；手感参数在 `PlayerScreen.kt` 底部常量（`DismissDragFraction` / `DismissFlingVelocityDp` / `SlideAnimMs`）
+- 覆盖层进出（抽屉式）：打开时整页从屏幕底部滑入（200ms，FastOutSlowIn）；关闭路径（顶栏下箭头/系统返回）统一为整页向下滑出（同参数），动画结束才回调置 `playerOverlay=false`；系统返回由 PlayerScreen 内 BackHandler 接管（播放模式菜单开着时优先关菜单，其余一律触发收出）；下层页面全程原样保持
 - 按压反馈：全页可点控件无波纹、无按压投影/抬升；线性图标与文字类按下变淡（α 0.5，按下约 100ms、松手约 150ms），62dp 实心播放键改为按压缩放至 0.9 回弹（graphicsLayer 置于 shadow 前，投影随钮缩放）；手感参数集中在 `PlayerScreen.kt` 底部常量（`PressDimAlpha` / `PressScaleDown` / `PressInMs` / `PressOutMs`）；封面/播放键/滑钮的常驻投影是视觉层次，不属于反馈
 - 歌曲封面（歌曲页槽位）：24dp 圆角方形 1:1，藏青阴影居中，不可点（无按压反馈）；切歌时旧图淡出、新图淡入并从 0.95 放大进场（AnimatedContent，400ms 与背景过渡同步）；暂停时饱和度 1→0.7 + 叠加 18% 深色 scrim（300ms），恢复播放还原；加载中/失败/无 URL 统一显示 72dp 音符占位图标（PlayerIconGray），图片加载成功后覆盖其上
 - 标题区（左对齐）：歌名 / 歌手 / 队列位置（`当前序号 / 队列总数`）
@@ -164,7 +163,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
 - 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（点击暂为空实现），含 navigationBarsPadding 手势区避让
 - 高度自适应（中部播放区正常屏固定高度、整体不可拖动）：外层 BoxWithConstraints 读取中部视口，首槽位（双页 Pager：歌词页/封面页）高度 = 封面边长 = min(0.76×宽, 剩余高度)（固定内容高度按 280dp×系统字体缩放保守估算、宁大勿小，估算误差全部由间距吸收），四段间距 = 最小值（30/16/10/18）+ weight 均摊剩余，内容总高恒等于视口；仅矮屏（视口放不下 0.5×宽下限封面 + 保守估算内容）退回整体滚动托底，主控行不随滚
 - 通过点击 MiniPlayer 或导航到 `Screen.Player.route` 打开
-- 返回按钮调用 `onBackClick()` 返回上一页（无菜单栏/底部栏干扰）；下拉返回与系统返回同效
+- 返回按钮调用 `onBackClick()` 返回上一页（无菜单栏/底部栏干扰）；顶栏下箭头与系统返回同效
 
 ## 添加新页面的步骤
 

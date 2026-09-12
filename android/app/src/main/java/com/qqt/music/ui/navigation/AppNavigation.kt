@@ -76,7 +76,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     var playerOverlay by remember { mutableStateOf(false) }
 
     // 常驻下层（抽屉 + 页面 + MiniPlayer）+ 播放器全屏覆盖层：下层页面始终原样保持，
-    // 下拉收起整页滑出时露出的就是它本身，关闭即显、无过渡
+    // 收起整页滑出时露出的就是它本身，关闭即显、无过渡
     Box(modifier = Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
@@ -259,7 +259,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             }
         }
 
-        // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；下拉收起整页滑出即露出下层页面
+        // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；收起整页滑出即露出下层页面
         if (playerOverlay) {
             PlayerScreen(
                 playerViewModel = playerViewModel,

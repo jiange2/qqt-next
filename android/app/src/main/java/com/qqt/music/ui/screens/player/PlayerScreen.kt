@@ -25,7 +25,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.ScrollableState
-import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -52,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -60,13 +58,9 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -74,7 +68,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -119,8 +112,7 @@ import kotlinx.coroutines.withContext
  * 左对齐标题 / 歌手 / 队列位置；中部五个功能图标（喜欢 / 播放设置 / 下载 / 加入歌单 / 更多菜单：评分）；藏青细进度条；
  * 主控行（播放模式 / 上一首 / 藏青大圆播放键 / 下一首 / 队列入口）钉在页面底部常驻。
  * 中部播放区首槽位为双页横向 Pager（歌曲页在左、歌词页在右，CONTEXT.md「横滑切页」），横滑由根级水平 scrollable 全域驱动（含主控行上方），标题及以下共享不随翻页移动；
- * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下拉返回/下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
- * 全页下拉返回（CONTEXT.md「下拉返回」，不跟手）：下拖到位或甩动后触发统一收出，矮屏内容滚到顶后继续下拉才触发。
+ * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
  * 正常屏中部播放区固定高度、整体不可拖动（四段间距 = 最小值 + weight 均摊剩余，估算误差由间距吸收）；
  * 矮屏内容整体滚动托底。状态栏图标在本页保持深色，离开时还原；歌词页可见且播放进行中（含装载与缓冲）时屏幕常亮，滑回歌曲页、暂停或关闭本页即恢复系统熄屏（CONTEXT.md「屏幕常亮」）。
  */
@@ -215,7 +207,7 @@ fun PlayerScreen(
         }
     }
 
-    // 覆盖层进出（抽屉式）：进场 settling=false→true，整页从屏幕底部滑入；关闭（下拉返回/下箭头/系统返回）统一
+    // 覆盖层进出（抽屉式）：进场 settling=false→true，整页从屏幕底部滑入；关闭（下箭头/系统返回）统一
     // 置 dismissing，整页向下滑出，动画结束才回调 onBackClick() 关闭覆盖层（下层页面全程原样保持）
     var settling by remember { mutableStateOf(false) }
     var dismissing by remember { mutableStateOf(false) }
@@ -226,33 +218,6 @@ fun PlayerScreen(
         finishedListener = { if (dismissing && it >= 1f) onBackClick() },
     )
     LaunchedEffect(Unit) { settling = true }
-    // 下拉返回（CONTEXT.md「下拉返回」）：子级滚动容器消费不尽的下拉量在此累计，
-    // 达到位移阈值或松手甩动速度即触发关闭（页面不跟手，走统一整页下滑收出）
-    val configuration = LocalConfiguration.current
-    val dismissThresholdPx = with(LocalDensity.current) {
-        (configuration.screenHeightDp.dp * DismissDragFraction).toPx()
-    }
-    val dismissFlingPx = with(LocalDensity.current) { DismissFlingVelocityDp.dp.toPx() }
-    val collapseConnection = remember(dismissThresholdPx, dismissFlingPx) {
-        object : NestedScrollConnection {
-            var pullDistance = 0f
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y < 0f) pullDistance = 0f // 反向滚动立即清零
-                return Offset.Zero
-            }
-
-            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (available.y > 0f) pullDistance += available.y
-                return Offset.Zero
-            }
-
-            override suspend fun onPreFling(available: Velocity): Velocity {
-                if (pullDistance >= dismissThresholdPx || available.y > dismissFlingPx) dismissing = true
-                pullDistance = 0f
-                return Velocity.Zero
-            }
-        }
-    }
 
     // 按钮四态：未下载可点发起下载；下载中变环形进度+百分比；已下载变绿——两者为不可操作态
     // （enabled=false：点击无反应且无按压反馈；取消/删除在下载列表页）
@@ -274,7 +239,7 @@ fun PlayerScreen(
     // 播放模式菜单开着时系统返回先关菜单（本处 BackHandler 晚于覆盖层注册，优先接管）
     BackHandler(enabled = showModeMenu) { showModeMenu = false }
 
-    // 系统返回 = 统一走整页下滑收出（与下拉返回/下箭头同路）；收出动画期间再按返回无操作
+    // 系统返回 = 统一走整页下滑收出（与下箭头同路）；收出动画期间再按返回无操作
     BackHandler(enabled = !showModeMenu) {
         if (!dismissing) dismissing = true
     }
@@ -336,11 +301,6 @@ fun PlayerScreen(
             // 覆盖层进出动画：进场整页从屏幕底部滑入、关闭整页向下滑出（SlideAnimMs），
             // 下层页面全程原样保持；滑出结束后 onBackClick 关闭覆盖层
             .graphicsLayer { translationY = slideProgress * size.height }
-            // 正常屏无滚动容器时由恒消费 0 的 scrollable 充当 NestedScroll 事件源，使下拉量能到达 collapseConnection；
-            // nestedScroll 必须位于 scrollable 外层（modifier 链由外到内），内层 scrollable 的拖动量冒泡时才会经过本 connection；
-            // 矮屏时页内 verticalScroll 优先消费，此层不干扰
-            .nestedScroll(collapseConnection)
-            .scrollable(orientation = Orientation.Vertical, state = rememberScrollableState { 0f })
             // 横滑切页（CONTEXT.md「横滑切页」）：根级 scrollable(Horizontal) 经 pagerDragState 翻转包裹驱动 pagerState
             // （两套滚动量符号相反，直驱会内容反向跟手），两页全域（含主控行、Slider 上方）均可横滑跟手；
             // Slider 等子级水平控件优先消费不误触；Pager 自带手势关闭（userScrollEnabled=false）统一手势入口，
@@ -365,7 +325,7 @@ fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             PlayerGlyph(Icons.Default.KeyboardArrowDown, "收起", 28.dp, PlayerNavy, touchSize = 48.dp) {
-                dismissing = true // 与下拉返回/系统返回同路：统一整页下滑收出
+                dismissing = true // 与系统返回同路：统一整页下滑收出
             }
             Row(
                 modifier = Modifier.weight(1f),
@@ -419,7 +379,7 @@ fun PlayerScreen(
                     userScrollEnabled = false, // 横滑统一由根级 scrollable(Horizontal) 全域驱动（见根 modifier 链）
                 ) { page ->
                     if (page == 1) {
-                        // 歌词页（page 1）：歌词区占满槽位（内部 LazyColumn 自滚，到顶后下拉量上传触发下拉返回）
+                        // 歌词页（page 1）：歌词区占满槽位（内部 LazyColumn 自滚）
                         LyricsPanel(
                             state = lyricsState,
                             positionMs = currentPosition,
@@ -1260,9 +1220,7 @@ private const val PressScaleDown = 0.9f
 private const val PressInMs = 100
 private const val PressOutMs = 150
 
-// 覆盖层手感参数（与按压反馈同区微调）：下拉位移阈值占屏高比例 / 松手甩动速度阈值（dp/s）/ 进出动画时长
-private const val DismissDragFraction = 0.22f
-private const val DismissFlingVelocityDp = 1200f
+// 覆盖层手感参数（与按压反馈同区微调）：进出动画时长
 private const val SlideAnimMs = 200
 
 // 评分对话框未选星颜色（与各列表未选星一致）
