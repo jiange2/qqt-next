@@ -1,6 +1,6 @@
 # backend-next 生产部署手册（新服务器）
 
-拓扑：`Nginx(:8001 API / :8002 Admin)` → `app 容器(127.0.0.1:8000)` → 宿主机宝塔 MySQL(3306)，媒体存阿里云 OSS（同 region 走内网）。明文 HTTP，无 HTTPS（ADR 0004）。
+拓扑：`Nginx(:80 下载页 / :8001 API / :8002 Admin)` → `app 容器(127.0.0.1:8000)` → 宿主机宝塔 MySQL(3306)，媒体存阿里云 OSS（同 region 走内网）。明文 HTTP，无 HTTPS（ADR 0004）。
 
 ## 1. 前置（宝塔侧）
 
@@ -48,9 +48,29 @@ server {
         client_max_body_size 25m;    # 图片 ≤20MB
     }
 }
+# 客户端下载页（ADR 0012）：并入 80 的 default_server——裸 IP、任意域名均可达，无需动 DNS
+# 注意：原来 server 级的 return 301 必须下移到 location /（server 级 return 先于 location 匹配执行），
+# 否则 /download/ 永远走不到（经典坑，同 ACME challenge 失效原因）
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    location = / { return 302 /download/; }           # 短链入口：根路径进下载页
+    location = /download { return 302 /download/; }   # 补斜杠，保证页内相对路径解析
+    location /download/ {
+        proxy_pass http://127.0.0.1:8000;             # 路径原样透传，勿重写
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    location / { return 301 https://a.yunshangzhiai7.top; }   # 其余路径维持原行为
+}
 ```
 
 两个端口都在宝塔「安全」/安全组放行。注意 Admin 端口**不做路径重写**，原样透传（面板资源以 `/admin/` 为 base，由 `--base=/admin/` 构建保证）。
+
+下载页刻意不走 HTTPS：全栈明文（ADR 0004/0005），且 HTTPS 页面 + 明文安装包会被 Chrome 按「不安全下载」拦截——页面与包必须同为明文（或同为 HTTPS）。验证：`curl -sI http://127.0.0.1/download/` 应为 200；`curl -sI http://127.0.0.1/download/apk` 应为 302 到后台配置的跳转地址（未配置则 503）。
 
 ## 5. 首次部署
 
@@ -61,7 +81,7 @@ docker compose -f docker-compose.next.yml run --rm app \
   sh -c "cd server && npx tsx scripts/seed-admin.ts"
 ```
 
-验证：浏览器开 `http://<IP>:8002/admin/` 登录面板；真机 App 暂不受影响（仍打旧服务器）。
+验证：浏览器开 `http://<IP>:8002/admin/` 登录面板；`http://<服务器IP>/` 应 302 进下载页（default_server 裸 IP 直达，域名同样）；真机 App 暂不受影响（仍打旧服务器）。
 
 ## 6. 日常发版与回滚
 
@@ -88,3 +108,5 @@ docker compose -f docker-compose.next.yml run --rm app \
 | 媒体 403 | OSS bucket 私有读（历史坑），确认走 URL 签名/公共读配置 |
 | 统计里设备 IP 是反代地址 | nginx 两个头都没透传：代码取头顺序 XFF 首段 → X-Real-IP → req.ip，X-Real-IP 与 X-Forwarded-For 至少配一个（见第 4 节） |
 | 管理员密码丢失 | 删 `admin_users` 表记录后重跑 seed-admin.ts |
+| 下载页 404/502、或访问又跳回主站 | 检查 80 default_server：server 级 `return 301` 必须下移到 `location /`（server 级 return 先于 location 匹配执行，留在顶层则 /download/ 不可达）；改完 `nginx -t && nginx -s reload` |
+| 下载页能开、点下载 503 | 后台「版本更新」的跳转地址未配置（`/download/apk` 显式返回 503），去 Admin 面板填写安装包直链 |

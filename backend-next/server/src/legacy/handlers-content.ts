@@ -58,7 +58,7 @@ export async function favouriteSetOf(userIdRaw?: string): Promise<FavouriteSet |
 
 // 归属链（backend-next ADR 0009）：歌曲对 App 可见要求自身、所属专辑、专辑所属分类均启用；
 // 未归专辑歌曲与未分类专辑内歌曲经此过滤天然不可见。隐私模式下额外要求全链非隐私（ADR 0012）。
-function songAppVisibleFilter(settings: Setting): Prisma.SongWhereInput {
+export function songAppVisibleFilter(settings: Setting): Prisma.SongWhereInput {
   if (settings.privacyMode === "true") {
     return {
       status: true,

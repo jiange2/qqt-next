@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../prisma.js";
 import { appLang } from "./lang.js";
 import { S } from "./shared.js";
-import { favouriteSetOf, type LegacyCtx } from "./handlers-content.js";
+import { favouriteSetOf, songAppVisibleFilter, type LegacyCtx } from "./handlers-content.js";
 import { songToLegacy } from "./view.js";
 import { songIncludeForQuery as songInclude } from "./handlers-content.js";
 

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>倾轻听2 · Android 版下载</title>
+<link rel="icon" href="icon.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+    background: #fff;
+    color: #17181a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100dvh;
+    padding: 24px 20px calc(20px + env(safe-area-inset-bottom));
+    -webkit-tap-highlight-color: transparent;
+  }
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+  .logo { width: 96px; height: 96px; border-radius: 50%; display: block; }
+  h1 { margin-top: 18px; font-size: 24px; font-weight: 700; letter-spacing: .5px; }
+  .meta { margin-top: 8px; font-size: 14px; color: #8a8f99; }
+  .btn {
+    margin-top: 36px;
+    display: block;
+    width: min(320px, 78vw);
+    padding: 15px 0;
+    background: #ff5a2d;
+    color: #fff;
+    font-size: 17px;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 999px;
+    box-shadow: 0 8px 20px rgba(255, 90, 45, .28);
+    transition: transform .12s ease, background .12s ease;
+  }
+  .btn:active { transform: scale(.97); background: #e8431b; }
+  footer { font-size: 12px; color: #b3b7be; text-align: center; line-height: 1.8; }
+
+  /* 微信内置浏览器引导浮层 */
+  #wx-guide { position: fixed; inset: 0; z-index: 99; background: rgba(0, 0, 0, .65); display: none; }
+  #wx-guide.show { display: flex; flex-direction: column; align-items: center; }
+  #wx-guide .tip {
+    margin-top: 22vh;
+    padding: 0 32px;
+    color: #fff;
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.7;
+    text-align: center;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  }
+  #wx-guide .arrow { position: absolute; top: 1px; right: 4px; width: 150px; height: 150px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="icon.png" alt="倾轻听2" width="96" height="96">
+  <h1>倾轻听2</h1>
+  <p class="meta">Android 版<span id="ver"></span></p>
+  <a class="btn" id="dl" href="apk">下载 Android 版</a>
+</main>
+<footer>© 2026 倾轻听2<!-- 备案号：给到后填入此处 --></footer>
+
+<div id="wx-guide">
+  <svg class="arrow" viewBox="0 0 150 150" fill="none" aria-hidden="true">
+    <path d="M14 146 C 38 76 80 34 134 18" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+    <path d="M134 18 L111 40 M134 18 L104 14" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  </svg>
+  <p class="tip">点击右上角 ··· 选择“在浏览器打开”</p>
+</div>
+
+<script>
+(function () {
+  var isWeChat = /MicroMessenger/i.test(navigator.userAgent || "");
+  var guide = document.getElementById("wx-guide");
+  var btn = document.getElementById("dl");
+
+  btn.addEventListener("click", function (e) {
+    if (isWeChat) {
+      e.preventDefault();
+      guide.classList.add("show");
+    }
+  });
+  guide.addEventListener("click", function () {
+    guide.classList.remove("show");
+  });
+
+  // 版本号取自后台「版本更新」设置（/download/app-meta）；取数失败仅隐藏版本号
+  fetch("app-meta")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (m) {
+      var v = m && m.version;
+      if (v !== undefined && v !== null && v !== "" && isFinite(v)) {
+        document.getElementById("ver").textContent = " · v" + v;
+      }
+    })
+    .catch(function () {});
+})();
+</script>
+</body>
+</html>

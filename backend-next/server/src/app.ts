@@ -8,6 +8,7 @@ import fastifyStatic from "@fastify/static";
 import formbody from "@fastify/formbody";
 import { legacyRoutes } from "./legacy/routes.js";
 import { adminRoutes } from "./admin/routes.js";
+import { downloadRoutes } from "./download/routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: true, bodyLimit: 2 * 1024 * 1024 });
@@ -36,7 +37,22 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   }
 
+  // C 端客户端下载页：静态单页（server/public/download，随镜像发布；/download/ 前缀）
+  const downloadRootCandidates = [
+    path.resolve(import.meta.dirname, "../../public/download"), // 编译产物 dist/src/
+    path.resolve(import.meta.dirname, "../public/download"), // 源码 src/
+  ];
+  const downloadRoot = downloadRootCandidates.find((p) => fs.existsSync(p));
+  if (downloadRoot) {
+    await app.register(fastifyStatic, {
+      root: downloadRoot,
+      prefix: "/download/",
+      decorateReply: false,
+    });
+  }
+
   await app.register(legacyRoutes);
   await app.register(adminRoutes);
+  await app.register(downloadRoutes);
   return app;
 }
