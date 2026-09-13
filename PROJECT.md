@@ -83,6 +83,12 @@ data = base64_encode(urlencode(json_encode({
 
 ### 部署
 
+**旧栈（backend/，待下线）**
 - 开发/生产部署使用 `docker-compose.yml`（PHP+Apache 端口 8000，MySQL 端口 3306）
 - 数据库初始 Schema：`backend/install/database.sql`
 - 环境变量：`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`（见 `.env.example`）
+
+**backend-next（现网）**
+- 日常部署与发版 → [`docs/backend-next-deploy.md`](docs/backend-next-deploy.md)
+- 完整部署与灾难重建（服务器整机恢复） → [`docs/full-deployment-guide.md`](docs/full-deployment-guide.md)
+- 备份手册（备份什么、恢复材料） → [`docs/backup-guide.md`](docs/backup-guide.md)

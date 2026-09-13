@@ -6,8 +6,10 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.intercept.Interceptor
 import coil.request.ImageResult
+import com.qqt.music.data.api.ApiClient
 import com.qqt.music.data.api.ResponseSnapshotStore
 import com.qqt.music.data.local.NetworkMonitor
+import com.qqt.music.update.AppUpdateChecker
 import okhttp3.Interceptor as OkInterceptor
 import okhttp3.MediaType
 import okhttp3.OkHttpClient
@@ -40,6 +42,8 @@ class QqtApplication : Application(), ImageLoaderFactory {
         // 未就绪时拦截器/横幅自动退化为直连与不显示，不会崩溃
         ResponseSnapshotStore.init(this)
         NetworkMonitor.init(this)
+        // 自定义 UA（让设备快照的 User-Agent 列可辨平台/机型）：versionName 与 app_version 上报同源
+        ApiClient.init(AppUpdateChecker.currentVersionName(this))
         // 旧版 Coil 盘存目录一次性清除（仓库级 ADR 0011 割接）：v1=旧默认目录；
         // v2=混淆初版无嗅探时写下的乱码条目（解码失败但源字节已入库）。本进程 Coil 只用 v3，删除无竞争
         Thread {

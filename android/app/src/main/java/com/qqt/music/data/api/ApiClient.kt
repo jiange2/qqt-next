@@ -16,6 +16,7 @@ import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.POST
 import com.google.gson.JsonObject
+import android.os.Build
 import android.util.Base64
 import java.io.IOException
 import java.net.ConnectException
@@ -49,6 +50,25 @@ object ApiClient {
     /** 进程内粘性：一旦切换到回退地址，本次运行期主域请求直接走回退，冷启动恢复主用优先 */
     private val useFallback = AtomicBoolean(false)
 
+    /** 客户端 UA：让设备快照的 User-Agent 列一眼可辨平台与机型（格式对齐 audio-player 的 APA/ 口径）。
+     *  Application.onCreate 注入；未注入时不写头（等同旧版 OkHttp 默认 okhttp/x.y.z） */
+    private var userAgent: String? = null
+
+    /** versionName 由调用方取 PackageManager（与 app_version 上报同源）；机型含非可见 ASCII 时
+     *  整体退化为 "?"，防 OkHttp 头值校验抛异常波及全部请求 */
+    fun init(versionName: String) {
+        val model = Build.MODEL.let { m -> if (m.isNotEmpty() && m.all { c -> c in ' '..'~' }) m else "?" }
+        userAgent = "QQT/${versionName.ifBlank { "?" }} (Android ${Build.VERSION.SDK_INT}; $model)"
+    }
+
+    /** 全部请求注入 UA；置于链首以便日志拦截器记录到该头 */
+    private val userAgentInterceptor = Interceptor { chain ->
+        val ua = userAgent
+        val request = if (ua == null) chain.request()
+        else chain.request().newBuilder().header("User-Agent", ua).build()
+        chain.proceed(request)
+    }
+
     /** 故障切换拦截器：主域请求遭遇连接层失败时改写为回退地址重试一次（仓库 docs/adr/0009） */
     private val failoverInterceptor = Interceptor { chain ->
         var request = chain.request()
@@ -69,6 +89,7 @@ object ApiClient {
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
+        .addInterceptor(userAgentInterceptor)
         .addInterceptor(failoverInterceptor)
         .addInterceptor(
             HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
