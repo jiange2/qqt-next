@@ -47,6 +47,9 @@ object ApiClient {
     /** 回退入口 host/port：切换时整体替换请求的 host 与端口，路径与参数不变 */
     private val fallbackHttpUrl: HttpUrl = AppConfig.FALLBACK_BASE_URL.toHttpUrl()
 
+    /** 主用与回退两个入口的 host（ADR 0017）：「服务器不可达」判定只认这两个入口的请求，CDN 域名不参与 */
+    internal val entryHosts: Set<String> = setOf(primaryHost, fallbackHttpUrl.host)
+
     /** 进程内粘性：一旦切换到回退地址，本次运行期主域请求直接走回退，冷启动恢复主用优先 */
     private val useFallback = AtomicBoolean(false)
 
@@ -87,17 +90,26 @@ object ApiClient {
         }
     }
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .addInterceptor(userAgentInterceptor)
-        .addInterceptor(failoverInterceptor)
-        .addInterceptor(
-            HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
-        )
-        // 响应快照拦截器（ADR 0012）：置于 failover 外层——弱网时先由 failover 完成主域/回退
-        // 重试，两者都失败才由快照兜底回放；回放构造的响应不经过 failover（非 IOException）
-        .addInterceptor(ResponseSnapshotInterceptor())
-        .build()
+    /** 探测发包用的主 client（含 failover 全链）：lateinit + init 赋值，快照拦截器先在链中注册、
+     *  client 引用运行时才读，规避「拦截器 ↔ client」的属性初始化环（编译期类型推断成环） */
+    private lateinit var okHttpClient: OkHttpClient
+
+    /** 响应快照拦截器（ADR 0012、0017） */
+    private val snapshotInterceptor = ResponseSnapshotInterceptor { okHttpClient }
+
+    init {
+        okHttpClient = OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .addInterceptor(userAgentInterceptor)
+            // 快照拦截器必须置于 failover 外层（ADR 0017）：连接失败先走完主用+回退两次尝试才回放，
+            // 这也是「两入口均失败 = 服务器不可达」判定的前提；回放构造的响应不触网、不经 failover
+            .addInterceptor(snapshotInterceptor)
+            .addInterceptor(failoverInterceptor)
+            .addInterceptor(
+                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
+            )
+            .build()
+    }
 
     val retrofit: Retrofit = Retrofit.Builder()
         .baseUrl(AppConfig.BASE_URL)
@@ -117,14 +129,6 @@ object ApiClient {
         }
     } catch (e: Exception) {
         null
-    }
-
-    /** 连接层失败判定：DNS 解析失败、连接被拒/主机不可达、连接超时；读超时不切换（后端慢时同源 IP 同样慢） */
-    private fun IOException.isConnectFailure(): Boolean = when (this) {
-        is UnknownHostException -> true
-        is ConnectException, is NoRouteToHostException -> true
-        is SocketTimeoutException -> message?.lowercase()?.contains("connect") == true
-        else -> false
     }
 
     /** 把请求 host/port 整体替换为回退入口，路径与查询参数保持不变 */
@@ -152,4 +156,14 @@ object ApiClient {
         return md.digest(input.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
+}
+
+/** 连接层失败判定（ADR 0009、0017）：DNS 解析失败、连接被拒/主机不可达、连接超时；
+ *  读超时不切换也不进「服务器不可达」（后端慢时同源 IP 同样慢）。failover 改写重试与
+ *  快照拦截器的粘性态判定共用同一口径。 */
+internal fun IOException.isConnectFailure(): Boolean = when (this) {
+    is UnknownHostException -> true
+    is ConnectException, is NoRouteToHostException -> true
+    is SocketTimeoutException -> message?.lowercase()?.contains("connect") == true
+    else -> false
 }

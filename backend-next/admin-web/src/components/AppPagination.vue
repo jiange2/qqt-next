@@ -3,7 +3,7 @@
     v-model:current-page="page"
     v-model:page-size="size"
     :total="total"
-    :page-sizes="[10, 20, 50, 100, 200]"
+    :page-sizes="[10, 20, 50, 100, 200, 1000]"
     layout="total, sizes, prev, pager, next, jumper"
     @current-change="scheduleLoad"
     @size-change="onSizeChange"

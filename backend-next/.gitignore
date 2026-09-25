@@ -5,7 +5,7 @@ dist/
 .DS_Store
 server/prisma/migrations/dev/
 server/scripts/dump/
-media/
+server/media/
 uploads/
 images/
 lrc/

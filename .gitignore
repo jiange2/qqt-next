@@ -1,0 +1,3 @@
+# Local disaster-recovery archive: DB dumps and the OSS media mirror
+# (see scripts/sync-oss.ps1). Never commit these.
+backup/

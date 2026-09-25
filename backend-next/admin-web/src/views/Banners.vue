@@ -115,7 +115,7 @@ async function remove(row: Row) {
 }
 
 onMounted(async () => {
-  const { data } = await api.get("/admin/songs", { params: { size: 200 } });
+  const { data } = await api.get("/admin/songs", { params: { size: 1000 } });
   songOptions.value = data.items;
 });
 load();

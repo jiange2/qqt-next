@@ -48,7 +48,7 @@ sealed class Screen(val route: String, val title: String) {
         val drawerTopRoutes = setOf("album", "mylist", "favorites")
 
         fun titleOf(route: String?): String = when {
-            route == null -> "倾轻听2"
+            route == null -> "倾轻听"
             route.startsWith("banner_songs") -> BannerNav.banner?.title ?: "歌曲"
             route.startsWith("album_songs") -> AlbumNav.album?.name ?: "专辑"
             route.startsWith("category_albums") -> CategoryNav.category?.name ?: "分类"
@@ -63,7 +63,7 @@ sealed class Screen(val route: String, val title: String) {
                 "album" -> "音乐专辑"; "mylist" -> "我的歌单"
                 "favorites" -> "歌曲收藏"; "player" -> "播放器"
                 "search" -> "搜索"
-                else -> "倾轻听2"
+                else -> "倾轻听"
             }
         }
     }

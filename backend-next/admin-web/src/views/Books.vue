@@ -169,7 +169,7 @@ function openChapters(row: Row) {
 }
 
 onMounted(async () => {
-  const categories = await api.get("/admin/categories", { params: { size: 200, type: "book" } });
+  const categories = await api.get("/admin/categories", { params: { size: 1000, type: "book" } });
   categoryOptions.value = categories.data.items;
 });
 load();

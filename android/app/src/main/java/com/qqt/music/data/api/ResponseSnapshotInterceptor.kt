@@ -3,15 +3,19 @@ package com.qqt.music.data.api
 import android.util.Base64
 import com.google.gson.JsonParser
 import com.qqt.music.data.local.NetworkMonitor
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.FormBody
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.IOException
 import java.net.URLDecoder
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 响应快照拦截器（ADR 0012）：为只读接口留档成功响应，断网或请求失败时回放最后一次留档。
@@ -28,8 +32,25 @@ import java.net.URLDecoder
  * - get_recent_songs 的 key 含 ID 串（最近播放每多一首即变，整串缓存必然 miss），
  *   特殊化为按歌曲 ID 的实体级缓存；回放时按请求 ID 串顺序切片重组——调用方
  *   本就按传入顺序重排并合并全部页，合并结果与在线等价
+ *
+ * 服务器不可达（ADR 0017，本拦截器必须位于 failover 外层）：
+ * - 入口（主用/回退，[ApiClient.entryHosts]）请求连接层失败（failover 已走完两次尝试）
+ *   或收到 5xx 时进入粘性态；入口读操作秒回快照，5xx 与断网同口径回放，
+ *   不入白名单的写请求仍维持失败（不排队重放）
+ * - 粘性态中每个入口读操作在后台静默重发真实请求探测（在飞去重），
+ *   任一入口请求获得非 5xx 应答即退出；恢复不打断当前页面，下次加载自然取新数据
+ * - 探测请求带 [SnapshotProbe] 标记跳过回放（防递归），其成功应答照常回写快照
  */
-class ResponseSnapshotInterceptor : Interceptor {
+class ResponseSnapshotInterceptor(
+    /** 后台探测发包用：取主 client（含 failover 全链），构造期不调用 */
+    private val clientProvider: () -> OkHttpClient,
+) : Interceptor {
+
+    /** 后台探测在飞去重：一个探测未决期间不再发新的，避免堆叠 */
+    private val probeInFlight = AtomicBoolean(false)
+
+    /** 探测请求标记类（挂在 [Request.tag] 上，不上线） */
+    private class SnapshotProbe
 
     /** 解析成功且允许回放/回写的请求；null = 与快照机制无关，直连放过 */
     private data class Parsed(
@@ -42,28 +63,76 @@ class ResponseSnapshotInterceptor : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val parsed = parse(request) ?: return chain.proceed(request)
+        val parsed = parse(request)
+        val isProbe = request.tag(SnapshotProbe::class.java) != null
+        val isEntry = request.url.host in ApiClient.entryHosts
 
-        val replay = {
-            if (parsed.entityIdSlice != null) replayEntities(request, parsed.entityIdSlice)
-            else replaySnapshot(request, parsed.key)
-        }
-
-        // 断网快回放：不发包直接回放，省去等超时的白等
-        if (NetworkMonitor.isOffline) {
-            replay().let { if (it != null) return it }
+        if (!isProbe && parsed != null) {
+            // 断网快回放：不发包直接回放，省去等超时的白等
+            if (NetworkMonitor.isOffline) {
+                replay(request, parsed)?.let { return it }
+            }
+            // 服务器不可达（ADR 0017）：入口读操作秒回快照并后台静默探测；
+            // CDN 歌词等非入口请求不在此列（手机在线时照常回源，失败再由下方兜底回放）
+            else if (NetworkMonitor.isServerUnreachable && isEntry) {
+                replay(request, parsed)?.let { replayed ->
+                    launchProbe(request)
+                    return replayed
+                }
+            }
         }
 
         // 在线照常发出；成功即回写，失败（IOException）兜底回放
-        try {
+        return try {
             val response = chain.proceed(request)
-            if (response.isSuccessful) record(parsed, response)
-            return response
+            if (response.code >= 500) {
+                // 5xx 视为服务端不可用：与连接失败同口径进粘性态，入口读操作回放；写请求维持原响应
+                if (isEntry) NetworkMonitor.enterServerUnreachable()
+                if (!isProbe && parsed != null) {
+                    replay(request, parsed)?.let { replayed ->
+                        response.close()
+                        return replayed
+                    }
+                }
+            } else {
+                // 服务端有应答即视为可达（含 4xx）：任一入口请求成功即退出粘性态
+                if (isEntry) NetworkMonitor.exitServerUnreachable()
+                if (parsed != null && response.isSuccessful) record(parsed, response)
+            }
+            response
         } catch (e: IOException) {
-            replay().let { if (it != null) return it }
+            // 连接层失败（failover 已走完主用+回退）：进粘性态；读操作兜底回放，写请求维持失败
+            if (isEntry && !NetworkMonitor.isOffline && e.isConnectFailure()) {
+                NetworkMonitor.enterServerUnreachable()
+            }
+            if (!isProbe && parsed != null) {
+                replay(request, parsed)?.let { return it }
+            }
             throw e
         }
     }
+
+    /** 后台静默探测（ADR 0017）：在飞期只保留一个；走完整 client 链，成败的进出态与回写由本拦截器统一判定 */
+    private fun launchProbe(request: Request) {
+        if (!probeInFlight.compareAndSet(false, true)) return
+        val probe = request.newBuilder()
+            .tag(SnapshotProbe::class.java, SnapshotProbe())
+            .build()
+        clientProvider().newCall(probe).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                probeInFlight.set(false)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.close()
+                probeInFlight.set(false)
+            }
+        })
+    }
+
+    private fun replay(request: Request, parsed: Parsed): Response? =
+        if (parsed.entityIdSlice != null) replayEntities(request, parsed.entityIdSlice)
+        else replaySnapshot(request, parsed.key)
 
     // ── 请求解析 ──────────────────────────────────────────────
 

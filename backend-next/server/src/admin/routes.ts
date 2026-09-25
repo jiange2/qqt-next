@@ -7,9 +7,11 @@ import {
   type FastifyRequest,
 } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../prisma.js";
+import { config } from "../config.js";
+import { newQrToken } from "../download/qr.js";
 import { invalidateSettingsCache } from "../services/settings.js";
 import { BOOK_THUMB_SIZE, resolveName, saveImage } from "../media/save.js";
 import { decryptFilename, encryptLyrics, nameStem } from "../media/crypt.js";
@@ -25,9 +27,11 @@ import {
   setCacheControl,
 } from "../media/oss.js";
 import { transferExternalToOss } from "../media/external.js";
+import { probeAudioDuration } from "../media/duration.js";
 import { OBFUSCATED_META, obfuscateStream } from "../media/obfuscate.js";
 import { requireAdmin, signAdminToken } from "./auth.js";
 import { splitChapters, decodeTxt } from "../services/txtSplit.js";
+import { computeOnlineCount } from "../services/stats.js";
 
 // ---------------------------------------------------------------- 工具
 
@@ -42,10 +46,19 @@ const parseIds = (v: string): number[] =>
     .map((s) => Number.parseInt(s.trim(), 10))
     .filter((n) => Number.isFinite(n) && n > 0);
 
+// 北京日界（UTC+8 固定偏移，无夏令时）：平移到北京墙上时钟后按 UTC 取整日，再移回。
+// 不用 setHours —— 进程本地时区不可依赖：生产容器无 TZ（本地 = UTC）会把日界落到北京 08:00
+const BJ_OFFSET_MS = 8 * 60 * 60 * 1000;
+const bjDayStart = (ms: number): Date => {
+  const d = new Date(ms + BJ_OFFSET_MS);
+  d.setUTCHours(0, 0, 0, 0);
+  return new Date(d.getTime() - BJ_OFFSET_MS);
+};
+
 function paging(req: FastifyRequest): { page: number; size: number; skip: number } {
   const q = req.query as Record<string, string | undefined>;
   const page = Math.max(1, intOr(q["page"], 1));
-  const size = Math.min(200, Math.max(1, intOr(q["size"], 20)));
+  const size = Math.min(1000, Math.max(1, intOr(q["size"], 20)));
   return { page, size, skip: (page - 1) * size };
 }
 
@@ -893,6 +906,42 @@ async function putSettings(req: FastifyRequest, reply: FastifyReply): Promise<vo
   reply.send(settings);
 }
 
+// ---------------------------------------------------------------- 下载二维码（仓库级 ADR 0013）
+
+const qrSelect = { downloadQrToken: true, downloadQrExpiresAt: true } as const;
+
+async function downloadQrState(reply: FastifyReply): Promise<void> {
+  const s = await prisma.setting.findUnique({ where: { id: 1 }, select: qrSelect });
+  const token = s?.downloadQrToken ?? "";
+  const expiresAt = s?.downloadQrExpiresAt ?? null;
+  const expired = !token || !expiresAt || expiresAt.getTime() <= Date.now();
+  reply.send({
+    token,
+    url: token ? `${config.downloadBase}/download/q/${token}` : "",
+    expiresAt,
+    expired,
+  });
+}
+
+/** 生成/重掷令牌：旧二维码即时失效（令牌唯一，请求时校验） */
+async function putDownloadQr(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const body = (req.body ?? {}) as { expiresAt?: unknown };
+  const ms = Number(body.expiresAt);
+  if (!Number.isFinite(ms) || ms <= Date.now()) {
+    return void bad(reply, "到期时间必须是未来时间");
+  }
+  const token = newQrToken();
+  const expiresAt = new Date(ms);
+  await prisma.setting.update({ where: { id: 1 }, data: { downloadQrToken: token, downloadQrExpiresAt: expiresAt } });
+  invalidateSettingsCache();
+  reply.send({
+    token,
+    url: `${config.downloadBase}/download/q/${token}`,
+    expiresAt,
+    expired: false,
+  });
+}
+
 // ---------------------------------------------------------------- 用户 / 举报 / 建议
 
 async function listUsers(req: FastifyRequest, reply: FastifyReply): Promise<void> {
@@ -1087,10 +1136,13 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           : albRaw === "0"
             ? { albumId: null }
             : { albumId: intOr(albRaw, 0) };
+      // duration_missing=1 仅看时长缺失（0）：时长探测修复的定位入口
+      const durMissing = q["duration_missing"];
       const where = {
         ...(keyword ? { title: { contains: keyword } } : {}),
         ...catFilter,
         ...albFilter,
+        ...(durMissing === "1" ? { duration: 0 } : {}),
       };
       const [total, items] = await Promise.all([
         prisma.song.count({ where }),
@@ -1125,6 +1177,27 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       const r = await transferExternalToOss(song.audioUrl, song.title);
       if (!r.ok) return void reply.code(502).send({ error: r.error });
       reply.send(await prisma.song.update({ where: { id: song.id }, data: { type: "local", audioUrl: r.name } }));
+    },
+  );
+  // 时长探测（仓库级 ADR 0008 修订）：管理端「修复时长」逐曲调用，仅补 0、不覆盖已有值。
+  // 跳过/外链/对象缺失/解析失败均为业务结果，以 200 + status 返回，供前端批量循环记录失败原因而不逐条弹错
+  app.post(
+    "/admin/songs/:id/probe-duration",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const song = await prisma.song.findUnique({ where: { id: Number.parseInt(id, 10) } });
+      if (!song) return void reply.code(404).send({ error: "song not found" });
+      if (song.duration > 0) return void reply.send({ status: "skipped", duration: song.duration });
+      if (song.type !== "local") return void reply.send({ status: "failed", reason: "外链歌曲（请先转入 OSS）" });
+      try {
+        const duration = await probeAudioDuration(`uploads/${song.audioUrl}`);
+        await prisma.song.update({ where: { id: song.id }, data: { duration } });
+        reply.send({ status: "repaired", duration });
+      } catch (err) {
+        const missing = (err as { status?: number }).status === 404;
+        reply.send({ status: "failed", reason: missing ? "音频对象不存在" : "音频解析失败" });
+      }
     },
   );
   app.delete("/admin/songs/:id", {
@@ -1331,6 +1404,10 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     async (_req, reply) => reply.send(await prisma.setting.findUnique({ where: { id: 1 } })),
   );
   app.put("/admin/settings", { preHandler: requireAdmin }, putSettings);
+
+  // 下载二维码（仓库级 ADR 0013）：令牌与到期独立于设置表单，不参与 putSettings 白名单
+  app.get("/admin/download-qr", { preHandler: requireAdmin }, async (_req, reply) => downloadQrState(reply));
+  app.put("/admin/download-qr", { preHandler: requireAdmin }, putDownloadQr);
 
   // 用户管理
   app.get("/admin/users", { preHandler: requireAdmin }, listUsers);
@@ -1593,15 +1670,17 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // ============ 访问统计（仓库级 ADR 0008，条数口径）============
 
-  // 当日访问分解：装载次数 / 命中 / 未命中 / 活跃设备数 + 命中率
+  // 当日访问分解：装载次数 / 命中 / 未命中 / 活跃设备数 + 命中率 + 即时在线设备数。
+  // online 与「活跃设备」口径不同：非当日窗口，为「在线状态」的即时推导（同采样器口径，见 services/stats.ts）
+  // 日界按北京自然日（实现与理由见工具区 bjDayStart）
   app.get("/admin/stats/summary", { preHandler: requireAdmin }, async (_req, reply) => {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDay = bjDayStart(Date.now());
     const where = { accessedAt: { gte: startOfDay } };
-    const [total, hits, devices] = await Promise.all([
+    const [total, hits, devices, online] = await Promise.all([
       prisma.accessFact.count({ where }),
       prisma.accessFact.count({ where: { ...where, cacheHit: true } }),
       prisma.accessFact.groupBy({ by: ["deviceId"], where, _count: { _all: true } }),
+      computeOnlineCount(),
     ]);
     reply.send({
       total,
@@ -1609,70 +1688,78 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       misses: total - hits,
       devices: devices.length,
       hitRate: total > 0 ? hits / total : 0,
+      online,
     });
   });
 
   // 访问明细：分页 + left join 歌名（已删歌曲 title 为 null，前端显示「已删除歌曲」）；
-  // 无日期筛选，累计返回上限 1000 条兜底（无 housekeep，ADR 0008）
+  // 可选 deviceId 精确过滤（设备快照行下钻复用本列表）；无日期筛选，分页覆盖全表、不设查看上限
+  // （无 housekeep，ADR 0008 2026-09-20 修订）
   app.get("/admin/stats/facts", { preHandler: requireAdmin }, async (req, reply) => {
-    const MAX_ROWS = 1000;
-    const { page, size, skip } = paging(req);
+    const { size, skip } = paging(req);
+    const deviceId = str((req.query as Record<string, string | undefined>)["deviceId"]);
+    const where = deviceId ? Prisma.sql`WHERE f.device_id = ${deviceId}` : Prisma.empty;
     const [count, rows] = await Promise.all([
-      prisma.accessFact.count(),
-      skip >= MAX_ROWS
-        ? Promise.resolve([])
-        : prisma.$queryRaw<FactRow[]>`
-            SELECT f.id AS id, f.song_id AS songId, s.title AS songTitle,
-                   f.device_id AS deviceId, f.cache_hit AS cacheHit,
-                   f.app_version AS appVersion,
-                   f.ip_address AS ipAddress, f.accessed_at AS accessedAt
-            FROM access_facts f
-            LEFT JOIN songs s ON s.id = f.song_id
-            ORDER BY f.id DESC
-            LIMIT ${Math.min(size, MAX_ROWS - skip)} OFFSET ${skip}
-          `,
+      prisma.accessFact.count(deviceId ? { where: { deviceId } } : undefined),
+      prisma.$queryRaw<FactRow[]>`
+        SELECT f.id AS id, f.song_id AS songId, s.title AS songTitle,
+               f.device_id AS deviceId, f.cache_hit AS cacheHit,
+               f.app_version AS appVersion,
+               f.ip_address AS ipAddress, f.accessed_at AS accessedAt
+        FROM access_facts f
+        LEFT JOIN songs s ON s.id = f.song_id
+        ${where}
+        ORDER BY f.id DESC
+        LIMIT ${size} OFFSET ${skip}
+      `,
     ]);
-    reply.send({ total: Math.min(count, MAX_ROWS), items: rows });
+    reply.send({ total: count, items: rows });
   });
 
   // 设备快照：每设备最新一条事实的快照值（allocated/used、UA、最近上报 IP，快照长事实上，ADR 0008）。
   // 预期下线 = 最新事实时刻 + 曲时长 + 1 分钟冗余（口径同「在线状态」词条），歌删或时长缺失仅加冗余。
-  // 在线与否在 Node 侧比对预期下线时刻与当前时刻（与写库同源的时钟基）：不得用 SQL NOW() —— Prisma 存
-  // UTC 墙上时间但不钉会话时区，部署库 SYSTEM=CST 时 NOW() 会混入 8 小时偏差，窗口内也被判离线。
-  // 对 SQL 内保留的时刻比较一律用 UTC_TIMESTAMP()（computeOnlineCount / 趋势窗口同此约定）。
+  // 分页在 SQL 层：「在线优先」是实时派生排序键，必须随 LIMIT 一起下推，组内保持最近访问倒序。
+  // SQL 内时刻比较一律 UTC_TIMESTAMP()、不得用 NOW() —— Prisma 存 UTC 墙上时间但不钉会话时区，
+  // 部署库 SYSTEM=CST 时 NOW() 会混入 8 小时偏差（computeOnlineCount / 趋势窗口同此约定）。
+  // 展示的 isOnline 仍在 Node 侧比对（与写库同源的时钟基），与排序键仅可能在边界瞬间不同步：
+  // 单行落进另一区块，亚秒级差异、刷新自愈。
   // 「最新一条」用每组 MAX(id) 回连：id 自增单调、插入序即时序，且无窗口函数（MySQL 5.7 不支持 OVER，部署库即 5.7）
-  app.get("/admin/stats/devices", { preHandler: requireAdmin }, async (_req, reply) => {
-    const rows = await prisma.$queryRaw<DeviceRow[]>`
-      SELECT f.device_id AS deviceId, f.allocated_storage + 0 AS allocatedStorage,
-             f.used_storage + 0 AS usedStorage, f.user_agent AS userAgent,
-             f.app_version AS appVersion, IFNULL(so.duration, 0) AS usedDuration,
-             f.ip_address AS ipAddress, f.accessed_at AS lastSeen, s.facts AS facts,
-             s.first_seen AS firstSeen,
-             f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND AS expectedOfflineAt
-      FROM access_facts f
-      INNER JOIN (
-        SELECT MAX(id) AS max_id, COUNT(*) AS facts, MIN(accessed_at) AS first_seen
-        FROM access_facts
-        GROUP BY device_id
-      ) s ON s.max_id = f.id
-      LEFT JOIN songs so ON so.id = f.song_id
-      ORDER BY f.accessed_at DESC
-    `;
-    // BigInt 列（+0 后仍 BIGINT）与 COUNT(*) 聚合均以 BigInt 抵达，JSON.stringify 无法序列化 → 统一转 number；
-    // 排序：在线在前（稳定排序，组内保持最近访问倒序）
+  app.get("/admin/stats/devices", { preHandler: requireAdmin }, async (req, reply) => {
+    const { size, skip } = paging(req);
+    const [countRows, rows] = await Promise.all([
+      // 设备数 = 有事实的设备数（本端点一行一设备）
+      prisma.$queryRaw<{ total: bigint }[]>`SELECT COUNT(DISTINCT device_id) AS total FROM access_facts`,
+      prisma.$queryRaw<DeviceRow[]>`
+        SELECT f.device_id AS deviceId, f.allocated_storage + 0 AS allocatedStorage,
+               f.used_storage + 0 AS usedStorage, f.user_agent AS userAgent,
+               f.app_version AS appVersion, IFNULL(so.duration, 0) AS usedDuration,
+               f.ip_address AS ipAddress, f.accessed_at AS lastSeen, s.facts AS facts,
+               s.first_seen AS firstSeen,
+               f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND AS expectedOfflineAt
+        FROM access_facts f
+        INNER JOIN (
+          SELECT MAX(id) AS max_id, COUNT(*) AS facts, MIN(accessed_at) AS first_seen
+          FROM access_facts
+          GROUP BY device_id
+        ) s ON s.max_id = f.id
+        LEFT JOIN songs so ON so.id = f.song_id
+        ORDER BY (f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND > UTC_TIMESTAMP()) DESC,
+                 f.accessed_at DESC
+        LIMIT ${size} OFFSET ${skip}
+      `,
+    ]);
+    // BigInt 列（+0 后仍 BIGINT）、COUNT(*) 与 COUNT(DISTINCT) 聚合均以 BigInt 抵达，JSON.stringify 无法序列化 → 统一转 number
     const now = Date.now();
-    const items = rows
-      .map((r) => ({
-        ...r,
-        allocatedStorage: r.allocatedStorage == null ? null : Number(r.allocatedStorage),
-        usedStorage: r.usedStorage == null ? null : Number(r.usedStorage),
-        // IFNULL 表达式的协议类型为 LONGLONG → BigInt 抵达，与 facts/COUNT(*) 同坑
-        usedDuration: Number(r.usedDuration),
-        facts: Number(r.facts),
-        isOnline: new Date(r.expectedOfflineAt).getTime() > now,
-      }))
-      .sort((a, b) => Number(b.isOnline) - Number(a.isOnline));
-    reply.send({ items });
+    const items = rows.map((r) => ({
+      ...r,
+      allocatedStorage: r.allocatedStorage == null ? null : Number(r.allocatedStorage),
+      usedStorage: r.usedStorage == null ? null : Number(r.usedStorage),
+      // IFNULL 表达式的协议类型为 LONGLONG → BigInt 抵达，与 facts/COUNT(*) 同坑
+      usedDuration: Number(r.usedDuration),
+      facts: Number(r.facts),
+      isOnline: new Date(r.expectedOfflineAt).getTime() > now,
+    }));
+    reply.send({ total: Number(countRows[0]?.total ?? 0), items });
   });
 
   // 在线趋势：24h/7d 原始 5 分钟采样点；30d 小时平均（平均非峰值）
@@ -1695,6 +1782,36 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       where: { sampledAt: { gte: new Date(Date.now() - hours * 3_600_000) } },
       orderBy: { sampledAt: "asc" },
       select: { sampledAt: true, totalOnline: true },
+    });
+    reply.send({ points });
+  });
+
+  // 每日装载趋势：最近 7/30/90/365 个已结束的北京自然日（不含今天——今天由当日栏承担，
+  // 半日数据上线会造成末点假跌），条数口径（仓库级 ADR 0008），即时聚合、不落日表：
+  // 事实带服务端插入时刻且不可变，日终即终值，无需定时结算（见 ADR 0008 Considered Options）。
+  // 日界与时刻比较同「当日」：CONVERT_TZ 显式把 UTC 墙上时间折到 +08:00，不依赖会话时区。
+  // 无事实的自然日 SQL 不产生行，按窗口逐日补零（轴按日历日等距；断线会把「停用」读成连续）。
+  app.get("/admin/stats/daily-trend", { preHandler: requireAdmin }, async (req, reply) => {
+    const daysByRange: Record<string, number> = { "7d": 7, "30d": 30, "90d": 90, "1y": 365 };
+    const days = daysByRange[str((req.query as Record<string, string | undefined>)["range"])] ?? 7;
+    const todayStart = bjDayStart(Date.now());
+    const from = new Date(todayStart.getTime() - days * 86_400_000);
+    const rows = await prisma.$queryRaw<{ day: string; total: bigint; hits: bigint }[]>`
+      SELECT DATE_FORMAT(CONVERT_TZ(accessed_at, '+00:00', '+08:00'), '%Y-%m-%d') AS day,
+             COUNT(*) AS total, COUNT(IF(cache_hit = 1, 1, NULL)) AS hits
+      FROM access_facts
+      WHERE accessed_at >= ${from} AND accessed_at < ${todayStart}
+      GROUP BY day
+      ORDER BY day
+    `;
+    const byDay = new Map(rows.map((r) => [r.day, { total: Number(r.total), hits: Number(r.hits) }]));
+    const points = Array.from({ length: days }, (_, i) => {
+      // 北京日历日字符串：from 是北京零点的 UTC 表示，加偏移后取 ISO 日期即北京墙上日期
+      const date = new Date(from.getTime() + i * 86_400_000 + BJ_OFFSET_MS).toISOString().slice(0, 10);
+      const agg = byDay.get(date);
+      const total = agg?.total ?? 0;
+      const hits = agg?.hits ?? 0;
+      return { date, total, hits, misses: total - hits };
     });
     reply.send({ points });
   });

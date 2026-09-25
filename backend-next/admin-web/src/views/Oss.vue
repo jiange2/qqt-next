@@ -27,23 +27,22 @@
         :disabled="batchRunning"
         @change="toggleAll"
       >全选</el-checkbox>
-      <el-button
-        type="primary"
-        plain
-        :disabled="!selected.size || batchRunning"
-        @click="setDialogVisible = true"
-      >设置缓存头</el-button>
-      <el-button :disabled="!selected.size || batchRunning" @click="runQuery()">查看缓存头</el-button>
-      <!-- 批量媒体混淆（仓库级 ADR 0011）：勾选集加密 / 一键全量（lrc 不参与，已混淆自动跳过，幂等可续跑） -->
-      <el-button
-        type="warning"
-        plain
-        :disabled="!selected.size || batchRunning"
-        @click="runEncrypt()"
-      >批量加密</el-button>
-      <el-button type="warning" :disabled="batchRunning" @click="encryptAll">加密全部未混淆</el-button>
-      <el-button :disabled="batchRunning" @click="exportRefreshList">导出 CDN 刷新列表</el-button>
-      <span v-if="selected.size" class="sel-count">已选 {{ selected.size }}</span>
+      <!-- 批量操作入口：勾选相关项（缓存头见 CONTEXT，媒体混淆见仓库级 ADR 0011）+ 全量项 -->
+      <el-dropdown trigger="click" @command="onBatchCommand">
+        <el-button>
+          {{ selected.size ? `批量操作（${selected.size}）` : "批量操作" }}
+          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="set" :disabled="!selected.size || batchRunning">设置缓存头</el-dropdown-item>
+            <el-dropdown-item command="query" :disabled="!selected.size || batchRunning">查看缓存头</el-dropdown-item>
+            <el-dropdown-item command="encrypt" :disabled="!selected.size || batchRunning">批量加密</el-dropdown-item>
+            <el-dropdown-item command="encryptAll" :disabled="batchRunning" divided>加密全部未混淆</el-dropdown-item>
+            <el-dropdown-item command="export" :disabled="batchRunning" divided>导出 CDN 刷新列表</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <!-- 视图偏好持久化在 localStorage，默认网格 -->
       <el-radio-group v-model="viewMode" class="view-toggle">
         <el-radio-button value="grid">
@@ -119,7 +118,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Grid, Tickets } from "@element-plus/icons-vue";
+import { ArrowDown, Grid, Tickets } from "@element-plus/icons-vue";
 import type { UploadFile } from "element-plus";
 import { api } from "../api";
 import { dirUrl, objectUrl } from "../media";
@@ -332,6 +331,15 @@ async function retryFailures(): Promise<void> {
   else await runQuery(keys);
 }
 
+// 下拉菜单命令分派：与旧按钮的一对一处理函数完全对应
+function onBatchCommand(cmd: string): void {
+  if (cmd === "set") setDialogVisible.value = true;
+  else if (cmd === "query") void runQuery();
+  else if (cmd === "encrypt") void runEncrypt();
+  else if (cmd === "encryptAll") void encryptAll();
+  else if (cmd === "export") void exportRefreshList();
+}
+
 async function uploadChange(file: UploadFile): Promise<void> {
   const f = file.raw;
   if (!f) return;
@@ -370,11 +378,6 @@ async function remove(row: OssObject): Promise<void> {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
-}
-.sel-count {
-  align-self: center;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
 }
 .batch-progress {
   margin-bottom: 12px;

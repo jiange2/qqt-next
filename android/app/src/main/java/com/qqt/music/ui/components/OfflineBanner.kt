@@ -19,21 +19,24 @@ import com.qqt.music.ui.theme.BrandOrangeSoft
 import com.qqt.music.ui.theme.InkPrimary
 
 /**
- * 离线横幅（ADR 0012）：断网时在内容区顶部展开常显，告知当前展示的是响应快照的
- * 历史内容；联网后自动收起。文案不出现「缓存/快照」字样（UI 标签与域内术语分离）。
+ * 离线/故障横幅（ADR 0012、0017）：断网或服务器不可达时在内容区顶部展开常显，
+ * 告知当前展示的是响应快照的历史内容；恢复后自动收起。两因并存显示断网文案
+ * （硬信号优先）；文案不出现「缓存/快照」字样（UI 标签与域内术语分离）。
  */
 @Composable
 fun OfflineBanner(modifier: Modifier = Modifier) {
     val offline by NetworkMonitor.offline.collectAsState()
+    val serverUnreachable by NetworkMonitor.serverUnreachable.collectAsState()
     AnimatedVisibility(
-        visible = offline,
+        visible = offline || serverUnreachable,
         enter = expandVertically(),
         exit = shrinkVertically(),
         modifier = modifier,
     ) {
         Surface(color = BrandOrangeSoft) {
             Text(
-                text = "当前离线，展示最近一次内容",
+                text = if (offline) "当前离线，展示最近一次内容"
+                else "服务暂不可用，展示最近一次内容",
                 style = MaterialTheme.typography.bodySmall,
                 color = InkPrimary,
                 textAlign = TextAlign.Center,

@@ -190,8 +190,8 @@ function openSongs(row: Row) {
 
 onMounted(async () => {
   const [artists, categories] = await Promise.all([
-    api.get("/admin/artists", { params: { size: 200 } }),
-    api.get("/admin/categories", { params: { size: 200 } }),
+    api.get("/admin/artists", { params: { size: 1000 } }),
+    api.get("/admin/categories", { params: { size: 1000 } }),
   ]);
   artistOptions.value = artists.data.items;
   categoryOptions.value = categories.data.items;

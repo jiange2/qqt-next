@@ -57,6 +57,9 @@ model Setting {
   cancelUpdateStatus    String  @map("cancel_update_status") @default("false") @db.VarChar(10)
   songDownload          String  @map("song_download") @default("true") @db.VarChar(255)
   privacyMode           String  @default("false") @map("privacy_mode") @db.VarChar(10)
+  // 下载二维码令牌与到期时刻（仓库级 ADR 0013）：当前有效令牌唯一，重掷即旧码失效
+  downloadQrToken       String? @map("download_qr_token") @db.VarChar(64)
+  downloadQrExpiresAt   DateTime? @map("download_qr_expires_at")
 
   @@map("settings")
 }

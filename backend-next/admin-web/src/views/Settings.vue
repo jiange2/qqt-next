@@ -63,6 +63,53 @@
         </el-form>
       </el-tab-pane>
 
+      <el-tab-pane label="下载二维码">
+        <el-alert
+          v-if="!qr.token"
+          type="info"
+          :closable="false"
+          show-icon
+          title="尚未生成下载二维码"
+          description="生成后，扫码走令牌入口下载；到期或重新生成后，已发出的二维码立即失效。下载文件仍为「版本更新」里的跳转地址。"
+        />
+        <template v-else>
+          <el-alert
+            v-if="qrExpired"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="下载二维码已过期"
+            :description="`到期时间 ${fmtTime(qr.expiresAt)}，已发出的二维码链接全部失效，请重新生成。`"
+          />
+          <div v-else class="qr-card">
+            <img v-if="qrDataUrl" :src="qrDataUrl" class="qr-img" alt="下载二维码" />
+            <div class="qr-side">
+              <el-tag type="success" size="small">有效</el-tag>
+              <p>到期时间：{{ fmtTime(qr.expiresAt) }}</p>
+              <p>剩余 {{ remaining }}</p>
+              <p class="qr-url">{{ qr.url }}</p>
+              <el-button :disabled="!qrDataUrl" @click="saveQrImage">保存二维码图片</el-button>
+            </div>
+          </div>
+        </template>
+
+        <el-form label-width="140px" style="margin-top: 16px">
+          <el-form-item label="有效期至">
+            <el-date-picker v-model="qrExpires" type="datetime" placeholder="选择到期时间" style="width: 220px" />
+            <el-button-group style="margin-left: 8px">
+              <el-button @click="presetQrExpiry(1)">1 天后</el-button>
+              <el-button @click="presetQrExpiry(7)">7 天后</el-button>
+              <el-button @click="presetQrExpiry(30)">30 天后</el-button>
+            </el-button-group>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :disabled="!qrExpires" :loading="qrSaving" @click="generateQr">
+              {{ qr.token && !qrExpired ? "重新生成二维码" : "生成二维码" }}
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-tab-pane>
+
       <el-tab-pane label="API / OneSignal">
         <el-form label-width="140px">
           <!-- 分类排序/分类歌曲排序两个死配置已从表单移除（backend-next ADR 0007/0009），settings 表列保留 -->
@@ -89,8 +136,9 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from "vue";
-import { ElMessage } from "element-plus";
+import { computed, onUnmounted, reactive, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import QRCode from "qrcode";
 import { api } from "../api";
 
 type Settings = {
@@ -148,5 +196,123 @@ async function save() {
   }
 }
 
+// ---------------- 下载二维码（独立于设置表单，单独读写 /admin/download-qr）----------------
+
+type QrState = { token: string; url: string; expiresAt: string | null; expired: boolean };
+
+const qr = reactive<QrState>({ token: "", url: "", expiresAt: null, expired: true });
+const qrExpires = ref<Date | null>(null);
+const qrSaving = ref(false);
+const qrDataUrl = ref("");
+const now = ref(Date.now());
+
+const qrExpired = computed(
+  () => !qr.expiresAt || new Date(qr.expiresAt).getTime() <= now.value,
+);
+
+const remaining = computed(() => {
+  if (qrExpired.value || !qr.expiresAt) return "";
+  const ms = new Date(qr.expiresAt).getTime() - now.value;
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (d > 0) return `${d} 天 ${h} 小时`;
+  if (h > 0) return `${h} 小时 ${m} 分`;
+  return `${Math.max(1, m)} 分`;
+});
+
+function fmtTime(v: string | null): string {
+  return v ? new Date(v).toLocaleString("zh-CN", { hour12: false }) : "—";
+}
+
+function presetQrExpiry(days: number): void {
+  qrExpires.value = new Date(Date.now() + days * 86400000);
+}
+
+async function loadQr() {
+  const { data } = await api.get<QrState>("/admin/download-qr");
+  Object.assign(qr, data);
+}
+
+async function generateQr() {
+  if (!qrExpires.value) return;
+  if (qr.token && !qrExpired.value) {
+    try {
+      await ElMessageBox.confirm(
+        "重新生成后，已发出的二维码立即失效（旧码扫码 404），确定继续？",
+        "重新生成二维码",
+        { type: "warning" },
+      );
+    } catch {
+      return;
+    }
+  }
+  qrSaving.value = true;
+  try {
+    const { data } = await api.put<QrState>("/admin/download-qr", {
+      expiresAt: qrExpires.value.getTime(),
+    });
+    Object.assign(qr, data);
+    ElMessage.success("二维码已生成");
+  } finally {
+    qrSaving.value = false;
+  }
+}
+
+function saveQrImage(): void {
+  if (!qrDataUrl.value) return;
+  const a = document.createElement("a");
+  a.href = qrDataUrl.value;
+  a.download = "倾轻听-下载二维码.png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+watch(
+  () => qr.url,
+  (url) => {
+    if (!url) {
+      qrDataUrl.value = "";
+      return;
+    }
+    QRCode.toDataURL(url, { width: 360, margin: 1 })
+      .then((dataUrl) => {
+        qrDataUrl.value = dataUrl;
+      })
+      .catch(() => {
+        qrDataUrl.value = "";
+      });
+  },
+  { immediate: true },
+);
+
+const nowTimer = setInterval(() => {
+  now.value = Date.now();
+}, 30000);
+onUnmounted(() => clearInterval(nowTimer));
+
 load();
+loadQr();
 </script>
+
+<style scoped>
+.qr-card {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+}
+.qr-img { width: 180px; height: 180px; display: block; }
+.qr-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #606266;
+}
+.qr-url { word-break: break-all; color: #909399; font-size: 12px; }
+</style>

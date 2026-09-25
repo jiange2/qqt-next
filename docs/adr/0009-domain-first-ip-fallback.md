@@ -1,5 +1,7 @@
 # API 入口域名优先、IP 回退兜底
 
+> 修订：命中快照的请求曾因快照拦截器位于 failover 内层而跳过回退重试（[ADR 0012](../../android/docs/adr/0012-offline-response-snapshot.md)）；[ADR 0017](../../android/docs/adr/0017-server-unreachable-offline.md) 调换顺序后，本文档口径与代码一致。
+
 后端 API 入口从 IP（`http://101.132.159.145:8001/`）迁移到域名 `http://qqt.yunshangzhiai7.top:8001/`。为对冲域名侧故障（DNS 解析、反代），客户端保留原 IP 作为回退：`ApiClient` 的 OkHttp 应用拦截器在主域请求遭遇连接层失败（DNS 解析失败、连接被拒/主机不可达、连接超时）时，把请求 host/port 整体改写为回退地址重试一次；切换进程内粘性——本次运行期后续主域请求直接走回退，冷启动恢复域名优先。仅覆盖 API 请求与主域歌词文本下载；歌曲/封面是后端下发的绝对 URL（CDN 域、旧 prod IP），不参与切换。主用与回退均带端口 8001，端口契约延续 ADR 0004（换端口 = 发版）。
 
 ## Considered Options

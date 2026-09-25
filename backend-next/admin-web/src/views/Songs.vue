@@ -10,19 +10,28 @@
         <el-option :value="0" label="未归专辑" />
         <el-option v-for="a in albumOptions" :key="a.id" :value="a.id" :label="a.name" />
       </el-select>
+      <el-select v-model="durationMissing" placeholder="全部时长" clearable style="width: 140px">
+        <el-option :value="1" label="仅看时长缺失" />
+      </el-select>
       <el-button type="primary" @click="search">搜索</el-button>
       <el-button type="success" @click="openCreate">新建歌曲</el-button>
-      <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchCover">批量绑定封面（{{ selected.length }}）</el-button>
-      <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchCategory">批量修改分类（{{ selected.length }}）</el-button>
-      <el-button type="primary" plain :disabled="selected.length === 0" @click="openBatchAlbum">批量修改专辑（{{ selected.length }}）</el-button>
-      <el-button type="warning" plain :disabled="selected.length === 0" @click="batchSetPrivate(true)">批量设为隐私（{{ selected.length }}）</el-button>
-      <el-button type="success" plain :disabled="selected.length === 0" @click="batchSetPrivate(false)">批量取消隐私（{{ selected.length }}）</el-button>
-      <el-button
-        type="warning"
-        :disabled="selectedExternal.length === 0"
-        :loading="transferring"
-        @click="transferSelected"
-      >转入 OSS（{{ selectedExternal.length }}）</el-button>
+      <el-dropdown trigger="click" @command="onBatchCommand">
+        <el-button>
+          {{ selected.length ? `批量操作（${selected.length}）` : "批量操作" }}
+          <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        </el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="cover" :disabled="selected.length === 0">绑定封面</el-dropdown-item>
+            <el-dropdown-item command="category" :disabled="selected.length === 0">修改分类</el-dropdown-item>
+            <el-dropdown-item command="album" :disabled="selected.length === 0">修改专辑</el-dropdown-item>
+            <el-dropdown-item command="private" :disabled="selected.length === 0">设为隐私</el-dropdown-item>
+            <el-dropdown-item command="public" :disabled="selected.length === 0">取消隐私</el-dropdown-item>
+            <el-dropdown-item command="transfer" :disabled="selectedExternal.length === 0" divided>转入 OSS</el-dropdown-item>
+            <el-dropdown-item command="fixDuration" :disabled="!selectedHasMissing || fixRunning">修复时长</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
 
     <el-table :data="items" v-loading="loading" stripe @selection-change="onSelectionChange">
@@ -34,6 +43,9 @@
         </template>
       </el-table-column>
       <el-table-column prop="title" label="歌名" min-width="140" />
+      <el-table-column label="时长" width="80">
+        <template #default="{ row }">{{ fmtDuration(row.duration) }}</template>
+      </el-table-column>
       <el-table-column prop="type" label="类型" width="90" />
       <el-table-column label="分类" width="120">
         <template #default="{ row }">{{ row.category?.name ?? "未分类" }}</template>
@@ -73,6 +85,21 @@
       <p>正在下载并上传 {{ transferTotal }} 首歌曲，请勿关闭…</p>
       <el-progress :percentage="transferPct" />
       <p v-if="transferFail.length" class="hint">失败 {{ transferFail.length }} 首：{{ transferFail.map((s) => s.title).join("、") }}（保持外链，可重试）</p>
+    </el-dialog>
+
+    <el-dialog v-model="fixDialog" title="修复时长" width="420px" :close-on-click-modal="false" @close="fixAbort = true">
+      <template v-if="fixRunning">
+        <p>正在探测 {{ fixTotal }} 首歌曲的时长，请勿关闭…</p>
+        <el-progress :percentage="fixPct" />
+      </template>
+      <template v-else>
+        <p>修复 {{ fixOkCount }} 首，跳过 {{ fixSkippedCount }} 首（已有值），失败 {{ fixFail.length }} 首。</p>
+        <p v-if="fixFail.length" class="hint">{{ fixFail.map((f) => `${f.title}（${f.reason}）`).join("、") }}</p>
+      </template>
+      <template #footer>
+        <el-button v-if="!fixRunning && fixFail.length" @click="retryFixFailed">重试失败项</el-button>
+        <el-button @click="fixDialog = false">关闭</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="batchCoverDialog" title="批量绑定封面" width="480px" :close-on-click-modal="false">
@@ -171,8 +198,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessageBox, ElMessage } from "element-plus";
+import { ArrowDown } from "@element-plus/icons-vue";
 import { api, formBody, saveForm } from "../api";
 import { usePagedList } from "../useList";
 import AppPagination from "../components/AppPagination.vue";
@@ -182,7 +210,7 @@ import UploadField from "../components/UploadField.vue";
 
 type Row = {
   id: number; title: string; type: string; thumbnail: string; description: string;
-  audioUrl: string; lrcUrl: string | null; status: boolean; totalViews: number;
+  audioUrl: string; lrcUrl: string | null; status: boolean; totalViews: number; duration: number;
   categoryId: number | null; albumId: number | null; lrcText: string | null;
   category?: { id: number; name: string } | null;
   album?: { id: number; name: string } | null;
@@ -194,12 +222,14 @@ type Opt = { id: number; name: string };
 const { items, total, page, size, keyword, loading, load } = usePagedList<Row>("/admin/songs", () => ({
   category_id: categoryId.value,
   album_id: albumId.value,
+  duration_missing: durationMissing.value,
 }));
 const categoryOptions = ref<Opt[]>([]);
 const albumOptions = ref<Opt[]>([]);
 const artistOptions = ref<Opt[]>([]);
 const categoryId = ref<number | undefined>();
 const albumId = ref<number | undefined>();
+const durationMissing = ref<number | undefined>();
 
 const dialog = ref(false);
 const saving = ref(false);
@@ -372,6 +402,82 @@ async function transferSelected(): Promise<void> {
   await load();
 }
 
+// ---- 修复时长（仓库级 ADR 0008 修订）：前端逐首驱动探测，完成后重载列表
+type ProbeTarget = { id: number; title: string };
+const selectedHasMissing = computed(() => selected.value.some((r) => !r.duration));
+const fixDialog = ref(false);
+const fixRunning = ref(false);
+const fixAbort = ref(false);
+const fixTotal = ref(0);
+const fixDone = ref(0);
+const fixPct = ref(0);
+const fixOkCount = ref(0);
+const fixSkippedCount = ref(0);
+const fixFail = ref<{ id: number; title: string; reason: string }[]>([]);
+
+function fmtDuration(seconds: number): string {
+  return seconds > 0 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : "—";
+}
+
+async function probeOne(t: ProbeTarget): Promise<{ status: string; reason?: string }> {
+  try {
+    const { data } = await api.post(`/admin/songs/${t.id}/probe-duration`);
+    return data;
+  } catch (err) {
+    const e = err as { response?: { data?: { error?: string } } };
+    return { status: "failed", reason: e.response?.data?.error ?? "请求失败" };
+  }
+}
+
+async function runProbe(targets: ProbeTarget[]): Promise<void> {
+  fixDialog.value = true;
+  fixRunning.value = true;
+  fixAbort.value = false;
+  fixTotal.value = targets.length;
+  fixDone.value = 0;
+  fixPct.value = 0;
+  fixOkCount.value = 0;
+  fixSkippedCount.value = 0;
+  fixFail.value = [];
+  for (const t of targets) {
+    if (fixAbort.value) break;
+    const r = await probeOne(t);
+    if (r.status === "repaired") fixOkCount.value++;
+    else if (r.status === "skipped") fixSkippedCount.value++;
+    else fixFail.value.push({ id: t.id, title: t.title, reason: r.reason ?? "未知原因" });
+    fixDone.value++;
+    fixPct.value = Math.round((fixDone.value / targets.length) * 100);
+  }
+  const aborted = fixAbort.value;
+  fixRunning.value = false;
+  await load();
+  if (aborted) return; // 弹窗被关闭即中断，不再提示
+  if (fixFail.value.length === 0) {
+    fixDialog.value = false;
+    ElMessage.success(`已修复 ${fixOkCount.value} 首，跳过 ${fixSkippedCount.value} 首（已有值）`);
+  }
+}
+
+function fixSelected(): void {
+  if (selected.value.length) void runProbe(selected.value.map((r) => ({ id: r.id, title: r.title })));
+}
+
+function retryFixFailed(): void {
+  const targets = fixFail.value.map((f) => ({ id: f.id, title: f.title }));
+  if (targets.length) void runProbe(targets);
+}
+
+// 下拉菜单命令分派：与旧按钮的一对一处理函数完全对应
+function onBatchCommand(cmd: string): void {
+  if (cmd === "cover") openBatchCover();
+  else if (cmd === "category") openBatchCategory();
+  else if (cmd === "album") openBatchAlbum();
+  else if (cmd === "private") void batchSetPrivate(true);
+  else if (cmd === "public") void batchSetPrivate(false);
+  else if (cmd === "transfer") void transferSelected();
+  else if (cmd === "fixDuration") fixSelected();
+}
+
 function search() {
   page.value = 1;
   void load();
@@ -432,9 +538,9 @@ async function remove(row: Row) {
 
 onMounted(async () => {
   const [cats, albums, artists] = await Promise.all([
-    api.get("/admin/categories", { params: { size: 200 } }),
-    api.get("/admin/albums", { params: { size: 200 } }),
-    api.get("/admin/artists", { params: { size: 200 } }),
+    api.get("/admin/categories", { params: { size: 1000 } }),
+    api.get("/admin/albums", { params: { size: 1000 } }),
+    api.get("/admin/artists", { params: { size: 1000 } }),
   ]);
   categoryOptions.value = cats.data.items;
   albumOptions.value = albums.data.items;

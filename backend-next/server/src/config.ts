@@ -28,6 +28,9 @@ export const config = {
   },
   // 歌词文件内容加密口令（docs/adr/0010）：任意字符串，内部 sha256 派生 AES-256 key/IV；fail fast 同 OSS_NAME_SECRET
   lyricsContentSecret: required("LRC_CONTENT_SECRET"),
+  // 下载二维码对外基地址（仓库级 ADR 0013）：扫码落点页所在入口，用服务器 IP 明文直出（80，与安装包同协议，不经域名 80→HTTPS 跳转）
+  // 去尾斜杠：拼接处为 `${downloadBase}/download/q/...`，避免出现 //download 导致反代前缀匹配不上
+  downloadBase: (process.env.DOWNLOAD_PUBLIC_BASE || "http://101.132.159.145").replace(/\/+$/, ""),
   jwtExpiresIn: "7d",
   adminCookieName: "admin_token",
 } as const;

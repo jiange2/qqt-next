@@ -93,7 +93,7 @@ fun DrawerContent(
                 }
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text("倾轻听2", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Text("倾轻听", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
                     Text("播放你收藏的歌曲", fontSize = 12.sp, color = Color.White.copy(alpha = 0.85f))
                 }
             }
