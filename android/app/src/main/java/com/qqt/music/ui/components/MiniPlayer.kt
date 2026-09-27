@@ -1,6 +1,8 @@
 package com.qqt.music.ui.components
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -37,6 +39,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 顶部嵌入实时进度细条（4 物理像素），播放键为品牌渐变圆钮；
  * 白色底延伸至屏幕底部，内容自动抬升到系统手势区之上。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MiniPlayer(
     playerViewModel: PlayerViewModel,
@@ -110,6 +113,8 @@ fun MiniPlayer(
                             color = InkPrimary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            // 歌名滚动：超宽即无限循环；平台默认 30dp/s 偏慢故提速
+                            modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 80.dp),
                         )
                         Text(
                             text = currentSong!!.artist.ifBlank { "佚名" },

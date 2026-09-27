@@ -20,6 +20,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalOverscrollConfiguration
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -472,6 +473,8 @@ fun PlayerScreen(
                         color = PlayerNavy,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        // 歌名滚动：超宽即无限循环；平台默认 30dp/s 偏慢故提速
+                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 80.dp),
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
