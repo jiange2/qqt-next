@@ -17,6 +17,20 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+/** 解 JWT payload 取用户名，仅用于顶栏展示（不校验签名，签名由服务端负责） */
+export function getUsername(): string {
+  try {
+    const part = getToken().split(".")[1] ?? "";
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="))) as {
+      username?: string;
+    };
+    return payload.username ?? "";
+  } catch {
+    return "";
+  }
+}
+
 api.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
