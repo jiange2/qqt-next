@@ -3,7 +3,7 @@ package com.qqt.music.ui.screens.favorites
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
@@ -104,8 +104,8 @@ fun FavoritesScreen(
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
-            items(songs) { song ->
-                SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.FAVOURITES) })
+            itemsIndexed(songs) { index, song ->
+                SongListItem(index = index + 1, song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.FAVOURITES) })
             }
         }
     }

@@ -166,8 +166,9 @@ fun SearchScreen(
                         item { SectionTitle("歌曲") }
                         item {
                             SectionCard {
-                                visibleSongs.forEach { song ->
+                                visibleSongs.forEachIndexed { index, song ->
                                     SongListItem(
+                                        index = index + 1,
                                         song = song,
                                         playerViewModel = playerViewModel,
                                         // 播放队列取整页歌曲而非截断后的 3 条，上下曲仍在完整结果里

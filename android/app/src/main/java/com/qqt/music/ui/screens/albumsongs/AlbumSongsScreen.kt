@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.BrokenImage
@@ -61,8 +61,8 @@ fun AlbumSongsScreen(
         modifier = Modifier.fillMaxSize().background(Color.White),
         contentPadding = PaddingValues(vertical = 6.dp),
     ) {
-        items(songs) { song ->
-            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.album(album.id)) })
+        itemsIndexed(songs) { index, song ->
+            SongListItem(index = index + 1, song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.album(album.id)) })
         }
     }
 }

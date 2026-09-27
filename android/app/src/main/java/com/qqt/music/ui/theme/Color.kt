@@ -42,6 +42,8 @@ val StarGold = Color(0xFFFFB93E)
 val DownloadedGreen = Color(0xFF4CAF50)
 /** 缓存染色：整曲本地可得（被动缓存整曲命中或已下载）的琥珀金（ADR 0013），进度条整槽以 30% 透明度浅金呈现 */
 val CachedGold = Color(0xFFE6A23C)
+/** 危险操作：行内左滑露出的删除 / 取消按钮底色（ADR 0018） */
+val DangerRed = Color(0xFFE5484D)
 
 // ── 全屏播放器：亮色氛围（背景为封面主色亮色化渐变，提取中/失败回退 WarmBackground 暖白）──
 /** 深藏青：标题 / 播放键 / 上下曲 */

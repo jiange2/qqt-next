@@ -3,7 +3,7 @@ package com.qqt.music.ui.screens.latest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -48,8 +48,8 @@ fun LatestScreen(
         modifier = Modifier.fillMaxSize().background(Color.White),
         contentPadding = PaddingValues(vertical = 6.dp),
     ) {
-        items(songs) { song ->
-            SongListItem(song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.DEFAULT) })
+        itemsIndexed(songs) { index, song ->
+            SongListItem(index = index + 1, song = song, playerViewModel = playerViewModel, onClick = { playerViewModel.playSong(song, songs, QueueSource.DEFAULT) })
         }
         if (isLoading) {
             item {

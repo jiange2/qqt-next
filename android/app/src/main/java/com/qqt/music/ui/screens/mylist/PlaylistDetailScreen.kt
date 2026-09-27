@@ -4,18 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.QueueMusic
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,10 +28,11 @@ import com.qqt.music.data.local.LocalPlaylistStore
 import com.qqt.music.data.repository.MusicRepository
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
+import com.qqt.music.ui.components.RowSwipeAction
+import com.qqt.music.ui.components.RowSwipeRevealState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.navigation.MyListNav
 import com.qqt.music.ui.theme.BrandOrange
-import com.qqt.music.ui.theme.InkFaint
 import com.qqt.music.ui.theme.WarmBackground
 import com.qqt.music.viewmodel.PlayerViewModel
 import kotlinx.coroutines.async
@@ -94,6 +94,12 @@ fun PlaylistDetailScreen(
     val songs by viewModel.songs.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val loadFailed by viewModel.loadFailed.collectAsState()
+    val swipeState = remember { RowSwipeRevealState() }
+    val listState = rememberLazyListState()
+    // 列表滚动即收起左滑展开态，避免行停在半开位置
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) swipeState.close()
+    }
 
     when {
         isLoading -> Box(
@@ -116,20 +122,18 @@ fun PlaylistDetailScreen(
             subtitle = "在播放器点「加入歌单」把喜欢的歌放进来",
         )
         else -> LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize().background(Color.White),
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
-            items(songs, key = { it.id }) { song ->
+            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                 SongListItem(
+                    index = index + 1,
                     song = song,
                     playerViewModel = playerViewModel,
                     // 点歌以整单替换播放队列（点播心智）；歌单来源按 id 打标（ADR 0015）
                     onClick = { playlist?.id?.let { pid -> playerViewModel.playSong(song, songs, QueueSource.localPlaylist(pid)) } },
-                    trailing = {
-                        IconButton(onClick = { viewModel.removeSong(song) }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Outlined.Close, contentDescription = "移出歌单", tint = InkFaint, modifier = Modifier.size(20.dp))
-                        }
-                    },
+                    swipe = RowSwipeAction(swipeState, "移出歌单") { viewModel.removeSong(song) },
                 )
             }
         }

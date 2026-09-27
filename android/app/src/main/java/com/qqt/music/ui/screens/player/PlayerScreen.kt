@@ -32,6 +32,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -66,6 +67,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -89,6 +91,8 @@ import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.ui.components.NewPlaylistDialog
 import com.qqt.music.ui.components.PlayerIcons
+import com.qqt.music.ui.components.SongThumbnail
+import com.qqt.music.ui.components.rememberFullyCached
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.CachedGold
 import com.qqt.music.ui.theme.DownloadedGreen
@@ -970,12 +974,23 @@ fun PlayerScreen(
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
                         )
                     } else {
+                        val listState = rememberLazyListState()
+                        // 打开浮层即定位到当前曲（队列较长时省去手动翻找）；只在开浮层时对齐一次，
+                        // 展开期间切歌不打扰用户浏览
+                        LaunchedEffect(Unit) {
+                            val currentIndex = queue.indexOfFirst { it.id == currentSong?.id }
+                            if (currentIndex > 0) listState.scrollToItem(currentIndex)
+                        }
                         // 队列可能来自整张分类歌曲列表：定高 LazyColumn 滚动，不撑爆浮层；
                         // 关闭系统过滚动光效（列表拖到底的蓝紫色发光是系统默认色，与本页配色无关）
                         CompositionLocalProvider(LocalOverscrollConfiguration provides null) {
-                            LazyColumn(modifier = Modifier.heightIn(max = 460.dp)) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.heightIn(max = 460.dp),
+                            ) {
                                 itemsIndexed(queue) { index, song ->
                                     val isCurrent = song.id == currentSong?.id
+                                    val fullyCached = rememberFullyCached(song)
                                     // 行按压反馈用播放器统一的线性变淡，不用默认波纹
                                     val interactionSource = remember { MutableInteractionSource() }
                                     val pressAlpha = rememberPressDimAlpha(interactionSource)
@@ -991,15 +1006,20 @@ fun PlayerScreen(
                                             .padding(horizontal = 12.dp, vertical = 14.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        // 行首队列序号：固宽左对齐；当前曲橙色
+                                        // 行首队列序号：固宽（宽度按三位数留量）内水平居中，1/2/3 位数的数字中心对齐同一竖线；当前曲橙色，整曲本地可得金色
                                         Text(
                                             text = "${index + 1}",
                                             fontSize = 14.sp,
                                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                            color = if (isCurrent) BrandOrange else PlayerIconGray,
-                                            modifier = Modifier.width(32.dp),
+                                            textAlign = TextAlign.Center,
+                                            color = when {
+                                                isCurrent -> BrandOrange
+                                                fullyCached -> CachedGold
+                                                else -> PlayerIconGray
+                                            },
+                                            modifier = Modifier.width(26.dp),
                                         )
-                                        Spacer(Modifier.width(12.dp))
+                                        Spacer(Modifier.width(8.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = song.title,
@@ -1017,6 +1037,13 @@ fun PlayerScreen(
                                                 overflow = TextOverflow.Ellipsis,
                                             )
                                         }
+                                        Spacer(Modifier.width(12.dp))
+                                        // 行尾封面：与外面所有歌曲列表行同款（当前曲叠播放态蒙层）
+                                        SongThumbnail(
+                                            song = song,
+                                            isCurrent = isCurrent,
+                                            isPlaying = isPlaying,
+                                        )
                                     }
                                 }
                             }
