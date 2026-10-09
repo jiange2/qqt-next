@@ -19,9 +19,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqt.music.data.api.model.Song
@@ -54,13 +56,15 @@ fun SongListItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 9.dp),
+                // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
+                .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 行首列表序号：固宽（宽度按三位数留量）内水平居中，1/2/3 位数的数字中心对齐同一竖线；当前曲橙色，整曲本地可得金色
+            // 行首列表序号：固定 26dp 格内水平居中，1~4 位数中心对齐同一竖线；字号按位数算（见 songIndexFontSize），
+            // 位数多或系统字体放大时自动缩小以免换行/挤出；当前曲橙色，整曲本地可得金色
             Text(
                 text = "$index",
-                fontSize = 14.sp,
+                fontSize = songIndexFontSize("$index".length),
                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                 textAlign = TextAlign.Center,
                 color = when {
@@ -68,6 +72,8 @@ fun SongListItem(
                     fullyCached -> CachedGold
                     else -> InkSecondary
                 },
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.width(26.dp),
             )
             Spacer(Modifier.width(8.dp))
@@ -98,7 +104,7 @@ fun SongListItem(
                     )
                     Spacer(Modifier.width(3.dp))
                     Text(
-                        text = formatCount(song.totalViews),
+                        text = formatPlayCount(song.totalViews),
                         fontSize = 11.sp,
                         color = InkSecondary,
                     )
@@ -119,6 +125,18 @@ fun SongListItem(
             SongThumbnail(song = song, isCurrent = isCurrent, isPlaying = isPlaying)
         }
     }
+}
+
+/**
+ * 行首序号字号：设计 18sp。按序号位数与固定 26dp 格宽算出视觉尺寸上限（1~2 位为 18dp、3 位约 14dp、
+ * 更多位继续缩小），再除以系统 fontScale 抵消字体放大，使数字视觉尺寸恒定、永不换行。
+ * 供歌曲列表行 / 播放队列浮层行 / 下载中条目共用。
+ */
+@Composable
+fun songIndexFontSize(digits: Int): TextUnit {
+    val fontScale = LocalDensity.current.fontScale
+    val designDp = minOf(18f, 26f / (digits * 0.62f))
+    return (designDp / fontScale).sp
 }
 
 private fun formatCount(raw: String): String {

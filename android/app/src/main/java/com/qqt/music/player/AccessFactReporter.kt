@@ -8,6 +8,7 @@ import androidx.media3.datasource.cache.ContentMetadata
 import com.qqt.music.data.api.ApiClient
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.data.local.PrefsManager
+import com.qqt.music.download.DownloadManager
 import com.qqt.music.update.AppUpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,7 @@ object AccessFactReporter {
 
     /**
      * 上报一条访问事实（每次装载播放一条，由 PlayerViewModel 的 onMediaItemTransition 触发）。
-     * 存储快照随事实携带；缓存预算尚未初始化时省略，服务端按可空处理。
+     * 存储快照随事实携带：占用 = 被动缓存 + 下载目录字节数；缓存预算尚未初始化时省略，服务端按可空处理。
      */
     fun reportFact(context: Context, song: Song, playbackUri: Uri) {
         val cache = AudioCache.get(context)
@@ -54,7 +55,7 @@ object AccessFactReporter {
         val budget = AudioCache.cacheBudget()
         if (budget >= 0) {
             params["allocated_storage"] = budget
-            params["used_storage"] = cache.cacheSpace
+            params["used_storage"] = cache.cacheSpace + DownloadManager.usedBytes(context)
         }
         scope.launch {
             try {

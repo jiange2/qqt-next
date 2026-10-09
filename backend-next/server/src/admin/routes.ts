@@ -1670,17 +1670,28 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // ============ 访问统计（仓库级 ADR 0008，条数口径）============
 
-  // 当日访问分解：装载次数 / 命中 / 未命中 / 活跃设备数 + 命中率 + 即时在线设备数。
+  // 当日访问分解：装载次数 / 命中 / 未命中 / 活跃设备数 + 命中率 + 即时在线设备数 + 全量设备占用总和。
   // online 与「活跃设备」口径不同：非当日窗口，为「在线状态」的即时推导（同采样器口径，见 services/stats.ts）
+  // storageTotal 同为非当日窗口：每设备最新一条事实的占用快照（被动缓存 + 下载目录）求和，全量设备含离线
   // 日界按北京自然日（实现与理由见工具区 bjDayStart）
   app.get("/admin/stats/summary", { preHandler: requireAdmin }, async (_req, reply) => {
     const startOfDay = bjDayStart(Date.now());
     const where = { accessedAt: { gte: startOfDay } };
-    const [total, hits, devices, online] = await Promise.all([
+    const [total, hits, devices, online, storageRows] = await Promise.all([
       prisma.accessFact.count({ where }),
       prisma.accessFact.count({ where: { ...where, cacheHit: true } }),
       prisma.accessFact.groupBy({ by: ["deviceId"], where, _count: { _all: true } }),
       computeOnlineCount(),
+      // 「最新一条」用每组 MAX(id) 回连（口径同设备快照端点）；SUM 为 DECIMAL、空集为 NULL，出口 Number 化
+      prisma.$queryRaw<{ total: number | string | null }[]>`
+        SELECT SUM(IFNULL(f.used_storage, 0)) AS total
+        FROM access_facts f
+        INNER JOIN (
+          SELECT MAX(id) AS max_id
+          FROM access_facts
+          GROUP BY device_id
+        ) s ON s.max_id = f.id
+      `,
     ]);
     reply.send({
       total,
@@ -1689,6 +1700,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       devices: devices.length,
       hitRate: total > 0 ? hits / total : 0,
       online,
+      storageTotal: Number(storageRows[0]?.total ?? 0),
     });
   });
 

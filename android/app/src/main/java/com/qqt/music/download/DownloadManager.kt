@@ -134,6 +134,12 @@ object DownloadManager {
         return if (isDownloaded(songId) && file.exists()) Uri.fromFile(file) else null
     }
 
+    /** 下载目录当前占用字节数（含下载中的 `.part` 半文件）；访问事实的占用快照 = 被动缓存 + 本值 */
+    fun usedBytes(context: Context): Long {
+        val dir = File(context.filesDir, DIR_NAME)
+        return dir.listFiles()?.sumOf { it.length() } ?: 0L
+    }
+
     // ========== 下载核心 ==========
 
     private suspend fun runDownload(song: Song) {

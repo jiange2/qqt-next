@@ -28,6 +28,7 @@ import com.qqt.music.ui.components.RowSwipeRevealState
 import com.qqt.music.ui.components.SongListItem
 import com.qqt.music.ui.components.SongThumbnail
 import com.qqt.music.ui.components.SwipeRevealRow
+import com.qqt.music.ui.components.songIndexFontSize
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.InkFaint
 import com.qqt.music.ui.theme.InkPrimary
@@ -114,14 +115,17 @@ private fun DownloadingItem(
         swipe = RowSwipeAction(swipeState, "取消", onCancel),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
+            // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
+            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "$index",
-                fontSize = 14.sp,
+                fontSize = songIndexFontSize("$index".length),
                 textAlign = TextAlign.Center,
                 color = InkSecondary,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.width(26.dp),
             )
             Spacer(Modifier.width(8.dp))

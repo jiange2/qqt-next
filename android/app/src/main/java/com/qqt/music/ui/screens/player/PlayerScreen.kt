@@ -93,6 +93,7 @@ import com.qqt.music.ui.components.NewPlaylistDialog
 import com.qqt.music.ui.components.PlayerIcons
 import com.qqt.music.ui.components.SongThumbnail
 import com.qqt.music.ui.components.rememberFullyCached
+import com.qqt.music.ui.components.songIndexFontSize
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.CachedGold
 import com.qqt.music.ui.theme.DownloadedGreen
@@ -477,8 +478,12 @@ fun PlayerScreen(
                         color = PlayerNavy,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        // 歌名滚动：超宽即无限循环；平台默认 30dp/s 偏慢故提速
-                        modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 80.dp),
+                        // 歌名滚动：超宽即无限循环；平台默认 30dp/s 偏慢故提速。歌词页可见时停滚（静态截断），免干扰读词
+                        modifier = if (lyricsPageVisible) {
+                            Modifier
+                        } else {
+                            Modifier.basicMarquee(iterations = Int.MAX_VALUE, velocity = 80.dp)
+                        },
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -1003,13 +1008,14 @@ fun PlayerScreen(
                                                 interactionSource = interactionSource,
                                                 indication = null,
                                             ) { playerViewModel.skipTo(index) }
-                                            .padding(horizontal = 12.dp, vertical = 14.dp),
+                                            // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
+                                            .padding(start = 8.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        // 行首队列序号：固宽（宽度按三位数留量）内水平居中，1/2/3 位数的数字中心对齐同一竖线；当前曲橙色，整曲本地可得金色
+                                        // 行首队列序号：固定 26dp 格内水平居中，1~4 位数中心对齐同一竖线；字号按位数算（见 songIndexFontSize）；当前曲橙色，整曲本地可得金色
                                         Text(
                                             text = "${index + 1}",
-                                            fontSize = 14.sp,
+                                            fontSize = songIndexFontSize("${index + 1}".length),
                                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                                             textAlign = TextAlign.Center,
                                             color = when {
@@ -1017,6 +1023,8 @@ fun PlayerScreen(
                                                 fullyCached -> CachedGold
                                                 else -> PlayerIconGray
                                             },
+                                            maxLines = 1,
+                                            softWrap = false,
                                             modifier = Modifier.width(26.dp),
                                         )
                                         Spacer(Modifier.width(8.dp))

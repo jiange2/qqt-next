@@ -1,6 +1,6 @@
 <template>
   <div>
-    <!-- 当日访问分解（条数口径，ADR 0008）；「在线设备」非当日窗口，为「在线状态」的即时推导 -->
+    <!-- 当日访问分解（条数口径，ADR 0008）；「在线设备」「总占用空间」非当日窗口：前者为在线状态即时推导，后者为全量设备最新占用快照求和 -->
     <div class="stat-row" v-loading="summaryLoading">
       <el-tooltip content="刷新" placement="top">
         <el-button class="row-refresh" circle text :icon="Refresh" :loading="summaryLoading" @click="loadSummary()" />
@@ -25,6 +25,12 @@
         <div class="stat">
           <div class="num">{{ summary.online }}</div>
           <div class="label">在线设备</div>
+        </div>
+      </el-tooltip>
+      <el-tooltip content="全部设备最新一次上报的占用之和（被动缓存 + 下载目录）" placement="top">
+        <div class="stat">
+          <div class="num">{{ fmtBytes(summary.storageTotal) }}</div>
+          <div class="label">总占用空间</div>
         </div>
       </el-tooltip>
       <div class="stat">
@@ -61,6 +67,9 @@
             <template #default="{ row }">{{ fmtBytes(row.allocatedStorage) }}</template>
           </el-table-column>
           <el-table-column label="实际占用" width="100">
+            <template #header>
+              <el-tooltip content="被动缓存 + 下载目录（含下载中的 .part 半文件）" placement="top"><span>实际占用</span></el-tooltip>
+            </template>
             <template #default="{ row }">{{ fmtBytes(row.usedStorage) }}</template>
           </el-table-column>
           <el-table-column label="事实数" width="80">
@@ -219,8 +228,9 @@ type Summary = {
   devices: number;
   hitRate: number;
   online: number;
+  storageTotal: number;
 };
-const summary = reactive<Summary>({ total: 0, hits: 0, misses: 0, devices: 0, hitRate: 0, online: 0 });
+const summary = reactive<Summary>({ total: 0, hits: 0, misses: 0, devices: 0, hitRate: 0, online: 0, storageTotal: 0 });
 const summaryLoading = ref(false);
 
 // silent：轮询刷新不转 loading 遮罩，避免打断阅读
@@ -363,9 +373,9 @@ function fmtBytes(v: number | string | null): string {
   if (v === null || v === undefined || v === "") return "-";
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return "-";
-  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + " GB";
-  if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(1) + " MB";
-  if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(3) + " GB";
+  if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(3) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(3) + " KB";
   return n + " B";
 }
 

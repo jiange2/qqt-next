@@ -30,6 +30,7 @@ import com.qqt.music.data.api.model.Banner
 import com.qqt.music.data.api.model.Song
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.BannerCarousel
+import com.qqt.music.ui.components.formatPlayCount
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.InkPrimary
 import com.qqt.music.ui.theme.InkSecondary
@@ -40,17 +41,6 @@ import com.qqt.music.viewmodel.PlayerViewModel
 
 /** 瀑布流参差档位：按歌曲 id 哈希确定性取档（约六成高卡），刷新不跳动 */
 private fun isTallCard(song: Song): Boolean = song.id.hashCode().mod(5) >= 2
-
-/** 播放量万化展示：12345 -> 1.2w，123456789 -> 1.2亿，不足一万原样 */
-private fun formatPlayCount(raw: String): String {
-    val n = raw.toLongOrNull() ?: return ""
-    val compact = when {
-        n >= 100_000_000 -> String.format("%.1f", n / 100_000_000.0) + "亿"
-        n >= 10_000 -> String.format("%.1f", n / 10_000.0) + "w"
-        else -> n.toString()
-    }
-    return compact.removeSuffix(".0")
-}
 
 @Composable
 private fun ChipLabel(text: String) {
