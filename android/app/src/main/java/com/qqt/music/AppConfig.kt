@@ -12,9 +12,12 @@ object AppConfig {
      *  否则密文歌词解密失败显示「歌词加载失败」；存量明文歌词不受影响 */
     const val LRC_CONTENT_SECRET = "518b465562a5ec61b6d750fa68533bc1"
 
-    /** 媒体 CDN host（仓库级 ADR 0011）：字节解混淆只对该 host 的响应生效，其他地址原样透传。
-     *  必须与服务端 OSS_PUBLIC_BASE 的域名一致，换值 = 发版 */
-    const val MEDIA_HOST = "cdn.qqt.yunshangzhiai7.top"
+    /** 媒体域名（仓库级 ADR 0011）：字节解混淆只对这些域及其子域的响应生效，其他地址原样透传。
+     *  仅限「回源到同一混淆 bucket」的域名；明文存储的外部媒体域不要并入 */
+    private val MEDIA_DOMAINS = listOf("yunshangzhiai7.top", "file.myqcloud.com")
+
+    fun isMediaHost(host: String?): Boolean =
+        host != null && MEDIA_DOMAINS.any { host == it || host.endsWith(".$it") }
 
     /** 媒体字节混淆位移量（仓库级 ADR 0011）：OSS 存储逐字节 +31，客户端读出路径 -31 还原；
      *  必须与后端 obfuscate.ts 的 SHIFT 一致 */

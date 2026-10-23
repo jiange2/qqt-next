@@ -11,7 +11,7 @@ import com.qqt.music.AppConfig
  * 本数据源在网络读出路径上逐字节 -31 还原。
  *
  * - 变换与位置无关，ExoPlayer 的 Range/seek 与下载断点续传不受影响
- * - 仅对媒体 host（[AppConfig.MEDIA_HOST]）生效，其余地址原样透传
+ * - 仅对媒体域（[AppConfig.isMediaHost]：yunshangzhiai7.top 及其子域）生效，其余地址原样透传
  * - URI 带 `#raw` 片段时旁路还原（错误重试自愈通道，见 PlayerViewModel）：fragment 不随请求
  *   发往服务器，但参与 CacheDataSource 缓存键，故 `#raw` 重试天然落在独立命名空间，不污染
  *   正常键的缓存条目
@@ -27,7 +27,7 @@ class DeobfuscatingDataSource(private val upstream: DataSource) : DataSource {
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        deobfuscate = dataSpec.uri.host == AppConfig.MEDIA_HOST &&
+        deobfuscate = AppConfig.isMediaHost(dataSpec.uri.host) &&
             dataSpec.uri.fragment != "raw"
         return upstream.open(dataSpec)
     }

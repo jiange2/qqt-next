@@ -85,7 +85,7 @@ class MediaByteDeobfuscator : OkInterceptor {
         val request = chain.request()
         val response = chain.proceed(request)
         val body = response.body ?: return response
-        if (request.url.host != AppConfig.MEDIA_HOST) return response
+        if (!AppConfig.isMediaHost(request.url.host)) return response
         val source = body.source()
         val head = Buffer()
         while (head.size < SNIFF_BYTES && source.read(head, SNIFF_BYTES - head.size) != -1L) {

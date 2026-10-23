@@ -188,7 +188,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 val item = controller.currentMediaItem ?: return
                 val uri = item.localConfiguration?.uri ?: return
                 val base = uri.buildUpon().fragment(null).build().toString()
-                if (error.errorCode !in 3000..4999 || uri.host != AppConfig.MEDIA_HOST) return
+                if (error.errorCode !in 3000..4999 || !AppConfig.isMediaHost(uri.host)) return
                 if (base == selfHealUri && uri.fragment == "raw") return
                 Log.w(TAG, "🩹 parse/decode error ${error.errorCode}, self-heal: ${uri.lastPathSegment}")
                 AudioCache.removeEntry(base)
