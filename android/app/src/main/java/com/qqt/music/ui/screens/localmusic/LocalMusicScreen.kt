@@ -171,7 +171,7 @@ fun LocalMusicScreen(
             if (scan.running) ScanProgressBanner(scan, onCancel = viewModel::cancelScan)
             LibraryViewSwitch(albumSelected = showAlbums, onSelect = { showAlbums = it })
             if (showAlbums) {
-                AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick)
+                AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
@@ -253,13 +253,14 @@ private fun AlbumGrid(
     albums: List<LocalAlbum>,
     viewModel: LocalMusicViewModel,
     onAlbumClick: (LocalAlbum) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        modifier = Modifier.weight(1f),
+        modifier = modifier,
     ) {
         items(albums, key = { it.key }) { album ->
             LocalAlbumCard(album = album, viewModel = viewModel, onClick = { onAlbumClick(album) })

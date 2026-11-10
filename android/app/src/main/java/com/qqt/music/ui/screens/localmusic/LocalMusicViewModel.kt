@@ -82,7 +82,7 @@ sealed interface LocalMetadataSaveResult {
  * 权限与失效：进入页面核对根目录的持久化授权（[checkRootPermissions]），失效目录的歌曲灰显；
  * 播放时文件被删 / 读不到（[markUnavailable]）只标记该行不可用，不自动重扫，也不影响其它歌曲。
  */
-class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
+class LocalMusicViewModel(private val application: Application) : AndroidViewModel(application) {
 
     private val scanner = LocalMusicScanner(application)
 
