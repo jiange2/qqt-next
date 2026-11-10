@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及扫描用户授权文件夹的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层）。
+Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除）。
 
 ## 技术栈
 
@@ -36,10 +36,10 @@ app/src/main/java/com/qqt/music/
     local/
       NetworkMonitor.kt     # 断网检测（ADR 0012）：默认网络有效性 StateFlow，供拦截器与离线横幅共用
       PrefsManager.kt       # SharedPreferences 封装：收藏、我的歌单、已下载歌曲快照、设备 ID、已评记录
-      LocalMusicStore.kt    # 本地音乐索引与元数据覆盖层（JSON，原子写）
-      LocalMusicScanner.kt  # SAF 目录树扫描、内容指纹、标签读取
-      LocalCoverCache.kt    # 本地专辑封面缓存（文件夹封面 → 内嵌图）
-      LocalSong.kt / LocalAlbum.kt / LocalMusicRoot.kt / LocalMetadataEdit.kt
+      LocalMusicStore.kt    # 本地音乐库快照与元数据覆盖层（JSON，原子写）
+      LocalMusicLibrarySource.kt # 系统媒体库来源接缝：音频权限检查、按卷查询 MediaStore、行归一化
+      LocalFolderExclusion.kt # 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数）
+      LocalSong.kt / LocalAlbum.kt / LocalMetadataEdit.kt
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
   player/
@@ -62,7 +62,7 @@ app/src/main/java/com/qqt/music/
     screens/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
-      localmusic/           # 本地音乐（歌曲 / 专辑两视图、扫描、文件夹管理、元数据编辑）
+      localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑）
       localalbum/           # 本地专辑页（整张专辑播放）
       download/             # 已下载（DownloadManager 实时列表）
       category/             # 分类 2列网格，无限分页
@@ -91,7 +91,7 @@ app/src/main/java/com/qqt/music/
 | 音乐播放器 | [`doc/player.md`](doc/player.md) | PlayerViewModel、MusicPlayerService、MediaController、缓存、进度保存 |
 | 后台保活与自启动 | [`doc/background.md`](doc/background.md) | 双层前台服务、WiFi 锁、设备重启自启动、国产 ROM 兼容 |
 | UI 导航与页面 | [`doc/ui.md`](doc/ui.md) | AppNavigation、Screen 路由、所有屏幕、公共组件 |
-| 本地存储 | [`doc/storage.md`](doc/storage.md) | PrefsManager、本地音乐索引与覆盖层、下载、队列快照 |
+| 本地存储 | [`doc/storage.md`](doc/storage.md) | PrefsManager、本地音乐库快照与覆盖层、下载、队列快照 |
 
 ## 关键配置
 
@@ -110,7 +110,7 @@ object AppConfig {
 
 - **依赖后端**：所有内容数据从 `AppConfig.BASE_URL` + `"api.php"` 获取；域名入口连接层失败时由 ApiClient 自动切换回退地址（仓库 docs/adr/0009）
 - **对外无暴露**：纯客户端 App，不对外提供接口
-- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK`
+- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 等；本地音乐申请音频读取权限 `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（12 及以下，清单标 `maxSdkVersion 32`）——来源是系统媒体库（ADR 0022）
 
 ## 开发指南
 

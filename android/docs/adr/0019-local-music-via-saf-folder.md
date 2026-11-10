@@ -1,5 +1,7 @@
 # 本地音乐以用户授权的音乐文件夹为来源，不使用 MediaStore 全机索引
 
+> 已废止：被 [ADR 0022](0022-local-music-via-mediastore-system-library.md) 取代——扫描来源改为 MediaStore 系统媒体库 + 音频权限 + 文件夹黑名单。
+
 底部导航的「最近播放」页将改造为「本地音乐」页，展示用户设备上的音频文件。决定：通过 SAF（`ACTION_OPEN_DOCUMENT_TREE`）让用户指定音乐文件夹，用 `takePersistableUriPermission` 持久化授权，App 自行递归遍历目录树；不申请 `READ_MEDIA_AUDIO` / `READ_EXTERNAL_STORAGE`；标签用 `MediaMetadataRetriever` 从 content URI 读取。理由是「本地音乐」在语义上就是"我选中的那些文件夹"，而 MediaStore 只能表达"整机所有音频"，两者不等价；SAF 还把授权范围交给用户、只在选择目录时授权一次，不产生全盘读取的权限弹窗。
 
 ## Considered Options

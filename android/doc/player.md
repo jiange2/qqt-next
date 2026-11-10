@@ -13,7 +13,7 @@
 5. **LastPlayedStore** — SharedPreferences，保存整队列快照 + 曲目索引 + 播放位置 + 队列来源（ADR 0010、ADR 0015）
 6. **PlayerSettingsManager** — 播放设置单例：播放模式（按队列来源记忆，含「本地音乐」来源）/ 定时关闭（播放模式持久化，定时会话级）
 7. **KeepAliveService + BootReceiver** — 双层前台保活 + 设备重启自启动
-8. **本地音乐播放** — 本地歌曲以 `local:<指纹>` 为 ID、`content://` 为播放 URI，队列来源 `QueueSource.LOCAL`
+8. **本地音乐播放** — 本地歌曲以 `local:<媒体库行 ID>` 为 ID、`content://` 为播放 URI，队列来源 `QueueSource.LOCAL`
 
 ## 关键文件
 
@@ -195,14 +195,14 @@ MediaItem.Builder()
 
 ## 本地歌曲播放（来源、入口差异与失效）
 
-本地歌曲由 `LocalSong.toSong()` 转成播放队列元素：ID 为 `local:<内容指纹>`，URL 为 SAF 的 `content://` document URI，标题 / 艺术家 / 时长取合并后的展示值，歌词字段为空。
+本地歌曲由 `LocalSong.toSong()` 转成播放队列元素：ID 为 `local:<媒体库行 ID>`（Android 10+ 带卷名限定，ADR 0022），URL 为按卷 + 行 ID 构造的 `content://` 直读 URI，标题 / 艺术家 / 时长取合并后的展示值，歌词字段为空。
 
 - **队列来源**：本地音乐页点歌以当前完整歌曲列表为队列，本地专辑页点歌以整张专辑为队列，两者都用 `QueueSource.LOCAL`（`player` 键空间扩展，ADR 0015）。播放模式按这个来源单独记忆，与在线专辑等来源互不影响。
-- **队列快照**：队列整体（含 `content://` URI 与来源）照常落盘；持久化授权还在时，冷启动恢复后可直接继续播放，不需要重新扫描或请求后端。授权被回收时恢复装载仍会失败，按下面的失效路径处理。
+- **队列快照**：队列整体（含 `content://` URI 与来源）照常落盘；音频权限还授予时，冷启动恢复后可直接继续播放，不需要重查媒体库或请求后端。权限被撤销后恢复装载仍会失败，按下面的失效路径处理。
 - **不发起网络请求**：本地歌曲不请求 `song_info`、不加载歌词、不上报访问事实、不做时长写回；MediaItem 不带 `EXTRA_SONG_ID`，Service 侧车机歌词同步也不会拉歌词。
 - **入口差异**：全屏播放器只剩播放设置与「更多」（里面是「编辑信息」）；收藏、下载、加入歌单、评分、歌词页与刷新入口全部不出现。本地音乐页 / 本地专辑页的歌曲行也不提供在线列表行的评分 / 下载按钮。
 - **元数据编辑回显**：编辑保存后调用 `refreshLocalSongDisplay()` 替换队列副本与当前歌的标题 / 艺术家，MiniPlayer 与全屏播放器立即更新；不重新装载 MediaItem，通知栏与车机文案等下次装载时刷新。
-- **播放失败（文件被删 / 不可读 / 授权被回收）**：`onPlayerError` 遇到本地歌曲不进入在线歌的「错误自愈」流程，只把歌曲 ID 写入 `unavailableLocalSongId` 并停止重试；导航层消费后把该行标记为不可用并轻提示「文件不可用」。不自动重扫，其它歌曲照常可播；下次重新扫描时文件不在目录树里，自然从索引移除。
+- **播放失败（文件被删 / 不可读 / 权限被撤销）**：`onPlayerError` 遇到本地歌曲不进入在线歌的「错误自愈」流程，只把歌曲 ID 写入 `unavailableLocalSongId` 并停止重试；导航层消费后把该行标记为不可用并轻提示「文件不可用」。不自动刷新，其它歌曲照常可播；下次刷新时媒体库里已无此行，自然从列表移除。
 
 ## 播放设置（定时关闭）
 
@@ -227,13 +227,13 @@ UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点
 
 ### 本地直读播放（已下载歌曲与本地歌曲）
 
-已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）、本地歌曲以内容提供者 `content://` URI 构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，`file` 走 FileDataSource 直读本地文件、`content` 走 ContentDataSource 经 SAF 持久化授权直读，两者都离线可播、不写被动缓存；http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成，scheme 判定收敛在 `SchemeRoutingDataSource.kt` 的 `isLocalDirectReadUri()` / `isLocalSongUri()`。
+已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）、本地歌曲以内容提供者 `content://` URI 构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，`file` 走 FileDataSource 直读本地文件、`content` 走 ContentDataSource 凭音频读取权限直读系统媒体库，两者都离线可播、不写被动缓存；http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成，scheme 判定收敛在 `SchemeRoutingDataSource.kt` 的 `isLocalDirectReadUri()` / `isLocalSongUri()`。
 
 本地直读（`content://`）的字节不经过网络栈，打开失败即播放失败，不回退到网络分支：
 
 - 不进被动缓存，进度条缓存染色按「整曲本地可得」显示
 - 不上报访问事实与时长写回；MediaItem 不带 `EXTRA_SONG_ID`，车机歌词同步因此不拉歌词
-- 通知/媒体卡片封面只有 `file://`（本地封面缓存）与 `http(s)` 两种加载路径，其余 scheme 直接失败，不落到 OkHttp
+- 通知/媒体卡片封面只有 `file://`（已下载歌曲）与 `http(s)` 两种加载路径；本地歌曲的队列元素不带封面地址（专辑图只进列表与专辑页，由图片加载器按 albumart URI 取），其余 scheme 直接失败，不落到 OkHttp
 - 错误自愈（ADR 0011）只作用于媒体 host，`content://` 不触发缓存清理与重取
 
 ### LastPlayedStore - 队列快照持久化
