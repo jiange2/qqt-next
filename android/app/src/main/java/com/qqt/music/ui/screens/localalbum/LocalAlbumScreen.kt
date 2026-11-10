@@ -22,7 +22,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,7 +44,6 @@ import com.qqt.music.ui.theme.InkFaint
 import com.qqt.music.ui.theme.InkPrimary
 import com.qqt.music.ui.theme.InkSecondary
 import com.qqt.music.viewmodel.PlayerViewModel
-import java.io.File
 
 /**
  * 本地专辑页：某张本地专辑的歌曲列表，页面标题由顶栏取自专辑名。
@@ -77,7 +75,7 @@ fun LocalAlbumScreen(
         album == null -> EmptyState(
             icon = Icons.Outlined.Album,
             title = "专辑已不存在",
-            subtitle = "重新扫描音乐文件夹后再试",
+            subtitle = "重新扫描后再试",
         )
 
         else -> Column(
@@ -85,7 +83,7 @@ fun LocalAlbumScreen(
                 .fillMaxSize()
                 .background(Color.White),
         ) {
-            LocalAlbumHeader(album = album, viewModel = viewModel)
+            LocalAlbumHeader(album = album)
             val queue = album.songs.map { it.toSong() }
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -124,12 +122,7 @@ fun LocalAlbumScreen(
 
 /** 专辑头：封面 + 专辑名 + 艺术家 + 歌曲数 */
 @Composable
-private fun LocalAlbumHeader(album: LocalAlbum, viewModel: LocalMusicViewModel) {
-    val generation by viewModel.coverGeneration.collectAsState()
-    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（重扫清缓存则靠代次）
-    val cover by produceState<File?>(null, album, generation) {
-        value = viewModel.albumCover(album)
-    }
+private fun LocalAlbumHeader(album: LocalAlbum) {
     val albumName = album.name
     Row(
         modifier = Modifier
@@ -137,7 +130,11 @@ private fun LocalAlbumHeader(album: LocalAlbum, viewModel: LocalMusicViewModel) 
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LocalAlbumCover(cover = cover, albumName = albumName, modifier = Modifier.size(88.dp))
+        LocalAlbumCover(
+            albumArtUri = album.albumArtUri,
+            albumName = albumName,
+            modifier = Modifier.size(88.dp),
+        )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(

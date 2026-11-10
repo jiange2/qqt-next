@@ -1,15 +1,16 @@
 # 本地存储
 
-> **何时阅读**：当你要修改本地音乐索引 / 元数据覆盖层、已下载歌曲的存储与清理、队列快照或其它本机持久化数据时，阅读此文件。
+> **何时阅读**：当你要修改本地音乐库快照 / 元数据覆盖层 / 文件夹排除、已下载歌曲的存储与清理、队列快照或其它本机持久化数据时，阅读此文件。
 
 ## 功能概述
 
-本机持久化分四类：
+本机持久化分三类：
 
 1. **SharedPreferences（`PrefsManager`）** — 收藏 ID、我的歌单快照、已下载歌曲快照、设备 ID、已评记录
-2. **本地音乐落盘（`LocalMusicStore`）** — 扫描索引与元数据覆盖层各一个 App 私有 JSON 文件
-3. **本地专辑封面缓存（`LocalCoverCache`）** — 按专辑键缓存的封面图片，容量有上限
-4. **队列快照（`LastPlayedStore`）** — 上次播放的整队列 + 索引 + 进度 + 队列来源（见 [player.md](player.md)）
+2. **本地音乐落盘（`LocalMusicStore`）** — 库快照（歌曲行 + 排除文件夹清单）与元数据覆盖层各一个 App 私有 JSON 文件
+3. **队列快照（`LastPlayedStore`）** — 上次播放的整队列 + 索引 + 进度 + 队列来源（见 [player.md](player.md)）
+
+本地音乐的专辑封面不落盘：取系统媒体库预抽取的专辑图，由图片加载器（Coil）直接加载与缓存（见下文「封面」）。
 
 「最近播放」已整体下线：不再有最近播放 ID 列表、页面与播放写入点；升级后首次启动由 `PrefsManager.init` 清除旧版残留键 `recent_song_ids`（写一次性标记，之后不再重复写盘）。
 
@@ -18,8 +19,9 @@
 | 文件 | 职责 |
 |------|------|
 | `data/local/PrefsManager.kt` | SharedPreferences 单例封装：收藏、我的歌单、已下载快照、设备 ID、已评记录 |
-| `data/local/LocalMusicStore.kt` | 本地音乐索引与覆盖层的 JSON 落盘，原子写入与版本降级 |
-| `data/local/LocalCoverCache.kt` | 本地专辑封面缓存（文件夹封面 → 内嵌图），容量上限与淘汰 |
+| `data/local/LocalMusicLibrarySource.kt` | 本地音乐来源接缝：音频权限检查、按卷查询 `MediaStore.Audio.Media`、行归一化 |
+| `data/local/LocalMusicStore.kt` | 本地音乐库快照与覆盖层的 JSON 落盘，原子写入与旧版本整份丢弃 |
+| `data/local/LocalFolderExclusion.kt` | 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数） |
 | `download/DownloadManager.kt` | 主动缓存（下载）管理器：串行下载队列、下载列表状态、与磁盘对账 |
 | `player/LastPlayedStore.kt` | 队列快照：保存/加载上次播放的队列、索引、进度与来源 |
 | `MainActivity.kt` | `PrefsManager.init(applicationContext)` — 必须在使用前调用 |
@@ -47,16 +49,20 @@ override fun onCreate(savedInstanceState: Bundle?) {
 }
 ```
 
-## 本地音乐：索引与覆盖层
+## 本地音乐：库快照与覆盖层
 
-两个文件都位于 `filesDir`，均带版本号；版本不认识或内容读不出来时按「无法识别」降级，不猜测迁移、不崩溃。
+两个文件都位于 `filesDir`，均带版本号；版本不认识或内容读不出来时按「无法识别」降级，不猜测迁移、不崩溃。v2 起歌曲身份是媒体库行 ID——旧版本（v1，按内容指纹记身份）与新身份对不上，升级后首次读取即整份丢弃（删除文件、不迁移不报错；覆盖层数据量小、重编辑成本低，ADR 0022）；旧 SAF 目录授权残留不清理也不使用。
 
 | 文件 | 内容 |
 |------|------|
-| `local_music_index.json` | 根目录列表 + 每首歌的身份、定位、标签快照与可用状态 |
-| `local_music_overlay.json` | 身份（内容指纹）→ 用户改过的字段，只存非空值 |
+| `local_music_index.json` | 库快照：媒体库查询归一化出的歌曲行 + 排除文件夹清单 |
+| `local_music_overlay.json` | 身份（媒体库行 ID，Android 10+ 带卷名限定）→ 用户改过的字段，只存非空值 |
 
-索引的歌曲字段：`fingerprint`、`treeUri`、`documentUri`、`relativePath`、`displayName`、`folderName`、`size`、`lastModified`、`durationMs`、标签快照（标题 / 艺术家 / 专辑 / 专辑艺术家 / 音轨号 / 年份）、`available`。
+歌曲行字段：`rowId`、`volume`、`contentUri`、`path`（Android 10+ 为 `RELATIVE_PATH`，低版本为 `DATA` 全路径）、`displayName`、`size`、`lastModified`、`durationMs`、`albumId`、标签快照（标题 / 艺术家 / 专辑 / 专辑艺术家 / 音轨号 / 年份）、`available`。
+
+歌曲身份 = 行 ID（同卷内移动 / 改名文件行 ID 不变；文件删除后重加则行 ID 变化，覆盖层编辑随之丢失——已知取舍）。同一内容的多个副本各自成行，不做内容级去重。查询与权限口径见 `LocalMusicLibrarySource`：`IS_MUSIC != 0`（Android 10+ 附加 `IS_PENDING = 0`、11+ 附加 `IS_TRASHED = 0`），Android 10+ 用 `getExternalVolumeNames` 逐外置卷查询合并。
+
+排除清单是一组文件夹路径，匹配语义为「该文件夹及其全部子文件夹」（目录段边界上的前缀命中，`Music` 不吃掉 `MusicX`）；被排除的行不进歌曲列表、不进专辑分组、不进播放队列候选。整库行（含被排除的）都在快照里——取消排除立即恢复，不需要重查媒体库。过滤在 `LocalFolderExclusion`，纯函数。
 
 ### 原子写
 
@@ -66,23 +72,21 @@ override fun onCreate(savedInstanceState: Bundle?) {
 2. `fsync` 刷盘
 3. `rename` 覆盖目标文件
 
-进程在任一步被杀，重启读到的要么是上一次的完整状态、要么是这次写入的完整状态，不会半截；残留的 `.tmp` 在下次读取时清理。写入经同一把锁串行，扫描落盘与根目录落盘不会互相覆盖。全部读写都在 IO 线程。
+进程在任一步被杀，重启读到的要么是上一次的完整状态、要么是这次写入的完整状态，不会半截；残留的 `.tmp` 在下次读取时清理。写入经同一把锁串行，库刷新落盘与排除开关落盘、元数据编辑落盘不会互相覆盖。全部读写都在 IO 线程。
 
 ### 启动加载
 
-`LocalMusicViewModel` 在 IO 线程读回索引与覆盖层并合并，冷启动直接出列表，不在启动时扫描、不发任何网络请求：
+`LocalMusicViewModel` 在 IO 线程读回快照与覆盖层并合并，冷启动直接出列表，不在启动时查媒体库、不发任何网络请求：
 
-- 索引不存在：按系统里的持久化授权重建根目录列表；有授权但没索引时自动扫一次
-- 索引无法识别（版本不认识或内容损坏）：空列表降级 + 页面提示重新扫描，根目录仍从系统授权重建
-- 展示值 = 覆盖层优先、缺失取标签快照；所有列表、播放器与专辑分组都走这一份合并结果（ADR 0020）
-- 清空某字段等于从覆盖层删除该字段，回到文件标签值；索引重建与重扫都不动覆盖层
+- 快照不存在（含旧版本被整份丢弃）：空列表；进入本地音乐页核对音频权限后静默刷新一次，毫秒级查询即得全库——没有「有授权没索引就自动开扫」的等待
+- 展示值 = 覆盖层优先、缺失取媒体库标签快照；所有列表、播放器与专辑分组都走这一份合并结果（ADR 0020）
+- 清空某字段等于从覆盖层删除该字段，回到媒体库标签值；库刷新与排除开关切换都不动覆盖层
 
-### 封面缓存
+### 封面
 
-- 位置：`cacheDir/local_covers/`，文件名是专辑键的 SHA-256 + `.img`
-- 来源优先级：歌曲所在文件夹的封面文件（`cover / folder / front / album`，`jpg / jpeg / png / webp`）→ 音频内嵌图 → 占位图
-- 懒加载；总量上限 16MB，超出按最近使用淘汰；单张封面读取上限 8MB
-- 重扫提交后清空；元数据编辑改了专辑名 / 专辑艺术家时，按新旧专辑键分别作废
+- 专辑封面 = 系统媒体库预抽取的专辑图：按专辑成员行的 `ALBUM_ID` 构造 `content://media/<卷>/audio/albumart/<专辑 ID>`，图片加载器（Coil）直接加载与缓存
+- App 不再落盘任何封面文件：旧的自管 LRU 封面缓存（`cacheDir/local_covers/`）已删除，残留目录不清理也不读取；文件夹里的 `cover.jpg` 类封面文件与音频内嵌图不再使用
+- 系统没有该专辑的预抽取图时按文件不存在报错，UI 显示占位图
 
 ## 已下载歌曲
 
@@ -107,4 +111,4 @@ DownloadManager.localUri(songId)           // 已下载返回本地 file:// URI�
 - 进程被杀后进行中的下载不会自动恢复（无持久化队列），残留 `.part` 文件由下次点"下载"断点续传
 - 已下载歌曲存的是 `Song` 对象快照，后端数据更新后下载列表不会自动同步（如歌曲 URL 变更）
 - 已下载列表防重复逻辑在 `DownloadManager.finalizeDownload()` 中（`listOf(song) + songs.filterNot { it.id == song.id }`），基于 `Song.id` 去重
-- 本地音乐的索引与覆盖层是两个文件：重扫只替换索引，覆盖层按内容身份保留；移除根目录只从索引剔除歌曲，不删覆盖层
+- 本地音乐的库快照与覆盖层是两个文件：刷新只替换快照，覆盖层按行 ID 身份保留；同卷内移动 / 改名文件行 ID 不变、编辑不丢，文件删除后重加则行 ID 变化、覆盖层编辑丢失（ADR 0022 已知取舍）

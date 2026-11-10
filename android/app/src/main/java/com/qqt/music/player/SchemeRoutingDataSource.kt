@@ -11,13 +11,13 @@ import androidx.media3.datasource.TransferListener
 /** 本地直读播放 URI：`file://`（已下载）与 `content://`（本地歌曲）都不进被动缓存、不经过网络栈 */
 fun Uri.isLocalDirectReadUri(): Boolean = scheme == "file" || scheme == "content"
 
-/** 本地歌曲的直读 URI：SAF 目录内的 `content://` 文档（与已下载的 `file://` 区分） */
+/** 本地歌曲的直读 URI：库来源按卷 + 行 ID 构造的 MediaStore `content://` 行内容 URI（与已下载的 `file://` 区分） */
 fun Uri.isLocalSongUri(): Boolean = scheme == "content"
 
 /**
  * 按 URI scheme 分流的播放数据源（ADR 0003）：
  * - `file://`（已下载歌曲离线播放）→ FileDataSource 直读本地文件，绕过缓存
- * - `content://`（本地音乐 SAF 目录内的文件）→ ContentDataSource 经持久化授权直读，绕过缓存
+ * - `content://`（本地音乐 MediaStore 行内容 URI）→ ContentDataSource 经 ContentResolver 直读，绕过缓存
  * - 其余 http(s) → 被动缓存 CacheDataSource + 网络回源
  *
  * 本地两种 scheme 直读的字节不经缓存、不经过网络栈；打开失败就是失败，不回退到网络分支。

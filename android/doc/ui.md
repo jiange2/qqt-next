@@ -16,7 +16,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、扫描进度与空态、文件夹管理弹层与顶栏菜单）、`LocalMusicViewModel`（索引与覆盖层、扫描、权限核对、封面）、`LocalSongRow`、`LocalMetadataEditSheet` |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、权限空态与灰显横幅、排除面板与顶栏菜单）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单）、`LocalSongRow`、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet` |
 | `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列 |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
@@ -90,11 +90,11 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 
 本地音乐相关接线：
 
-- `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与文件夹管理弹层共用同一实例；离开页面扫描继续，回来不重复发起
-- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：重新扫描（扫描中显示「取消扫描」）、添加音乐文件夹、管理音乐文件夹
+- `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与排除面板共用同一实例
+- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：重新扫描（完成后提示「新增 x、移除 y」）与「排除的文件夹」
 - 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
-- 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动重扫
-- 选目录统一走 `ActivityResultContracts.OpenDocumentTree()`，返回的树 URI 交给 `addRoot()` 持久化授权并扫描
+- 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
+- 音频权限统一走 `ActivityResultContracts.RequestPermission()`，权限名按系统版本取用（`audioReadPermission()`：Android 13+ `READ_MEDIA_AUDIO`、12 及以下 `READ_EXTERNAL_STORAGE`）；授权成功自动静默刷新，拒绝过的入口升级为「重试 + 去系统设置」
 
 ## 各页面说明
 
@@ -108,30 +108,31 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - `HomeUiState`：`isLoading`, `banners`, `trendingSongs`, `error`
 
 ### LocalMusicScreen / LocalMusicViewModel（本地音乐）
-- 页面由「歌曲 / 专辑」分段控件组成，进入默认歌曲视图，不记忆上次选择；两视图都完全来自本机扫描索引，不发起任何网络请求
-- **进入与授权**：未授权任何文件夹 → 引导空态 + 「选择音乐文件夹」（系统目录选择器，`OpenDocumentTree`）；选完即持久化读授权并自动首扫，不申请任何运行时存储权限
+- 页面由「歌曲 / 专辑」分段控件组成，进入默认歌曲视图，不记忆上次选择；两视图都完全来自本机库快照与系统媒体库刷新，不发起任何网络请求
+- **进入与授权**：首次进入未授权 → 说明空态 + 「授权音乐访问」（系统标准音频权限弹窗）；拒绝过 → 「重试 + 去系统设置」双入口（勾了不再询问后系统不再弹窗，去设置是兜底）；授权成功立即（毫秒级整库查询）出全库。进页面与回前台（`ON_RESUME`）各核对一次权限；进页面授予时静默刷新一次库，回前台仅在授权状态有变化时动作（重新开启 → 静默刷新恢复灰显的行，又被关闭 → 灰显与横幅立即出现），无变化不刷新（ADR 0022：进入页面与授权成功后各静默刷新一次）
 - **歌曲视图**：按合并展示标题升序（`Collator(Locale.CHINA)`）列出 `LocalSongRow`（序号 / 标题 / 艺术家 / 时长）；点击以当前完整歌曲列表为播放队列，来源记为 `QueueSource.LOCAL`
-- **专辑视图**：两列卡片墙（封面 + 专辑名 + 艺术家 · 歌曲数）；点击进入本地专辑页
-- **顶栏菜单**：重新扫描 / 添加音乐文件夹 / 管理音乐文件夹；扫描中「重新扫描」变「取消扫描」
-- **扫描状态**：首次扫描（无旧列表）给整页进度与取消；重扫时旧列表照常可用，只加顶部进度条；完成 Toast「新增 x 首、移除 y 首」
+- **专辑视图**：两列卡片墙（系统专辑图 + 专辑名 + 艺术家 · 歌曲数）；点击进入本地专辑页
+- **顶栏菜单**：重新扫描 / 排除的文件夹
+- **刷新**：一次整库查询，无进度条、无取消；静默刷新不提示，顶栏「重新扫描」完成后提示「新增 x、移除 y」（数量按排除过滤后的可见库统计——被排除文件夹里的增删列表看不见，不计入）；刷新期间旧列表照常可用、播放不打断；查询失败（卷不可用等）保留旧快照不动，不放空列表假装没歌
 - **空态与失效**：
-  - 扫描取消 / 失败且无旧结果 → 对应空态 + 重试入口
-  - 已授权但扫描结果为 0 → 「没有找到可播放的音乐」+ 支持格式提示 + 重新扫描
-  - 全部根目录授权被系统回收 → 「音乐文件夹访问权限已失效」+ 重新选择；部分失效 → 顶部提示条 +「管理」，来自失效目录的歌曲灰显
-  - 索引文件损坏 → 提示重新扫描（根目录从系统授权重建）
+  - 权限拒绝 → 解释空态：「重试」（再拉系统弹窗）/「去系统设置」（到本 App 的设置页手动开启）
+  - 已授权但媒体库无音乐 → 「系统媒体库里还没有音乐」+ 重新扫描
+  - 权限被系统关闭（进页面或回前台复查发现）→ 旧列表整体灰显（含专辑卡片）+ 重新授权横幅（重试 / 去系统设置），不放空列表假装没歌；重新授权后自动刷新，灰显的行恢复可播
+  - 播放中文件被删 → 该行灰显并轻提示「文件不可用」，下次刷新后自然消失（媒体库里已无此行）
+- **排除文件夹**：顶栏「排除的文件夹」打开底部面板（`LocalExcludedFoldersSheet`），自动列出库中含音乐的文件夹并带开关；排除含其全部子文件夹，切换即时生效（纯内存过滤）、不需要重扫，状态随快照落盘、重启保留
 - **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）
-- 扫描索引与覆盖层见 [storage.md](storage.md)；扫描口径见 `LocalMusicScanner`（SAF 递归、格式白名单、`.nomedia` / 隐藏文件跳过、内容指纹身份）
+- 库快照与覆盖层见 [storage.md](storage.md)；来源与权限口径见 `LocalMusicLibrarySource`（`IS_MUSIC != 0`、`IS_PENDING` / `IS_TRASHED` 版本条件、多存储卷合并、行 ID 身份）
 
 ### LocalAlbumScreen（本地专辑页）
 - 路由 `local_album/{lid}`，`lid` 是 Base64 URL-safe 编码的专辑键；顶栏标题取专辑名
-- 专辑头：封面 + 专辑名 + 艺术家 + 歌曲数；歌曲按音轨号升序（无音轨号按标题）
+- 专辑头：封面（系统专辑图，无图占位）+ 专辑名 + 艺术家 + 歌曲数；歌曲按音轨号升序（无音轨号按标题）
 - 点歌以整张专辑为播放队列，来源仍是 `QueueSource.LOCAL`（与本地音乐页共用同一份播放模式记忆）
-- 长按歌曲行同样打开元数据编辑面板；专辑因重扫、移除目录或改专辑名而不存在时显示「专辑已不存在」
+- 长按歌曲行同样打开元数据编辑面板；专辑因刷新或改专辑名而不存在时显示「专辑已不存在」
 
 ### LocalMetadataEditSheet（元数据编辑面板）
 - 底部弹层，字段：标题、艺术家、专辑、专辑艺术家、音轨号、年份 + 「恢复默认」
-- 入口两个：本地音乐页 / 本地专辑页长按歌曲行；全屏播放器「更多菜单 → 编辑信息」（仅当前歌曲为本地歌曲且索引里找得到该记录时出现）
-- 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与文件标签相同不算「改过」
+- 入口两个：本地音乐页 / 本地专辑页长按歌曲行；全屏播放器「更多菜单 → 编辑信息」（仅当前歌曲为本地歌曲且快照里找得到该记录时出现）
+- 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与媒体库标签相同不算「改过」
 - 保存只写覆盖层，不回写音频文件；保存后歌曲列表、专辑分组与封面立即刷新，并同步播放器上的标题 / 艺术家展示值（不打断播放）
 
 ### DownloadScreen（无 ViewModel）
@@ -196,7 +197,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 本地歌曲差异（`Song.isLocalSong()`，ID 走 `local:` 命名空间或 URL 是 `content://`）：
   - 功能图标行只剩「播放设置」与「更多」：收藏 / 下载 / 加入歌单对本地歌曲无意义或必然失败，一律不出现
   - 页签只剩「歌曲」，没有歌词页与刷新入口，播放期间不发 `song_info` 请求；切回在线歌曲后全部恢复
-  - 「更多」里没有评分，换成「编辑信息」，打开与列表长按共用的 `LocalMetadataEditSheet`；索引里找不到该记录（目录已移除等）时入口也收起
+  - 「更多」里没有评分，换成「编辑信息」，打开与列表长按共用的 `LocalMetadataEditSheet`；快照里找不到该记录（文件已删等）时入口也收起
   - 队列来源为 `QueueSource.LOCAL`，播放模式按该来源单独记忆
 - 进度条：藏青 4dp 细轨道 + 16dp 小圆点滑钮（20dp slot 容器内居中，规避 M3 slot 贴左上问题）；M3 Slider 轨道两端各内缩半个 slot 宽（10dp），Slider 容器 padding 18dp（= 28 − 10）补偿，使轨道两端落在 28dp 内容线上（改滑钮/slot 尺寸需同步调整）；下方时间标签行左右 28dp
 - 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（打开队列浮层，点选为队列内跳播），含 navigationBarsPadding 手势区避让

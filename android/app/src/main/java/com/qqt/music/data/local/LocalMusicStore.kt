@@ -1,7 +1,6 @@
 package com.qqt.music.data.local
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
 import com.google.gson.Gson
 import java.io.File
@@ -12,14 +11,14 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
- * 本地音乐的落盘（spec「持久化」）：扫描索引与覆盖层各一个 App 私有 JSON 文件。
+ * 本地音乐的落盘（spec「库快照与刷新」）：库快照与元数据覆盖层各一个 App 私有 JSON 文件。
  *
- * - 索引 = 根目录列表 + 每首歌的身份、定位、标签快照与可用状态；覆盖层 = 身份 → 用户改过的字段
- * - 两个文件都带版本号。索引读到不认识的版本或内容按 [IndexLoad.Unreadable] 降级（空列表 + 提示重扫），
- *   不猜测迁移、不崩溃；覆盖层同理由调用方按「无覆盖」处理（展示回落文件标签）
+ * - 库快照 = 歌曲行 + 排除清单（排除 UI 属票据 03，这里先把结构留出来）；覆盖层 = 身份 → 用户改过的字段
+ * - 两个文件都带版本号。版本 2 起歌曲身份是媒体库行 ID；旧版本（按内容指纹记身份）读到即整份丢弃，
+ *   不转换、不报错（spec「升级迁移」：覆盖层数据量小、重编辑成本低）
  * - 均原子写入：先写临时文件并 fsync，再 rename 覆盖目标。写入途中被杀进程，
  *   重启读到的要么是上一次的完整状态，要么是这次的完整状态，不会半截
- * - 全部读写都在 IO 线程；写操作经同一把锁串行，串行扫描落盘与根目录落盘不会互相覆盖
+ * - 全部读写都在 IO 线程；写操作经同一把锁串行
  */
 object LocalMusicStore {
 
@@ -27,79 +26,78 @@ object LocalMusicStore {
     private const val INDEX_FILE = "local_music_index.json"
     private const val OVERLAY_FILE = "local_music_overlay.json"
 
-    /** 索引格式版本（改字段即升版本，旧版本数据按「无法识别」降级） */
-    private const val INDEX_VERSION = 1
+    /** 库快照格式版本（改字段即升版本，旧版本数据整份丢弃） */
+    private const val INDEX_VERSION = 2
 
-    /** 覆盖层格式版本 */
-    private const val OVERLAY_VERSION = 1
+    /** 覆盖层格式版本（键从指纹换成行 ID 身份，同批升版丢弃旧数据） */
+    private const val OVERLAY_VERSION = 2
 
     private val gson = Gson()
 
-    /** 两处写盘可能并发（扫描完成、添加根目录），串行化整次「写临时文件 → rename」 */
+    /** 两处写盘可能并发（库刷新提交、元数据编辑），串行化整次「写临时文件 → rename」 */
     private val writeLock = Mutex()
 
-    /** 索引快照：根目录与歌曲一起写，冷启动读回即用，不必再扫一遍 */
-    data class Snapshot(val roots: List<LocalMusicRoot>, val songs: List<LocalSong>)
+    /** 库快照：歌曲行 + 排除清单一起写，冷启动读回即用，不必再查媒体库 */
+    data class Snapshot(val songs: List<LocalSong>, val excludedFolders: List<String> = emptyList())
 
-    /** 索引加载结果：没写过 / 读到完整状态 / 版本或内容无法识别 */
-    sealed interface IndexLoad {
-        /** 首次启动或索引已被清掉 */
-        data object Absent : IndexLoad
+    /** 库快照加载结果：没写过（含旧版本被丢弃）/ 读到完整状态 */
+    sealed interface LibraryLoad {
+        data object Absent : LibraryLoad
 
-        data class Loaded(val roots: List<LocalMusicRoot>, val songs: List<LocalSong>) : IndexLoad
-
-        /** 版本不认识或内容读不出来：调用方降级为空列表并提示重新扫描 */
-        data object Unreadable : IndexLoad
+        data class Loaded(val songs: List<LocalSong>, val excludedFolders: List<String>) : LibraryLoad
     }
 
     /**
-     * 读扫描索引。[LocalSong] 里不含覆盖值——覆盖层是另一个文件，由调用方合并（ADR 0020）。
+     * 读库快照。[LocalSong] 里不含覆盖值——覆盖层是另一个文件，由调用方合并（ADR 0020）。
+     * 版本不认识或内容读不出来时整份丢弃（删文件），下次启动不再重复丢弃。
      */
-    suspend fun loadIndex(context: Context): IndexLoad = withContext(Dispatchers.IO) {
+    suspend fun loadLibrary(context: Context): LibraryLoad = withContext(Dispatchers.IO) {
         val file = indexFile(context)
         discardStaleTemp(file)
-        if (!file.exists()) return@withContext IndexLoad.Absent
+        if (!file.exists()) return@withContext LibraryLoad.Absent
         val index = runCatching { gson.fromJson(file.readText(Charsets.UTF_8), IndexFile::class.java) }
-            .onFailure { e -> Log.w(TAG, "索引读取失败", e) }
-            .getOrNull() ?: return@withContext IndexLoad.Unreadable
-        if (index.version != INDEX_VERSION || index.roots == null || index.songs == null) {
-            Log.w(TAG, "索引版本或内容无法识别（version=${index.version}），按空列表降级")
-            return@withContext IndexLoad.Unreadable
+            .onFailure { e -> Log.w(TAG, "库快照读取失败", e) }
+            .getOrNull()
+        if (index == null || index.version != INDEX_VERSION || index.songs == null) {
+            Log.w(TAG, "库快照版本或内容无法识别（version=${index?.version}），整份丢弃")
+            deleteQuietly(file)
+            return@withContext LibraryLoad.Absent
         }
-        IndexLoad.Loaded(
-            roots = index.roots.mapNotNull { it.toRoot() },
+        LibraryLoad.Loaded(
             songs = index.songs.mapNotNull { it.toSong() },
+            excludedFolders = index.excludedFolders.orEmpty().filter { it.isNotBlank() },
         )
     }
 
-    /** 整表写扫描索引（根目录 + 歌曲）；写失败只记日志，内存里的列表照常可用 */
-    suspend fun saveIndex(context: Context, snapshot: Snapshot) = withContext(Dispatchers.IO) {
+    /** 整表写库快照（歌曲行 + 排除清单）；写失败只记日志，内存里的列表照常可用 */
+    suspend fun saveLibrary(context: Context, snapshot: Snapshot) = withContext(Dispatchers.IO) {
         val json = gson.toJson(
             IndexFile(
                 version = INDEX_VERSION,
-                roots = snapshot.roots.map { RootDto(it.treeUri.toString(), it.name) },
                 songs = snapshot.songs.map { it.toDto() },
+                excludedFolders = snapshot.excludedFolders,
             )
         )
         writeAtomically(indexFile(context), json)
     }
 
-    /** 读覆盖层：身份 → 用户改过的字段；没有、损坏或版本不认识都返回空表（展示回落文件标签） */
+    /** 读覆盖层：身份 → 用户改过的字段；没有、损坏或版本不认识都整份丢弃，返回空表（展示回落媒体库标签） */
     suspend fun loadOverlay(context: Context): Map<String, LocalSongOverride> = withContext(Dispatchers.IO) {
         val file = overlayFile(context)
         discardStaleTemp(file)
         if (!file.exists()) return@withContext emptyMap()
         val overlay = runCatching { gson.fromJson(file.readText(Charsets.UTF_8), OverlayFile::class.java) }
             .onFailure { e -> Log.w(TAG, "覆盖层读取失败", e) }
-            .getOrNull() ?: return@withContext emptyMap()
-        if (overlay.version != OVERLAY_VERSION) {
-            Log.w(TAG, "覆盖层版本无法识别（version=${overlay.version}），按无覆盖处理")
+            .getOrNull()
+        if (overlay == null || overlay.version != OVERLAY_VERSION) {
+            Log.w(TAG, "覆盖层版本无法识别（version=${overlay?.version}），整份丢弃")
+            deleteQuietly(file)
             return@withContext emptyMap()
         }
         overlay.entries.orEmpty()
-            .mapNotNull { (fingerprint, entry) ->
-                if (fingerprint.isBlank()) return@mapNotNull null
-                entry?.toOverride()?.takeUnless { it.isEmpty }?.let { fingerprint to it }
+            .mapNotNull { (identity, entry) ->
+                if (identity.isBlank()) return@mapNotNull null
+                entry?.toOverride()?.takeUnless { it.isEmpty }?.let { identity to it }
             }
             .toMap()
     }
@@ -145,6 +143,10 @@ object LocalMusicStore {
         if (temp.exists() && !temp.delete()) Log.w(TAG, "残留临时文件清不掉：${temp.name}")
     }
 
+    private fun deleteQuietly(file: File) {
+        if (file.exists() && !file.delete()) Log.w(TAG, "旧数据文件删不掉：${file.name}")
+    }
+
     private fun indexFile(context: Context) = File(context.filesDir, INDEX_FILE)
 
     private fun overlayFile(context: Context) = File(context.filesDir, OVERLAY_FILE)
@@ -155,17 +157,9 @@ object LocalMusicStore {
 
     private data class IndexFile(
         val version: Int = 0,
-        val roots: List<RootDto>? = null,
         val songs: List<SongDto>? = null,
+        val excludedFolders: List<String>? = null,
     )
-
-    private data class RootDto(val treeUri: String? = null, val name: String? = null) {
-        fun toRoot(): LocalMusicRoot? {
-            val rawUri = treeUri?.takeIf { it.isNotBlank() } ?: return null
-            val parsed = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return null
-            return LocalMusicRoot(parsed, name?.takeIf { it.isNotBlank() } ?: parsed.lastPathSegment.orEmpty())
-        }
-    }
 
     private data class TagsDto(
         val title: String? = null,
@@ -177,33 +171,32 @@ object LocalMusicStore {
     )
 
     private data class SongDto(
-        val fingerprint: String? = null,
-        val treeUri: String? = null,
-        val documentUri: String? = null,
-        val relativePath: String? = null,
+        val rowId: Long? = null,
+        val volume: String? = null,
+        val contentUri: String? = null,
+        val path: String? = null,
         val displayName: String? = null,
-        val folderName: String? = null,
         val size: Long? = null,
         val lastModified: Long? = null,
         val durationMs: Long? = null,
+        val albumId: Long? = null,
         val tags: TagsDto? = null,
         val available: Boolean? = null,
     ) {
         fun toSong(): LocalSong? {
-            // 身份与定位信息缺一不可：缺了这条记录既播不了也去不了重，直接丢
-            val savedFingerprint = fingerprint?.takeIf { it.isNotBlank() } ?: return null
-            val savedTreeUri = treeUri?.takeIf { it.isNotBlank() } ?: return null
-            val savedDocumentUri = documentUri?.takeIf { it.isNotBlank() } ?: return null
+            // 身份与播放 URI 缺一不可：缺了这条记录既播不了也认不出，直接丢
+            val savedRowId = rowId?.takeIf { it > 0L } ?: return null
+            val savedContentUri = contentUri?.takeIf { it.isNotBlank() } ?: return null
             return LocalSong(
-                fingerprint = savedFingerprint,
-                treeUri = savedTreeUri,
-                documentUri = savedDocumentUri,
-                relativePath = relativePath.orEmpty(),
+                rowId = savedRowId,
+                volume = volume.orEmpty(),
+                contentUri = savedContentUri,
+                path = path.orEmpty(),
                 displayName = displayName.orEmpty(),
-                folderName = folderName.orEmpty(),
                 size = size ?: 0L,
                 lastModified = lastModified ?: 0L,
                 durationMs = durationMs ?: 0L,
+                albumId = albumId ?: 0L,
                 tags = LocalSongTags(
                     title = tags?.title.orEmpty(),
                     artist = tags?.artist.orEmpty(),
@@ -218,15 +211,15 @@ object LocalMusicStore {
 
         companion object {
             fun from(song: LocalSong) = SongDto(
-                fingerprint = song.fingerprint,
-                treeUri = song.treeUri,
-                documentUri = song.documentUri,
-                relativePath = song.relativePath,
+                rowId = song.rowId,
+                volume = song.volume,
+                contentUri = song.contentUri,
+                path = song.path,
                 displayName = song.displayName,
-                folderName = song.folderName,
                 size = song.size,
                 lastModified = song.lastModified,
                 durationMs = song.durationMs,
+                albumId = song.albumId,
                 tags = TagsDto(
                     title = song.tags.title,
                     artist = song.tags.artist,

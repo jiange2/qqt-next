@@ -1,5 +1,7 @@
 # 本地歌曲以内容指纹为身份，不用路径或 documentId 标识
 
+> 已废止：被 [ADR 0022](0022-local-music-via-mediastore-system-library.md) 取代——歌曲身份改为媒体库行 ID。
+
 本地歌曲需要在重扫描、文件移动、改名之后仍然被认成同一首歌，否则用户改过的元数据（ADR 0020 的覆盖层）会丢、去重也会失效。决定：歌曲身份 = 文件字节大小 + 首 32KB 与尾 32KB 的 SHA-256（文件不足 64KB 时取全文）；路径与 SAF documentId 只用于定位文件和重扫时快速跳过未变文件。理由是本地音乐的用户会整理文件夹、批量改名，而 ExternalStorageProvider 的 documentId 本质就是路径，任何路径型身份都会把这些正常操作变成数据丢失。
 
 ## Considered Options
