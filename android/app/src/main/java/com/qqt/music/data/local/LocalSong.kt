@@ -87,7 +87,8 @@ data class LocalSong(
 
     /**
      * 队列元素沿用现有歌曲模型：URL 为文件 content URI（播放数据源按 scheme 直读），
-     * 标题 / 艺术家 / 时长取展示值，封面与歌词交给后续票据（封面缓存、本地歌不加载歌词）。
+     * 标题 / 艺术家 / 时长取展示值，歌词字段为空（本地歌不加载歌词）。
+     * 封面由专辑封面缓存（[LocalCoverCache]）在专辑卡片与专辑页展示，队列元素暂不带封面。
      */
     fun toSong(): Song = Song(
         id = id,
