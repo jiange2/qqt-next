@@ -148,138 +148,138 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             navController = navController,
                             startDestination = Screen.Home.route,
                             modifier = Modifier.weight(1f),
-                        // 页面过渡：轻微滑动 + 淡入淡出，避免生硬跳变
-                        enterTransition = {
-                            fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 14 }
-                        },
-                        exitTransition = { fadeOut(tween(160)) },
-                        popEnterTransition = { fadeIn(tween(220)) },
-                        popExitTransition = {
-                            fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 14 }
-                        },
-                        ) {
-                    composable(Screen.Home.route) {
-                        HomeScreen(
-                            playerViewModel = playerViewModel,
-                            onBannerClick = { banner ->
-                                when {
-                                    banner.songs.isNotEmpty() -> {
-                                        BannerNav.banner = banner
-                                        navController.navigate("banner_songs/${banner.id}")
-                                    }
-                                    banner.link.isNotBlank() -> {
-                                        runCatching {
-                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(banner.link)))
+                            // 页面过渡：轻微滑动 + 淡入淡出，避免生硬跳变
+                            enterTransition = {
+                                fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 14 }
+                            },
+                            exitTransition = { fadeOut(tween(160)) },
+                            popEnterTransition = { fadeIn(tween(220)) },
+                            popExitTransition = {
+                                fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 14 }
+                            },
+                            ) {
+                            composable(Screen.Home.route) {
+                                HomeScreen(
+                                    playerViewModel = playerViewModel,
+                                    onBannerClick = { banner ->
+                                        when {
+                                            banner.songs.isNotEmpty() -> {
+                                                BannerNav.banner = banner
+                                                navController.navigate("banner_songs/${banner.id}")
+                                            }
+                                            banner.link.isNotBlank() -> {
+                                                runCatching {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(banner.link)))
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                            },
-                        )
+                                    },
+                                )
+                            }
+                            composable(Screen.LocalMusic.route) {
+                                LocalMusicScreen(
+                                    viewModel = localMusicViewModel,
+                                    playerViewModel = playerViewModel,
+                                    onSelectFolder = { folderPicker.launch(null) },
+                                )
+                            }
+                            composable(Screen.Download.route) {
+                                DownloadScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.Category.route) {
+                                CategoryScreen(
+                                    onCategoryClick = { cat ->
+                                        // 分类分流（书籍阅读域 ADR 0011）：书籍分类进书单页，音乐分类走既有专辑页
+                                        CategoryNav.category = cat
+                                        if (cat.isBook) navController.navigate("book_list/${cat.id}")
+                                        else navController.navigate("category_albums/${cat.id}")
+                                    },
+                                )
+                            }
+                            composable(Screen.Latest.route) {
+                                LatestScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.Album.route) {
+                                AlbumScreen(
+                                    onAlbumClick = { album ->
+                                        AlbumNav.album = album
+                                        navController.navigate("album_songs/${album.id}")
+                                    },
+                                )
+                            }
+                            composable(Screen.MyList.route) {
+                                MyListScreen(
+                                    onPlaylistClick = { playlist ->
+                                        MyListNav.playlistId = playlist.id
+                                        MyListNav.playlistName = playlist.name
+                                        navController.navigate("mylist_detail/${playlist.id}")
+                                    },
+                                )
+                            }
+                            composable(Screen.MyPlaylistDetail.route) {
+                                PlaylistDetailScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.Favorites.route) {
+                                FavoritesScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.BannerSongs.route) {
+                                BannerSongsScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.AlbumSongs.route) {
+                                AlbumSongsScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.Search.route) {
+                                SearchScreen(
+                                    playerViewModel = playerViewModel,
+                                    onAlbumClick = { album ->
+                                        AlbumNav.album = album
+                                        navController.navigate("album_songs/${album.id}")
+                                    },
+                                    onArtistClick = { artist ->
+                                        ArtistNav.artist = artist
+                                        navController.navigate(Screen.ArtistSongs.route)
+                                    },
+                                    onMoreSongs = { query ->
+                                        SearchNav.query = query
+                                        navController.navigate(Screen.SearchSongs.route)
+                                    },
+                                )
+                            }
+                            composable(Screen.SearchSongs.route) {
+                                SearchSongsScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.ArtistSongs.route) {
+                                ArtistSongsScreen(playerViewModel = playerViewModel)
+                            }
+                            composable(Screen.BookList.route) {
+                                BookListScreen(
+                                    onBookClick = { book ->
+                                        ReaderNav.book = book
+                                        navController.navigate("reader/${book.id}")
+                                    },
+                                )
+                            }
+                            composable(Screen.Reader.route) {
+                                ReaderScreen()
+                            }
+                            composable(Screen.CategoryAlbums.route) {
+                                CategoryAlbumsScreen(
+                                    onAlbumClick = { album ->
+                                        AlbumNav.album = album
+                                        navController.navigate("album_songs/${album.id}")
+                                    },
+                                    onAutoOpen = { album ->
+                                        // 分类下仅一张专辑：直跳专辑歌曲页并替换当前栈条目，返回时直接回到分类列表页
+                                        AlbumNav.album = album
+                                        navController.navigate("album_songs/${album.id}") {
+                                            popUpTo(Screen.CategoryAlbums.route) { inclusive = true }
+                                        }
+                                    },
+                                )
+                        }
                     }
-                    composable(Screen.LocalMusic.route) {
-                        LocalMusicScreen(
-                            viewModel = localMusicViewModel,
-                            playerViewModel = playerViewModel,
-                            onSelectFolder = { folderPicker.launch(null) },
-                        )
-                    }
-                    composable(Screen.Download.route) {
-                        DownloadScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.Category.route) {
-                        CategoryScreen(
-                            onCategoryClick = { cat ->
-                                // 分类分流（书籍阅读域 ADR 0011）：书籍分类进书单页，音乐分类走既有专辑页
-                                CategoryNav.category = cat
-                                if (cat.isBook) navController.navigate("book_list/${cat.id}")
-                                else navController.navigate("category_albums/${cat.id}")
-                            },
-                        )
-                    }
-                    composable(Screen.Latest.route) {
-                        LatestScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.Album.route) {
-                        AlbumScreen(
-                            onAlbumClick = { album ->
-                                AlbumNav.album = album
-                                navController.navigate("album_songs/${album.id}")
-                            },
-                        )
-                    }
-                    composable(Screen.MyList.route) {
-                        MyListScreen(
-                            onPlaylistClick = { playlist ->
-                                MyListNav.playlistId = playlist.id
-                                MyListNav.playlistName = playlist.name
-                                navController.navigate("mylist_detail/${playlist.id}")
-                            },
-                        )
-                    }
-                    composable(Screen.MyPlaylistDetail.route) {
-                        PlaylistDetailScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.Favorites.route) {
-                        FavoritesScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.BannerSongs.route) {
-                        BannerSongsScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.AlbumSongs.route) {
-                        AlbumSongsScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.Search.route) {
-                        SearchScreen(
-                            playerViewModel = playerViewModel,
-                            onAlbumClick = { album ->
-                                AlbumNav.album = album
-                                navController.navigate("album_songs/${album.id}")
-                            },
-                            onArtistClick = { artist ->
-                                ArtistNav.artist = artist
-                                navController.navigate(Screen.ArtistSongs.route)
-                            },
-                            onMoreSongs = { query ->
-                                SearchNav.query = query
-                                navController.navigate(Screen.SearchSongs.route)
-                            },
-                        )
-                    }
-                    composable(Screen.SearchSongs.route) {
-                        SearchSongsScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.ArtistSongs.route) {
-                        ArtistSongsScreen(playerViewModel = playerViewModel)
-                    }
-                    composable(Screen.BookList.route) {
-                        BookListScreen(
-                            onBookClick = { book ->
-                                ReaderNav.book = book
-                                navController.navigate("reader/${book.id}")
-                            },
-                        )
-                    }
-                    composable(Screen.Reader.route) {
-                        ReaderScreen()
-                    }
-                    composable(Screen.CategoryAlbums.route) {
-                        CategoryAlbumsScreen(
-                            onAlbumClick = { album ->
-                                AlbumNav.album = album
-                                navController.navigate("album_songs/${album.id}")
-                            },
-                            onAutoOpen = { album ->
-                                // 分类下仅一张专辑：直跳专辑歌曲页并替换当前栈条目，返回时直接回到分类列表页
-                                AlbumNav.album = album
-                                navController.navigate("album_songs/${album.id}") {
-                                    popUpTo(Screen.CategoryAlbums.route) { inclusive = true }
-                                }
-                            },
-                        )
-                    }
-                    }
-                    }
-                    }
+                }
+            }
                 // Mini player below the scaffold：与底部导航连为一体的扁平长条；
                 // 书籍域两页（书单/阅读）不挂——阅读场景与音乐控件互不干扰（ADR 0011）
                 if (!isBookList && !isReader) {
