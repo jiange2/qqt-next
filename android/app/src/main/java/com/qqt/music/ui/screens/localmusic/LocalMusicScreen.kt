@@ -1,6 +1,7 @@
 package com.qqt.music.ui.screens.localmusic
 
 import android.Manifest
+import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,7 +46,6 @@ import com.qqt.music.ui.theme.InkSecondary
 import com.qqt.music.ui.theme.PlaceholderBg
 import com.qqt.music.ui.theme.WarmBackground
 import com.qqt.music.viewmodel.PlayerViewModel
-import java.io.File
 
 /**
  * 本地音乐页（歌曲 / 专辑两视图）：来源是系统媒体库（spec，推翻 ADR 0019）。
@@ -131,7 +131,6 @@ fun LocalMusicScreen(
                 onSelectView = { showAlbums = it },
                 songs = songs,
                 albums = albums,
-                viewModel = viewModel,
                 playerViewModel = playerViewModel,
                 onSongClick = { editingSong = it },
                 onAlbumClick = onAlbumClick,
@@ -148,7 +147,6 @@ fun LocalMusicScreen(
                 onSelectView = { showAlbums = it },
                 songs = songs,
                 albums = albums,
-                viewModel = viewModel,
                 playerViewModel = playerViewModel,
                 onSongClick = { editingSong = it },
                 onAlbumClick = onAlbumClick,
@@ -174,14 +172,13 @@ private fun LibraryArea(
     onSelectView: (Boolean) -> Unit,
     songs: List<LocalSong>,
     albums: List<LocalAlbum>,
-    viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
     onSongClick: (LocalSong) -> Unit,
     onAlbumClick: (LocalAlbum) -> Unit,
 ) {
     LibraryViewSwitch(albumSelected = showAlbums, onSelect = onSelectView)
     if (showAlbums) {
-        AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
+        AlbumGrid(albums = albums, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
     } else {
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -249,7 +246,6 @@ private fun ViewSwitchSegment(text: String, selected: Boolean, onClick: () -> Un
 @Composable
 private fun AlbumGrid(
     albums: List<LocalAlbum>,
-    viewModel: LocalMusicViewModel,
     onAlbumClick: (LocalAlbum) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -261,25 +257,24 @@ private fun AlbumGrid(
         modifier = modifier,
     ) {
         items(albums, key = { it.key }) { album ->
-            LocalAlbumCard(album = album, viewModel = viewModel, onClick = { onAlbumClick(album) })
+            LocalAlbumCard(album = album, onClick = { onAlbumClick(album) })
         }
     }
 }
 
 /** 专辑卡片：封面（无封面时占位图）+ 专辑名 + 艺术家 · 歌曲数 */
 @Composable
-private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, onClick: () -> Unit) {
-    val generation by viewModel.coverGeneration.collectAsState()
-    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（库刷新清缓存则靠代次）
-    val cover by produceState<File?>(null, album, generation) {
-        value = viewModel.albumCover(album)
-    }
+private fun LocalAlbumCard(album: LocalAlbum, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
     ) {
-        LocalAlbumCover(cover = cover, albumName = album.name, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+        LocalAlbumCover(
+            albumArtUri = album.albumArtUri,
+            albumName = album.name,
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+        )
         Text(
             text = album.name,
             fontSize = 13.sp,
@@ -301,32 +296,32 @@ private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, on
 }
 
 /**
- * 专辑封面：封面文件来自 App 私有封面缓存（[LocalMusicViewModel.albumCover]），
- * 没有封面时显示占位图。model 是本地 File，AsyncImage 不会发起网络请求。
+ * 专辑封面：系统媒体库预抽取的专辑图（按成员行的媒体库专辑 ID 构造的 albumart URI，
+ * 见 [LocalAlbum.albumArtUri]），由 Coil 直接加载并缓存（内存 + 磁盘）——content:// 本地读取，
+ * 不发起任何网络请求。加载中与加载失败（含系统没有该专辑的预抽取图）都露出底层占位图，
+ * 与在线专辑卡片的占位风格一致。
  */
 @Composable
-internal fun LocalAlbumCover(cover: File?, albumName: String, modifier: Modifier = Modifier) {
+internal fun LocalAlbumCover(albumArtUri: Uri, albumName: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(16.dp))
             .background(PlaceholderBg),
         contentAlignment = Alignment.Center,
     ) {
-        if (cover != null) {
-            AsyncImage(
-                model = cover,
-                contentDescription = albumName,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            Icon(
-                Icons.Outlined.Album,
-                contentDescription = null,
-                tint = InkFaint,
-                modifier = Modifier.size(32.dp),
-            )
-        }
+        // 占位图垫底：加载中 / 加载失败（无专辑图）时露出，封面加载成功后被盖住
+        Icon(
+            Icons.Outlined.Album,
+            contentDescription = null,
+            tint = InkFaint,
+            modifier = Modifier.size(32.dp),
+        )
+        AsyncImage(
+            model = albumArtUri,
+            contentDescription = albumName,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
