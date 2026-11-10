@@ -63,6 +63,7 @@ class CarLyricsSync(private val player: Player, private val scope: CoroutineScop
             // lastIndex 归位 MIN，歌词就绪即写首两句
             lastIndex = Int.MIN_VALUE
             loadJob?.cancel()
+            // 本地歌曲不带 EXTRA_SONG_ID（无服务端歌词），此处空 id 分支即天然不拉歌词
             loadJob = if (songId.isNullOrEmpty()) null else scope.launch {
                 lines = (loadLyrics(songId) as? LyricsOutcome.Ready)?.lines
             }

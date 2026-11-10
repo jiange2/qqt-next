@@ -496,7 +496,7 @@ curl -X POST http://your-domain.com/api.php \
 
 ---
 
-### get_recent_songs — 获取最近播放歌曲
+### get_recent_songs — 按 ID 列表获取歌曲
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -1295,7 +1295,7 @@ curl -X POST http://your-domain.com/api.php \
 | 歌曲评分 | `song_rating` | 对歌曲打分（1-5 星） |
 | 举报歌曲 | `song_report` | 举报歌曲 |
 | 建议歌曲 | `song_suggest` | 用户推荐歌曲 |
-| 最近播放 | `get_recent_songs` | 按 ID 列表获取歌曲 |
+| 按 ID 取歌曲 | `get_recent_songs` | 按 ID 列表获取歌曲（客户端用于收藏页按 ID 换详情） |
 | 用户注册 | `user_register` | 普通/Google/Facebook 注册 |
 | 用户登录 | `user_login` | 普通/Google/Facebook 登录 |
 | 用户信息 | `user_profile` | 获取用户基本信息 |

@@ -28,6 +28,7 @@ fun MusicTopBar(
     onSearchClick: () -> Unit,
     showBackButton: Boolean = false,
     onBackClick: () -> Unit = {},
+    actions: (@Composable () -> Unit)? = null,
 ) {
     TopAppBar(
         title = {
@@ -52,8 +53,13 @@ fun MusicTopBar(
         },
         actions = {
             if (!showBackButton) {
-                IconButton(onClick = onSearchClick) {
-                    Icon(Icons.Default.Search, contentDescription = "Search", tint = BrandOrange)
+                // 页面自带菜单时（本地音乐）接管右侧操作区，否则维持全局搜索入口
+                if (actions != null) {
+                    actions()
+                } else {
+                    IconButton(onClick = onSearchClick) {
+                        Icon(Icons.Default.Search, contentDescription = "Search", tint = BrandOrange)
+                    }
                 }
             }
         },

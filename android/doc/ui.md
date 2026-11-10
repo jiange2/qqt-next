@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，收起整页滑出即时露出（无过渡动画）。5 个底部 Tab + 4 个抽屉项 + 7 个详情页（横幅歌曲/专辑歌曲/分类专辑/歌单详情/搜索/歌曲结果/艺术家歌曲）共 16 个页面目的地（全屏播放器为导航外覆盖层，非路由目的地）。
+App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppNavigation` 组装：常驻下层为 `ModalNavigationDrawer`（侧边抽屉）包裹 `Column`（分为 Scaffold + MiniPlayer），`Scaffold` 包含 TopBar 和可选的 BottomBar，`MiniPlayer` 常驻显示在底部（无歌曲时显示占位符）；全屏播放器不走导航，以覆盖层状态 `playerOverlay` 叠加其上，下层页面原样保持，收起整页滑出即时露出（无过渡动画）。底部导航为 4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中央凸出「我的下载」圆钮；另有抽屉项与详情页（本地专辑 / 横幅歌曲 / 专辑歌曲 / 分类专辑 / 书单 / 阅读 / 歌单详情 / 搜索 / 歌曲结果 / 艺术家歌曲）。全屏播放器为导航外覆盖层，非路由目的地。
 
 ## 关键文件
 
@@ -13,9 +13,11 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/navigation/Screen.kt` | 所有路由枚举（route 字符串 + title），`bottomNavRoutes` / `drawerTopRoutes` 分组 |
 | `ui/navigation/AppNavigation.kt` | 整体框架：ModalNavigationDrawer + Column（Scaffold + MiniPlayer）+ NavHost，控制 TopBar 和 MiniPlayer 显示逻辑 |
 | `ui/components/TopBar.kt` | `MusicTopBar`：橙色顶栏，标题支持文本截断（`TextOverflow.Ellipsis`）和宽度限制防止溢出，左侧菜单/返回，右侧搜索 |
-| `ui/components/BottomBar.kt` | `MusicBottomBar`：5个 Tab，中间「我的下载」为突出 FAB 样式 |
-| `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6个导航项 + 底部设置 |
+| `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
+| `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、扫描进度与空态、文件夹管理弹层与顶栏菜单）、`LocalMusicViewModel`（索引与覆盖层、扫描、权限核对、封面）、`LocalSongRow`、`LocalMetadataEditSheet` |
+| `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列 |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
 | `ui/screens/player/LrcParser.kt` | LRC 歌词解析（`[mm:ss]`/`[mm:ss.xx]`/`[mm:ss.xxx]` 与一行多时间标签） |
@@ -28,17 +30,18 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | 路由 | 标题 | 位置 | ViewModel |
 |------|------|------|-----------|
 | `home` | 首页 | 底部 Tab 1 | `HomeViewModel` |
-| `recent` | 最近播放 | 底部 Tab 2 | `RecentViewModel` |
-| `download` | 我的下载 | 底部 Tab 3（FAB） | 无（读 PrefsManager） |
-| `category` | 音乐分类 | 底部 Tab 4 | `CategoryViewModel` |
-| `latest` | 最新歌曲 | 底部 Tab 5 | `LatestViewModel` |
+| `local_music` | 本地音乐 | 底部 Tab 2 | `LocalMusicViewModel`（提升在导航层） |
+| `download` | 我的下载 | 底部导航中央 FAB | 无（读 `DownloadManager`） |
+| `category` | 音乐分类 | 底部 Tab 3 | `CategoryViewModel` |
+| `latest` | 最新歌曲 | 底部 Tab 4 | `LatestViewModel` |
 | `album` | 音乐专辑 | 侧边抽屉 | `AlbumViewModel` |
-| `mylist` | 我的列表 | 侧边抽屉 | 无 |
+| `mylist` | 我的歌单 | 侧边抽屉 | 无 |
 | `favorites` | 歌曲收藏 | 侧边抽屉 | 无（待实现） |
 | `settings` | 设置中心 | 侧边抽屉底部 | 无 |
 | —（无路由） | 播放器：全屏覆盖层，`playerOverlay` 状态控制开关，不走 navigate/popBackStack | 全屏（无 TopBar/BottomBar） | 无（使用 PlayerViewModel） |
 | `banner_songs/{bid}` | 歌曲（横幅标题） | 详情页：首页轮播点击 | 无（数据随首页接口内嵌，经 `BannerNav` 交接） |
 | `album_songs/{aid}` | 专辑（专辑名） | 详情页：抽屉专辑列表/分类专辑页点击 | `AlbumSongsViewModel` |
+| `local_album/{lid}` | 本地专辑（专辑名） | 详情页：本地音乐专辑视图卡片点击；`lid` 为 Base64 URL-safe 编码的专辑键 | 复用 `LocalMusicViewModel` |
 | `category_albums/{cid}` | 分类（分类名） | 详情页：分类列表页点击（backend-next ADR 0009） | `CategoryAlbumsViewModel` |
 | `search` | 搜索 | 详情页：TopBar 搜索图标点击 | `SearchViewModel` |
 | `search_songs` | 搜索关键词 | 详情页：搜索页「查看更多歌曲」 | `SearchSongsViewModel` |
@@ -77,13 +80,21 @@ Box(modifier = Modifier.fillMaxSize()) {
     }
 }
 
-// 底部导航只在 5 个 Tab 路由显示
+// 底部导航只在底部 Tab 路由显示
 val showBottomNav = currentRoute in Screen.bottomNavRoutes
 
-// Settings / 详情页（含搜索组三页）：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
-gesturesEnabled = ... && !isSearchSongs && !isArtistSongs && !isSearch
-showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
+// Settings / 详情页（含搜索组三页、本地专辑页）：隐藏抽屉手势，显示返回按钮（而非菜单按钮）
+gesturesEnabled = ... && !isSearchSongs && !isArtistSongs && !isSearch && !isLocalAlbum
+showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlbum
 ```
+
+本地音乐相关接线：
+
+- `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与文件夹管理弹层共用同一实例；离开页面扫描继续，回来不重复发起
+- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：重新扫描（扫描中显示「取消扫描」）、添加音乐文件夹、管理音乐文件夹
+- 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
+- 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动重扫
+- 选目录统一走 `ActivityResultContracts.OpenDocumentTree()`，返回的树 URI 交给 `addRoot()` 持久化授权并扫描
 
 ## 各页面说明
 
@@ -94,15 +105,38 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
 - 热度行不用心形：心形在既有 UI 语义中已被「喜欢/收藏」占用；歌手与热度保持行式文本（沿用旧卡样式），仅曲风为 chip
 - 卡片点击 = 点播该曲并以整个热门榜单替换播放队列
 - 「查看所有」按钮已移除：热门榜单条数由后端 `API_LATEST_LIMIT` 决定，无全量分页接口，撑不起全量页
-- 最近播放区块已从首页移除（连带清理 `loadRecent()`、ON_RESUME 刷新、`recentSongs` 状态与导航接线）；「最近播放」仍由底部导航 tab 承载
 - `HomeUiState`：`isLoading`, `banners`, `trendingSongs`, `error`
 
-### RecentScreen / RecentViewModel
-- 从 `PrefsManager.getRecentIds()` 获取最近播放 ID 列表，调用 `MusicRepository.getRecentSongs()` 查详情，按点播顺序重排（最新点播在前）
-- 空态显示提示文字
+### LocalMusicScreen / LocalMusicViewModel（本地音乐）
+- 页面由「歌曲 / 专辑」分段控件组成，进入默认歌曲视图，不记忆上次选择；两视图都完全来自本机扫描索引，不发起任何网络请求
+- **进入与授权**：未授权任何文件夹 → 引导空态 + 「选择音乐文件夹」（系统目录选择器，`OpenDocumentTree`）；选完即持久化读授权并自动首扫，不申请任何运行时存储权限
+- **歌曲视图**：按合并展示标题升序（`Collator(Locale.CHINA)`）列出 `LocalSongRow`（序号 / 标题 / 艺术家 / 时长）；点击以当前完整歌曲列表为播放队列，来源记为 `QueueSource.LOCAL`
+- **专辑视图**：两列卡片墙（封面 + 专辑名 + 艺术家 · 歌曲数）；点击进入本地专辑页
+- **顶栏菜单**：重新扫描 / 添加音乐文件夹 / 管理音乐文件夹；扫描中「重新扫描」变「取消扫描」
+- **扫描状态**：首次扫描（无旧列表）给整页进度与取消；重扫时旧列表照常可用，只加顶部进度条；完成 Toast「新增 x 首、移除 y 首」
+- **空态与失效**：
+  - 扫描取消 / 失败且无旧结果 → 对应空态 + 重试入口
+  - 已授权但扫描结果为 0 → 「没有找到可播放的音乐」+ 支持格式提示 + 重新扫描
+  - 全部根目录授权被系统回收 → 「音乐文件夹访问权限已失效」+ 重新选择；部分失效 → 顶部提示条 +「管理」，来自失效目录的歌曲灰显
+  - 索引文件损坏 → 提示重新扫描（根目录从系统授权重建）
+- **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）
+- 扫描索引与覆盖层见 [storage.md](storage.md)；扫描口径见 `LocalMusicScanner`（SAF 递归、格式白名单、`.nomedia` / 隐藏文件跳过、内容指纹身份）
+
+### LocalAlbumScreen（本地专辑页）
+- 路由 `local_album/{lid}`，`lid` 是 Base64 URL-safe 编码的专辑键；顶栏标题取专辑名
+- 专辑头：封面 + 专辑名 + 艺术家 + 歌曲数；歌曲按音轨号升序（无音轨号按标题）
+- 点歌以整张专辑为播放队列，来源仍是 `QueueSource.LOCAL`（与本地音乐页共用同一份播放模式记忆）
+- 长按歌曲行同样打开元数据编辑面板；专辑因重扫、移除目录或改专辑名而不存在时显示「专辑已不存在」
+
+### LocalMetadataEditSheet（元数据编辑面板）
+- 底部弹层，字段：标题、艺术家、专辑、专辑艺术家、音轨号、年份 + 「恢复默认」
+- 入口两个：本地音乐页 / 本地专辑页长按歌曲行；全屏播放器「更多菜单 → 编辑信息」（仅当前歌曲为本地歌曲且索引里找得到该记录时出现）
+- 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与文件标签相同不算「改过」
+- 保存只写覆盖层，不回写音频文件；保存后歌曲列表、专辑分组与封面立即刷新，并同步播放器上的标题 / 艺术家展示值（不打断播放）
 
 ### DownloadScreen（无 ViewModel）
-- 直接调用 `PrefsManager.getDownloadedSongs()` 读取本地缓存，`remember { }` 初始化一次（不响应实时变化）
+- 直接从 `DownloadManager.downloadedSongs` / `activeDownloads` 收集下载完成与进行中的列表（实时响应）
+- 点歌以当前下载列表为播放队列，来源记为 `QueueSource.DOWNLOADS`；删除走 `DownloadManager.deleteDownload()`
 
 ### CategoryScreen / CategoryViewModel
 - 2 列 `LazyVerticalGrid`，滚动到底部自动加载下一页（无限分页）
@@ -158,11 +192,16 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch
 - 按压反馈：全页可点控件无波纹、无按压投影/抬升；线性图标与文字类按下变淡（α 0.5，按下约 100ms、松手约 150ms），62dp 实心播放键改为按压缩放至 0.9 回弹（graphicsLayer 置于 shadow 前，投影随钮缩放）；手感参数集中在 `PlayerScreen.kt` 底部常量（`PressDimAlpha` / `PressScaleDown` / `PressInMs` / `PressOutMs`）；封面/播放键/滑钮的常驻投影是视觉层次，不属于反馈
 - 歌曲封面（歌曲页槽位）：24dp 圆角方形 1:1，藏青阴影居中，不可点（无按压反馈）；切歌时旧图淡出、新图淡入并从 0.95 放大进场（AnimatedContent，400ms 与背景过渡同步）；暂停时饱和度 1→0.7 + 叠加 18% 深色 scrim（300ms），恢复播放还原；加载中/失败/无 URL 统一显示 72dp 音符占位图标（PlayerIconGray），图片加载成功后覆盖其上
 - 标题区（左对齐）：歌名 / 歌手 / 队列位置（`当前序号 / 队列总数`）
-- 功能图标行：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多；图标 28dp 居中于 48dp 触控框，行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘与进度条两端对齐；喜欢为本地实心/描边心形切换；下载点击将当前歌曲入队下载，下载中图标位变 28dp 品牌橙环形进度 + 中心百分比数字（排队/总长未知时为不确定式旋转圈，点击无反应），已下载图标变 DownloadedGreen（#4CAF50）且点击无反应（取消/删除在下载列表页）；下载中/已下载均为不可操作态、无按压反馈（已下载由 `PlayerGlyph` `enabled = false` 实现，环形进度本身不可点）；播放设置 / 加入歌单 / 更多点击打开对应底部浮层（播放设置=定时关闭，加入歌单=勾选本地歌单/新建，更多=当前歌曲扩展操作）；定时生效期间播放设置图标右上角小圆点角标
+- 功能图标行：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多；图标 28dp 居中于 48dp 触控框，行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘与进度条两端对齐；喜欢为本地实心/描边心形切换；下载点击将当前歌曲入队下载，下载中图标位变 28dp 品牌橙环形进度 + 中心百分比数字（排队/总长未知时为不确定式旋转圈，点击无反应），已下载图标变 DownloadedGreen（#4CAF50）且点击无反应（取消/删除在下载列表页）；下载中/已下载均为不可操作态、无按压反馈（已下载由 `PlayerGlyph` `enabled = false` 实现，环形进度本身不可点）；播放设置 / 加入歌单 / 更多点击打开对应底部浮层（播放设置=定时关闭，加入歌单=勾选我的歌单/新建，更多=当前歌曲扩展操作）；定时生效期间播放设置图标右上角小圆点角标
+- 本地歌曲差异（`Song.isLocalSong()`，ID 走 `local:` 命名空间或 URL 是 `content://`）：
+  - 功能图标行只剩「播放设置」与「更多」：收藏 / 下载 / 加入歌单对本地歌曲无意义或必然失败，一律不出现
+  - 页签只剩「歌曲」，没有歌词页与刷新入口，播放期间不发 `song_info` 请求；切回在线歌曲后全部恢复
+  - 「更多」里没有评分，换成「编辑信息」，打开与列表长按共用的 `LocalMetadataEditSheet`；索引里找不到该记录（目录已移除等）时入口也收起
+  - 队列来源为 `QueueSource.LOCAL`，播放模式按该来源单独记忆
 - 进度条：藏青 4dp 细轨道 + 16dp 小圆点滑钮（20dp slot 容器内居中，规避 M3 slot 贴左上问题）；M3 Slider 轨道两端各内缩半个 slot 宽（10dp），Slider 容器 padding 18dp（= 28 − 10）补偿，使轨道两端落在 28dp 内容线上（改滑钮/slot 尺寸需同步调整）；下方时间标签行左右 28dp
-- 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（点击暂为空实现），含 navigationBarsPadding 手势区避让
+- 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（打开队列浮层，点选为队列内跳播），含 navigationBarsPadding 手势区避让
 - 高度自适应（中部播放区正常屏固定高度、整体不可拖动）：外层 BoxWithConstraints 读取中部视口，首槽位（双页 Pager：歌词页/封面页）高度 = 封面边长 = min(0.76×宽, 剩余高度)（固定内容高度按 280dp×系统字体缩放保守估算、宁大勿小，估算误差全部由间距吸收），四段间距 = 最小值（30/16/10/18）+ weight 均摊剩余，内容总高恒等于视口；仅矮屏（视口放不下 0.5×宽下限封面 + 保守估算内容）退回整体滚动托底，主控行不随滚
-- 通过点击 MiniPlayer 或导航到 `Screen.Player.route` 打开
+- 通过点击 MiniPlayer 打开（`playerOverlay` 覆盖层，非路由）
 - 返回按钮调用 `onBackClick()` 返回上一页（无菜单栏/底部栏干扰）；顶栏下箭头与系统返回同效
 
 ## 添加新页面的步骤

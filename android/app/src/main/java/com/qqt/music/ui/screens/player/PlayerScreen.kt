@@ -84,7 +84,9 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import com.qqt.music.data.local.FavoriteStore
 import com.qqt.music.data.local.LocalPlaylistStore
+import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.RatingStore
+import com.qqt.music.data.local.isLocalSong
 import com.qqt.music.data.repository.MusicRepository
 import com.qqt.music.data.repository.RatingOutcome
 import com.qqt.music.download.DownloadManager
@@ -94,6 +96,8 @@ import com.qqt.music.ui.components.PlayerIcons
 import com.qqt.music.ui.components.SongThumbnail
 import com.qqt.music.ui.components.rememberFullyCached
 import com.qqt.music.ui.components.songIndexFontSize
+import com.qqt.music.ui.screens.localmusic.LocalMetadataEditSheet
+import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.CachedGold
 import com.qqt.music.ui.theme.DownloadedGreen
@@ -121,11 +125,16 @@ import kotlinx.coroutines.withContext
  * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
  * 正常屏中部播放区固定高度、整体不可拖动（四段间距 = 最小值 + weight 均摊剩余，估算误差由间距吸收）；
  * 矮屏内容整体滚动托底。状态栏图标在本页保持深色，离开时还原；歌词页可见且播放进行中（含装载与缓冲）时屏幕常亮，滑回歌曲页、暂停或关闭本页即恢复系统熄屏（CONTEXT.md「屏幕常亮」）。
+ * 播放本地歌曲时（播放兼容层 ID 走 `local:` 命名空间）只剩播放设置与「更多」：收藏 / 下载 / 加入歌单与歌词页
+ * 一律不出现，播放期间也不发起歌词（song_info）请求；「更多」里在线歌是评分、本地歌是「编辑信息」
+ * （与歌曲列表长按同一个编辑面板）；切回在线歌曲后全部恢复。
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PlayerScreen(
     playerViewModel: PlayerViewModel,
+    // 本地歌曲的元数据编辑走本地音乐的同一份索引与覆盖层（只在本地歌曲时用到）
+    localMusicViewModel: LocalMusicViewModel,
     onBackClick: () -> Unit = {},
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
@@ -142,13 +151,20 @@ fun PlayerScreen(
     val activeDownloads by DownloadManager.activeDownloads.collectAsState()
 
     val songId = currentSong?.id
+    // 本地歌曲（spec：`local:<指纹十六进制>`）：没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载注定失败
+    val isLocalSong = currentSong?.isLocalSong() == true
+    // 当前在播的本地歌曲（索引里按 ID 找回来）：元数据编辑要以它为准，
+    // 找不到时（目录被移除等）连「编辑信息」入口也不出现——没有可改的记录
+    val localSongs by localMusicViewModel.songs.collectAsState()
+    val localSong = if (isLocalSong) localSongs.firstOrNull { it.id == songId } else null
 
     // 收藏选中态实时来自 FavoriteStore，切歌自动跟随（本地收藏，ADR 0005）
     val favouriteIds by FavoriteStore.favouriteIds.collectAsState()
     val isFavorite = songId != null && songId in favouriteIds
 
-    // 双页 Pager：page 0 = 歌曲页（左）、page 1 = 歌词页（右），默认落在歌曲页；页签选中态由滑动进度连续派生
-    val pagerState = rememberPagerState(initialPage = 0) { 2 }
+    // 双页 Pager：page 0 = 歌曲页（左）、page 1 = 歌词页（右），默认落在歌曲页；页签选中态由滑动进度连续派生。
+    // 本地歌曲没有歌词页，页数收成 1：没有可滑到的第二页，也就没有歌词入口
+    val pagerState = rememberPagerState(initialPage = 0) { if (isLocalSong) 1 else 2 }
     // 根级 scrollable 的手势量与 Pager 的滚动量符号相反，直驱会内容反向跟手（真机实证：手往左滑、内容往右跑），
     // 包一层把送入 pagerState 的量取反使内容跟手；scroll 仍转发进 pagerState 自己的 scroll 块，
     // isScrollInProgress / 打断翻页动画的语义不变（松手吸附监听照旧挂 pagerState）
@@ -171,6 +187,11 @@ fun PlayerScreen(
         }
     }
     val tabSelection = (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
+    // 切到本地歌曲时歌词页整体消失：不管库层是否已经把页码归一，都显式回到歌曲页——
+    // 否则本地歌曲期间封面区会是空白，切回在线歌又突然落回歌词页并补发一次 song_info 请求
+    LaunchedEffect(isLocalSong) {
+        if (isLocalSong) pagerState.scrollToPage(0)
+    }
     // 全域横滑松手后的落页校正：拖动/fling 结束（isScrollInProgress 变 false）若停在两页之间，动画到最近页；
     // 页签点击的 animateScrollToPage 结束时已在整页位置，此处为空操作
     LaunchedEffect(pagerState) {
@@ -186,10 +207,11 @@ fun PlayerScreen(
     }
 
     // 歌词加载（ADR 0014）：歌词字段只在 song_info 详情接口下发，滑到歌词页才请求——详情请求在后端计一次
-    // 播放，播放器打开即取会给播放量灌水；会话缓存避免切回已播歌重复请求；顶栏「刷新」递增 lyricsReload 强制重取
+    // 播放，播放器打开即取会给播放量灌水；会话缓存避免切回已播歌重复请求；顶栏「刷新」递增 lyricsReload 强制重取。
+    // 本地歌曲没有歌词页（lyricsPageVisible 恒 false），因此播放期间不发任何 song_info 请求
     var lyricsState by remember { mutableStateOf<LyricsState>(LyricsState.Loading) }
     var lyricsReload by remember { mutableStateOf(0) }
-    val lyricsPageVisible = pagerState.currentPage == 1
+    val lyricsPageVisible = !isLocalSong && pagerState.currentPage == 1
     LaunchedEffect(lyricsPageVisible, songId, lyricsReload) {
         if (!lyricsPageVisible) return@LaunchedEffect
         if (songId == null) {
@@ -237,6 +259,8 @@ fun PlayerScreen(
     var showPlaylistSheet by remember { mutableStateOf(false) }
     var showMoreSheet by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
+    // 正在编辑元数据的本地歌曲：非空即打开编辑面板（更多菜单 → 编辑信息）
+    var editingSong by remember { mutableStateOf<LocalSong?>(null) }
 
     // 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer
     val playMode by PlayerSettingsManager.playMode.collectAsState()
@@ -337,17 +361,24 @@ fun PlayerScreen(
                 modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.Center,
             ) {
-                // 页签 = 真实导航：文案序「歌曲=左页 / 歌词=右页」，选中程度取自 Pager 滑动进度，滑动中连续过渡
-                listOf("歌曲", "歌词").forEachIndexed { index, label ->
+                // 页签 = 真实导航：文案序「歌曲=左页 / 歌词=右页」，选中程度取自 Pager 滑动进度，滑动中连续过渡；
+                // 本地歌曲没有歌词，页签只剩「歌曲」，不留点了没内容的空入口
+                val tabs = if (isLocalSong) listOf("歌曲") else listOf("歌曲", "歌词")
+                tabs.forEachIndexed { index, label ->
                     val selection = if (index == 0) 1f - tabSelection else tabSelection
                     PlayerTab(label = label, selection = selection) {
                         scope.launch { pagerState.animateScrollToPage(if (index == 0) 0 else 1) }
                     }
                 }
             }
-            // 刷新：清当前歌歌词会话缓存并重取（内嵌重解析、外链重下载）
-            PlayerGlyph(PlayerIcons.Refresh, "刷新", 20.dp, PlayerNavy) {
-                if (songId != null) lyricsReload++
+            // 刷新：清当前歌歌词会话缓存并重取（内嵌重解析、外链重下载）；本地歌曲无歌词可刷，
+            // 槽位用等宽占位撑住，页签不因入口消失而偏移
+            if (isLocalSong) {
+                Spacer(Modifier.size(20.dp))
+            } else {
+                PlayerGlyph(PlayerIcons.Refresh, "刷新", 20.dp, PlayerNavy) {
+                    if (songId != null) lyricsReload++
+                }
             }
             Spacer(Modifier.width(14.dp))
         }
@@ -508,21 +539,30 @@ fun PlayerScreen(
                 if (!isShortScreen) Spacer(Modifier.weight(1f))
 
                 // ── 功能图标行：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多 ──
-                // 图标 28dp 居中于 48dp 触控框；行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘贴进度条两端
+                // 图标 28dp 居中于 48dp 触控框；行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘贴进度条两端。
+                // 本地歌曲只留播放设置与「更多」：收藏 / 加入歌单按服务端 ID 落库，下载对设备上的文件无意义；
+                // 「更多」对本地歌曲有内容——里面是「编辑信息」，所以它不随其它三个一起收起
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 18.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    // 本地歌曲只剩两个动作，居中放置（SpaceBetween 条目少时会贴两边）
+                    horizontalArrangement = if (isLocalSong) {
+                        Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally)
+                    } else {
+                        Arrangement.SpaceBetween
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PlayerGlyph(
-                        icon = if (isFavorite) PlayerIcons.LikeFilled else PlayerIcons.Like,
-                        desc = "喜欢",
-                        size = 28.dp,
-                        tint = if (isFavorite) BrandOrange else PlayerNavy,
-                        touchSize = 48.dp,
-                    ) { songId?.let { FavoriteStore.toggle(it) } }
+                    if (!isLocalSong) {
+                        PlayerGlyph(
+                            icon = if (isFavorite) PlayerIcons.LikeFilled else PlayerIcons.Like,
+                            desc = "喜欢",
+                            size = 28.dp,
+                            tint = if (isFavorite) BrandOrange else PlayerNavy,
+                            touchSize = 48.dp,
+                        ) { songId?.let { FavoriteStore.toggle(it) } }
+                    }
                     // 播放设置入口：定时生效期间图标右上角小圆点角标（倒计时是不可见状态，需要常驻可见性）
                     Box {
                         PlayerGlyph(PlayerIcons.Equalizer, "播放设置", 28.dp, PlayerNavy, touchSize = 48.dp) {
@@ -539,29 +579,35 @@ fun PlayerScreen(
                             )
                         }
                     }
-                    if (isCurrentDownloading) {
-                        // 下载中：环形进度 + 中心百分比（排队/总长未知时为不确定式旋转圈），点击无反应
-                        val state = activeDownloads[songId]?.state
-                        PlayerDownloadProgress(
-                            progress = (state as? DownloadManager.ActiveState.Downloading)?.progress,
-                        )
-                    } else {
-                        PlayerGlyph(
-                            icon = PlayerIcons.Download,
-                            desc = "下载",
-                            size = 28.dp,
-                            tint = if (isCurrentDownloaded) DownloadedGreen else PlayerNavy,
-                            touchSize = 48.dp,
-                            enabled = !isCurrentDownloaded,
-                        ) {
-                            currentSong?.let { DownloadManager.enqueue(it) }
+                    if (!isLocalSong) {
+                        if (isCurrentDownloading) {
+                            // 下载中：环形进度 + 中心百分比（排队/总长未知时为不确定式旋转圈），点击无反应
+                            val state = activeDownloads[songId]?.state
+                            PlayerDownloadProgress(
+                                progress = (state as? DownloadManager.ActiveState.Downloading)?.progress,
+                            )
+                        } else {
+                            PlayerGlyph(
+                                icon = PlayerIcons.Download,
+                                desc = "下载",
+                                size = 28.dp,
+                                tint = if (isCurrentDownloaded) DownloadedGreen else PlayerNavy,
+                                touchSize = 48.dp,
+                                enabled = !isCurrentDownloaded,
+                            ) {
+                                currentSong?.let { DownloadManager.enqueue(it) }
+                            }
+                        }
+                        PlayerGlyph(PlayerIcons.PlaylistAdd, "加入歌单", 28.dp, PlayerNavy, touchSize = 48.dp) {
+                            showPlaylistSheet = true
                         }
                     }
-                    PlayerGlyph(PlayerIcons.PlaylistAdd, "加入歌单", 28.dp, PlayerNavy, touchSize = 48.dp) {
-                        showPlaylistSheet = true
-                    }
-                    PlayerGlyph(PlayerIcons.More, "更多", 28.dp, PlayerNavy, touchSize = 48.dp) {
-                        showMoreSheet = true
+                    // 更多：在线歌是评分，本地歌是「编辑信息」（spec：入口只在当前歌曲为本地歌曲时出现）；
+                    // 本地歌曲的索引记录都找不到时（目录已被移除）没有可改的记录，入口一并收起
+                    if (!isLocalSong || localSong != null) {
+                        PlayerGlyph(PlayerIcons.More, "更多", 28.dp, PlayerNavy, touchSize = 48.dp) {
+                            showMoreSheet = true
+                        }
                     }
                 }
 
@@ -881,7 +927,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── 更多菜单浮层：当前歌曲的扩展操作（现仅评分，按可扩展列表实现，ADR 0007）──
+        // ── 更多菜单浮层：当前歌曲的扩展操作（在线歌是评分，本地歌是编辑信息；按可扩展列表实现，ADR 0007）──
         if (showMoreSheet) {
             var showRatingDialog by remember { mutableStateOf(false) }
             ModalBottomSheet(
@@ -902,20 +948,44 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.height(12.dp))
 
-                    // 评分入口：无播放歌曲时为不可操作态（不提供按压反馈，与 PlayerGlyph enabled 语义一致）
-                    val canRate = currentSong != null
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer { alpha = if (canRate) 1f else 0.4f }
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(enabled = canRate) { showRatingDialog = true }
-                            .padding(horizontal = 4.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(PlayerIcons.Star, contentDescription = null, tint = PlayerNavy, modifier = Modifier.size(22.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Text("评分", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = PlayerNavy)
+                    // 评分入口：无播放歌曲时为不可操作态（不提供按压反馈，与 PlayerGlyph enabled 语义一致）；
+                    // 本地歌曲按服务端 ID 评分必然失败，整条不出现（本地歌没有评分，这里兼作兜底）
+                    if (!isLocalSong) {
+                        val canRate = currentSong != null
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer { alpha = if (canRate) 1f else 0.4f }
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable(enabled = canRate) { showRatingDialog = true }
+                                .padding(horizontal = 4.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(PlayerIcons.Star, contentDescription = null, tint = PlayerNavy, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("评分", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = PlayerNavy)
+                        }
+                    }
+
+                    // 编辑信息：只对本地歌曲出现（spec：入口仅当前歌曲为本地歌曲时出现），
+                    // 打开的是与歌曲列表长按同一个面板（[LocalMetadataEditSheet]）；先关掉本浮层再开面板
+                    if (localSong != null) {
+                        val editable = localSong
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showMoreSheet = false
+                                    editingSong = editable
+                                }
+                                .padding(horizontal = 4.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(PlayerIcons.Edit, contentDescription = null, tint = PlayerNavy, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("编辑信息", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = PlayerNavy)
+                        }
                     }
                 }
             }
@@ -948,6 +1018,16 @@ fun PlayerScreen(
                     onDismiss = { showRatingDialog = false },
                 )
             }
+        }
+
+        // ── 元数据编辑面板：与歌曲列表长按同一个面板，保存后列表 / 专辑分组 / 封面立即刷新 ──
+        editingSong?.let { song ->
+            LocalMetadataEditSheet(
+                song = song,
+                viewModel = localMusicViewModel,
+                playerViewModel = playerViewModel,
+                onDismiss = { editingSong = null },
+            )
         }
 
         // ── 播放队列浮层：主控行队列入口打开，展示当前会话队列；点选为队列内跳播，不重建队列 ──

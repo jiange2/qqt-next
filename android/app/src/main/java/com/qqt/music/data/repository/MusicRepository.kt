@@ -154,8 +154,8 @@ object MusicRepository {
     /** get_recent_songs 每页条数（后端硬编码） */
     const val RECENT_PAGE_SIZE = 10
 
-    /** 按 ID 串查歌曲详情（最近播放/收藏的换详情通道）；后端按歌曲 ID 降序分页，返回顺序与传入
-     *  顺序无关，需调用方自行重排；返回 null 表示请求失败（区别于成功但无数据） */
+    /** 按 ID 串查歌曲详情（收藏页的换详情通道）；后端接口名沿用 get_recent_songs，按歌曲 ID 降序分页，
+     *  返回顺序与传入顺序无关，需调用方自行重排；返回 null 表示请求失败（区别于成功但无数据） */
     suspend fun getRecentSongs(songIds: String, page: Int, userId: Int = 0): List<Song>? {
         return try {
             val data = ApiClient.buildData(mapOf("method_name" to "get_recent_songs", "songs_ids" to songIds, "page" to page, "user_id" to userId))

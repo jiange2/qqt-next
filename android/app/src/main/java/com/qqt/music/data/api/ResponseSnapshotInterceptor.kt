@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * - 断网（[NetworkMonitor] 判定，含已连网但未通过联网验证）时命中即回放；
  *   弱网发包失败（IOException）兜底回放，两个口径都通向回放
  * - 仅回写 ONLINE_MP3 非空有效的响应（GET 文本为非空白），空列表不覆盖既有快照
- * - get_recent_songs 的 key 含 ID 串（最近播放每多一首即变，整串缓存必然 miss），
+ * - get_recent_songs 的 key 含 ID 串（收藏、我的歌单每增一首即变，整串缓存必然 miss），
  *   特殊化为按歌曲 ID 的实体级缓存；回放时按请求 ID 串顺序切片重组——调用方
  *   本就按传入顺序重排并合并全部页，合并结果与在线等价
  *

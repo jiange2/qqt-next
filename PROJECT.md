@@ -1,6 +1,6 @@
 # QQT Music（倾轻听）
 
-> **这是 AI 导航入口**。先读 [`CONTEXT-MAP.md`](CONTEXT-MAP.md) 了解上下文划分与领域词汇，再按需进入各上下文的文档。
+> **这是 AI 导航入口**。先读 [`GLOSSARY-MAP.md`](GLOSSARY-MAP.md) 了解上下文划分与领域词汇，再按需进入各上下文的文档。
 >
 > **领域词汇**：在代码/文档/沟通中统一使用各上下文 `CONTEXT.md` 中定义的术语（[backend/CONTEXT.md](backend/CONTEXT.md)、[android/CONTEXT.md](android/CONTEXT.md)）；重大决策的来龙去脉见 `docs/adr/` 下的 ADR。
 
@@ -35,7 +35,7 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 根据要修改的内容，直接跳转：
 
 **领域模型与决策**
-- **上下文划分、跨上下文关系** → [`CONTEXT-MAP.md`](CONTEXT-MAP.md)
+- **上下文划分、跨上下文关系** → [`GLOSSARY-MAP.md`](GLOSSARY-MAP.md)
 - **Backend 领域词汇** → [`backend/CONTEXT.md`](backend/CONTEXT.md)；**Android 领域词汇** → [`android/CONTEXT.md`](android/CONTEXT.md)
 - **架构决策记录** → [`docs/adr/`](docs/adr/)（系统级）、[`backend/docs/adr/`](backend/docs/adr/)、[`android/docs/adr/`](android/docs/adr/)
 
@@ -52,7 +52,7 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 - **Android 音乐播放器（播放控制/队列/缓存/元数据）** → 阅读 [`android/doc/player.md`](android/doc/player.md)
 - **Android 后台保活/自启动**（前台服务/WiFi 锁/设备重启） → 阅读 [`android/doc/background.md`](android/doc/background.md)
 - **Android UI/导航/页面** → 阅读 [`android/doc/ui.md`](android/doc/ui.md)
-- **Android 本地存储**（最近播放/已下载/播放进度） → 阅读 [`android/doc/storage.md`](android/doc/storage.md)
+- **Android 本地存储**（本地音乐索引与覆盖层/已下载/队列快照） → 阅读 [`android/doc/storage.md`](android/doc/storage.md)
 
 ## 跨模块约定
 

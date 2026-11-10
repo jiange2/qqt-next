@@ -77,11 +77,11 @@ fun MusicBottomBar(
                         modifier = Modifier.weight(1f),
                     )
                     BottomNavItem(
-                        selectedIcon = Icons.Filled.History,
-                        unselectedIcon = Icons.Outlined.History,
-                        label = "最近播放",
-                        selected = currentRoute == Screen.Recent.route,
-                        onClick = { navController.navigateSingle(Screen.Recent.route) },
+                        selectedIcon = Icons.Filled.MusicNote,
+                        unselectedIcon = Icons.Outlined.MusicNote,
+                        label = "本地音乐",
+                        selected = currentRoute == Screen.LocalMusic.route,
+                        onClick = { navController.navigateSingle(Screen.LocalMusic.route) },
                         modifier = Modifier.weight(1f),
                     )
                     // Center placeholder for FAB

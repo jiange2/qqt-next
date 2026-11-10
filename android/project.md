@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类、播放列表等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession），以及本地下载和最近播放记录。
+Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及扫描用户授权文件夹的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层）。
 
 ## 技术栈
 
@@ -35,7 +35,11 @@ app/src/main/java/com/qqt/music/
         Models.kt           # 其他模型：Artist、Album、Playlist、Category、Banner、HomeData
     local/
       NetworkMonitor.kt     # 断网检测（ADR 0012）：默认网络有效性 StateFlow，供拦截器与离线横幅共用
-      PrefsManager.kt       # SharedPreferences 封装：最近播放 ID 列表（50条）、已下载歌曲列表（Gson序列化）
+      PrefsManager.kt       # SharedPreferences 封装：收藏、我的歌单、已下载歌曲快照、设备 ID、已评记录
+      LocalMusicStore.kt    # 本地音乐索引与元数据覆盖层（JSON，原子写）
+      LocalMusicScanner.kt  # SAF 目录树扫描、内容指纹、标签读取
+      LocalCoverCache.kt    # 本地专辑封面缓存（文件夹封面 → 内嵌图）
+      LocalSong.kt / LocalAlbum.kt / LocalMusicRoot.kt / LocalMetadataEdit.kt
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
   player/
@@ -58,20 +62,20 @@ app/src/main/java/com/qqt/music/
     screens/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
-      recent/               # 最近播放（PrefsManager 读 ID  API 查详情）
-      download/             # 已下载（纯本地，PrefsManager.getDownloadedSongs()）
+      localmusic/           # 本地音乐（歌曲 / 专辑两视图、扫描、文件夹管理、元数据编辑）
+      localalbum/           # 本地专辑页（整张专辑播放）
+      download/             # 已下载（DownloadManager 实时列表）
       category/             # 分类 2列网格，无限分页
       artist/               # 艺术家 2列网格，分页
       album/                # 专辑 2列网格，分页
-      playlist/             # 播放列表 2列网格，分页
-      mylist/               # 我的列表（本地，暂无后端支持）
+      mylist/               # 我的歌单（本地，暂无后端支持）
       favorites/            # 收藏歌曲（需 user_id）
       settings/             # 设置（主题切换/关于/隐私政策）
       player/               # 播放器（全屏播放器 UI：专辑封面、进度条、播放控制）
     components/
       BannerCarousel.kt     # HorizontalPager 轮播（3秒自动翻页 + 圆点指示器）
       OfflineBanner.kt      # 离线横幅（ADR 0012）：断网时内容区顶部常显，联网自动收起
-      BottomBar.kt          # 底部导航栏（5 Tab，中间下载为 FAB 样式）
+      BottomBar.kt          # 底部导航栏（4 Tab，中间下载为 FAB 样式）
       DrawerContent.kt      # 侧边抽屉（橙色头图 + 6个导航项 + 底部设置）
       MiniPlayer.kt         # 底部迷你播放器：实时显示歌曲名、进度、播放控制
       SongListItem.kt       # 歌曲列表行（缩略图+标题+艺术家+评分+下载按钮）
@@ -87,7 +91,7 @@ app/src/main/java/com/qqt/music/
 | 音乐播放器 | [`doc/player.md`](doc/player.md) | PlayerViewModel、MusicPlayerService、MediaController、缓存、进度保存 |
 | 后台保活与自启动 | [`doc/background.md`](doc/background.md) | 双层前台服务、WiFi 锁、设备重启自启动、国产 ROM 兼容 |
 | UI 导航与页面 | [`doc/ui.md`](doc/ui.md) | AppNavigation、Screen 路由、所有屏幕、公共组件 |
-| 本地存储 | [`doc/storage.md`](doc/storage.md) | PrefsManager：最近播放、已下载歌曲 |
+| 本地存储 | [`doc/storage.md`](doc/storage.md) | PrefsManager、本地音乐索引与覆盖层、下载、队列快照 |
 
 ## 关键配置
 

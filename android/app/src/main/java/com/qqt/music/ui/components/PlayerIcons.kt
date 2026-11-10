@@ -169,4 +169,12 @@ object PlayerIcons {
             )
         }
     }
+
+    /** 编辑信息（铅笔；更多菜单「编辑信息」入口，仅本地歌曲出现） */
+    val Edit by lazy {
+        icon("Edit") {
+            strokePath("M4.4 19.6L5.1 16.1L15.9 5.3A2.1 2.1 0 0 1 18.9 8.3L8.1 19.1L4.4 19.6Z")
+            strokePath("M14.2 7L17.2 10")
+        }
+    }
 }

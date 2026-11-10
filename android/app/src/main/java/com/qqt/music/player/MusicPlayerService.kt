@@ -66,8 +66,9 @@ class MusicPlayerService : MediaSessionService() {
                     .setFragmentSize(1024L * 1024L)
             )
 
-        // 已下载歌曲以 file:// URI 离线直读本地文件，按 scheme 分流（ADR 0003）
-        val playbackDataSourceFactory = SchemeRoutingDataSourceFactory(cacheDataSourceFactory)
+        // 已下载歌曲以 file:// URI、本地音乐以内容提供者 content:// URI 直读本地文件，按 scheme 分流（ADR 0003）；
+        // 两者都不进被动缓存、不经过网络栈
+        val playbackDataSourceFactory = SchemeRoutingDataSourceFactory(this, cacheDataSourceFactory)
 
         // 2. 创建 ExoPlayer
         val player = ExoPlayer.Builder(this)

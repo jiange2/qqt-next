@@ -14,7 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.qqt.music.AppConfig
 import com.qqt.music.data.api.model.Song
-import com.qqt.music.data.local.PrefsManager
+import com.qqt.music.data.local.isLocalSong
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.AudioCache
@@ -24,6 +24,7 @@ import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.player.QueueSource
+import com.qqt.music.player.isLocalDirectReadUri
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,6 +77,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     // 缓存可视化（ADR 0013）：整曲本地可得与缓存前缀比例，随切曲与 500ms 轮询刷新
     private val _cacheVisual = MutableStateFlow(CacheVisual.NOT_CACHED)
     val cacheVisual: StateFlow<CacheVisual> = _cacheVisual.asStateFlow()
+
+    /**
+     * 播放失败的本地歌曲 ID（文件被删、权限失效或损坏）。界面消费后把该行标为不可用并清空；
+     * 本地播放失败不自动重扫、不重试，也不影响队列里其它歌曲的下一次播放。
+     */
+    private val _unavailableLocalSongId = MutableStateFlow<String?>(null)
+    val unavailableLocalSongId: StateFlow<String?> = _unavailableLocalSongId.asStateFlow()
 
     private var mediaController: MediaController? = null
     private var currentQueue: List<Song> = emptyList()
@@ -151,8 +159,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     return
                 }
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
-                // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）
-                song?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
+                // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）；
+                // 本地歌曲不是在线内容，不上报（否则会为本地播放产生网络请求）
+                song?.takeUnless { it.isLocalSong() }
+                    ?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
                 // 缓存可视化切曲即刷（装载时刻判定），此后随轮询生长（ADR 0013）
                 refreshCacheVisual()
                 // 切歌立即保存（ADR 0010）
@@ -171,10 +181,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     else -> "UNKNOWN"
                 }
                 Log.d(TAG, "🎵 playback state: $state")
-                // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）
+                // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）；
+                // 本地歌曲没有服务端歌时，跳过
                 if (playbackState == Player.STATE_READY) {
                     selfHealUri = null
-                    _currentSong.value?.let { song ->
+                    _currentSong.value?.takeUnless { it.isLocalSong() }?.let { song ->
                         AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
                     }
                 }
@@ -184,6 +195,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             // 须端侧清除后重取。护栏：仅解析/解码类错误参与（乱码数据的确切表现，IO 类是网络问题）；
             // 仅媒体 host；同曲再败升级 #raw 通道（旁路 -31 直读、独立缓存键），#raw 再败即停防循环。
             override fun onPlayerError(error: PlaybackException) {
+                // 本地文件（content URI）播放失败：文件被删、授权被回收或已损坏。
+                // 交给界面把该行标为不可用并提示「文件不可用」；不重试、不自动重扫（spec「权限与失效」）
+                _currentSong.value?.takeIf { it.isLocalSong() }?.let { song ->
+                    Log.w(TAG, "本地文件不可用：${song.title}（${error.errorCode}）")
+                    _unavailableLocalSongId.value = song.id
+                    return
+                }
                 val controller = mediaController ?: return
                 val item = controller.currentMediaItem ?: return
                 val uri = item.localConfiguration?.uri ?: return
@@ -230,7 +248,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     // ========== 缓存可视化（ADR 0013）==========
 
     /**
-     * 刷新缓存染色状态：已下载歌曲（file:// 直读）直接整曲本地可得；
+     * 刷新缓存染色状态：已下载歌曲（file:// 直读）与本地歌曲（content:// 直读）直接整曲本地可得；
      * 流式播放按缓存 key（播放 URI 字符串，经 AudioCache.cacheKey 版本化，与 CacheDataSource 键同口径）
      * 查命中与前缀。
      */
@@ -241,7 +259,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             return
         }
         val uri = resolveUri(song)
-        if (uri.scheme == "file") {
+        // 本地直读的两种 scheme 都不写被动缓存，按整曲本地可得染色
+        if (uri.isLocalDirectReadUri()) {
             _cacheVisual.value = CacheVisual.FULLY_AVAILABLE
         } else {
             _cacheVisual.value = AudioCache.cacheVisual(uri.toString())
@@ -286,14 +305,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         mediaController?.prepare()
         mediaController?.play()
 
-        // 添加到最近播放
-        PrefsManager.addRecentId(song.id)
         Log.d(TAG, "▶️ play song: ${song.title}")
     }
 
     /**
-     * 恢复上次播放：重建队列、prepare 不 play，MiniPlayer 就位，点播放续播；
-     * 不写最近播放，守「点播过」语义（ADR 0010）。
+     * 恢复上次播放：重建队列、prepare 不 play，MiniPlayer 就位，点播放续播（ADR 0010）。
      */
     private fun restoreLastPlayed(tracks: List<Song>, startIndex: Int, positionMs: Long) {
         if (mediaController == null || tracks.isEmpty() || startIndex !in tracks.indices) {
@@ -353,9 +369,29 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         Log.d(TAG, "⏭️ skip to queue #$index")
     }
 
+    /**
+     * 本地歌曲的元数据被编辑后同步展示值（ADR 0020：列表、播放器都只认合并后的值）：
+     * 队列里的副本与当前歌一起换成新标题 / 艺术家，MiniPlayer 与全屏播放器立即跟随。
+     * 不动正在播放的 MediaItem——不重新装载、不打断播放；通知栏与车机的文案等下次装载时刷新。
+     */
+    fun refreshLocalSongDisplay(id: String, title: String, artist: String) {
+        if (currentQueue.none { it.id == id }) return
+        val redisplayed: (Song) -> Song = { song ->
+            if (song.id == id) song.copy(title = title, artist = artist) else song
+        }
+        currentQueue = currentQueue.map(redisplayed)
+        _queue.value = _queue.value.map(redisplayed)
+        _currentSong.value = _currentSong.value?.let(redisplayed)
+    }
+
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         Log.d(TAG, "📍 seek to ${positionMs}ms")
+    }
+
+    /** 界面把「文件不可用」提示与灰显处理完后清空，避免重复消费 */
+    fun consumeUnavailableLocalSong() {
+        _unavailableLocalSongId.value = null
     }
 
     /** 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer */
@@ -377,6 +413,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
+        val isLocalSong = track.isLocalSong()
         MediaItem.Builder()
             .setUri(resolveUri(track))
             // 稳定媒体身份：mediaId 默认空串（所有条目同 id），切歌去重判据依赖它（ADR 0016）
@@ -386,8 +423,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     .setTitle(track.title)
                     .setArtist(track.artist)
                     .setArtworkUri(Uri.parse(track.thumbnailBig))
-                    // 歌曲 ID 随元数据下发，Service 侧 CarLyricsSync 据此拉歌词（ADR 0016）
-                    .setExtras(Bundle().apply { putString(CarLyricsSync.EXTRA_SONG_ID, track.id) })
+                    .apply {
+                        // 歌曲 ID 随元数据下发，Service 侧 CarLyricsSync 据此拉歌词（ADR 0016）；
+                        // 本地歌曲没有服务端歌词，不下发，Service 侧也就不会发起歌词请求
+                        if (!isLocalSong) {
+                            setExtras(Bundle().apply { putString(CarLyricsSync.EXTRA_SONG_ID, track.id) })
+                        }
+                    }
                     .build()
             )
             .build()
