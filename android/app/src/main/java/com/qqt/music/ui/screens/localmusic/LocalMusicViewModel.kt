@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
-import com.qqt.music.data.local.LocalCoverCache
 import com.qqt.music.data.local.LocalFolder
 import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicLibrarySource
@@ -14,7 +13,6 @@ import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreLibrarySource
-import com.qqt.music.data.local.albumKey
 import com.qqt.music.data.local.diffAgainst
 import com.qqt.music.data.local.distinctFolders
 import com.qqt.music.data.local.excludingFolders
@@ -25,7 +23,6 @@ import com.qqt.music.data.local.trackNoInput
 import com.qqt.music.data.local.valueOrNull
 import com.qqt.music.data.local.withOverride
 import com.qqt.music.data.local.yearInput
-import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,7 +65,8 @@ sealed interface LocalMetadataSaveResult {
  * 文件夹黑名单（票据 03，[excludedFolders] / [setFolderExcluded]）：被排除的文件夹及其子文件夹
  * 不进列表、不进专辑分组、不进播放队列候选；切换只重过滤、不重扫，状态随快照落盘。
  * 权限被系统关闭后进页面：快照保留并灰显，重新授权后自动刷新恢复。
- * 专辑视图与专辑页共用同一份列表派生出的 [albums]；封面按专辑懒解析、带容量上限（[coverCache]）。
+ * 专辑视图与专辑页共用同一份列表派生出的 [albums]；封面由图片加载器按成员行的媒体库专辑 ID
+ * 直载系统预抽取的专辑图（[com.qqt.music.data.local.LocalAlbum.albumArtUri]），ViewModel 不经手封面。
  * 元数据编辑（[saveMetadata] / [restoreDefaultMetadata]）只改写覆盖层与展示值（按歌曲身份记键），
  * 不重查、不碰文件；重扫后改动仍然生效。
  */
@@ -80,9 +78,6 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     internal constructor(application: Application, source: LocalMusicLibrarySource) : this(application) {
         this.source = source
     }
-
-    /** 本地专辑封面缓存：内嵌图按专辑键落到 App 私有目录，容量有上限（系统专辑图属票据 04） */
-    private val coverCache = LocalCoverCache(application)
 
     private val _songs = MutableStateFlow<List<LocalSong>>(emptyList())
 
@@ -141,13 +136,6 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         .map { songs -> withContext(Dispatchers.Default) { songs.groupIntoAlbums() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /**
-     * 封面缓存代次：每次清空缓存（刷新提交）加一。专辑键不变而封面内容可能换了，
-     * 卡片以它为 key 重新取封面。
-     */
-    private val _coverGeneration = MutableStateFlow(0)
-    val coverGeneration: StateFlow<Int> = _coverGeneration.asStateFlow()
-
     /** 启动时快照还没读回来：首帧不把「还没读出来」当成「没有音乐」 */
     private val _loading = MutableStateFlow(true)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
@@ -162,7 +150,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /** 覆盖层（ADR 0020）：歌曲身份 → 用户改过的字段；自己的文件，刷新只换快照不动它 */
     private var overlay: Map<String, LocalSongOverride> = emptyMap()
 
-    /** 元数据编辑串行化：「换列表 → 写覆盖层 → 作废封面」是一条链，两次编辑不交错 */
+    /** 元数据编辑串行化：「换列表 → 写覆盖层」是一条链，两次编辑不交错 */
     private val editLock = Mutex()
 
     /** 同一时刻只允许一个刷新任务：静默刷新与重扫共用（查询很快，不叠加也不取消） */
@@ -300,10 +288,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 withContext(NonCancellable) {
                     // 排除清单以提交时刻的现值为准：刷新期间用户切换开关也不会把旧状态写回去
                     LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(merged, _excludedFolders.value.toList()))
-                    // 提交后封面缓存作废：媒体库里的专辑图可能已变，只能靠一次刷新被感知
-                    coverCache.clear()
                 }
-                _coverGeneration.value += 1
                 if (notify) {
                     val diff = merged.diffAgainst(previous)
                     _notice.value = "新增 ${diff.added}、移除 ${diff.removed}"
@@ -378,8 +363,9 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
      * 覆盖层落位并刷新展示：只替换这一条记录——快照不动、不重查、不碰文件，
      * 所以重扫、文件被删重加之外（行 ID 变化，已知取舍）的刷新之后改动照样生效（覆盖层按歌曲身份记键）。
      *
-     * 列表、专辑分组与封面都从 [_songs] 派生，换掉这一条即全部刷新；新旧专辑键的封面分别作废重取
-     * （改了专辑名或专辑艺术家，分组成员就变了）。
+     * 列表、专辑分组与封面都从 [_songs] 派生，换掉这一条即全部刷新；改专辑名 / 专辑艺术家后歌曲
+     * 换组，新旧专辑各自按当前成员行的媒体库专辑 ID 重新取图（URI 带卷 + 专辑 ID，
+     * 图片加载器按 URI 分别请求，不串用换组前的旧图）。
      */
     private fun applyOverride(song: LocalSong, override: LocalSongOverride?): LocalSong {
         overlay = if (override == null) {
@@ -388,7 +374,6 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
             overlay + (song.id to override)
         }
         val updated = song.withOverride(override)
-        val touchedAlbumKeys = listOf(song.albumKey(), updated.albumKey()).distinct()
         viewModelScope.launch {
             // 整条链排在一把锁里：换列表要基于上一次编辑提交后的结果，落盘也只按调用顺序走
             editLock.withLock {
@@ -405,24 +390,12 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                         }
                         .sortedByDisplayTitle()
                 }
-                // 覆盖层是独立文件：写完才作废封面并抬代次，卡片重新取图时看到的已经是新分组成员
+                // 覆盖层是独立文件，与快照分开落盘
                 LocalMusicStore.saveOverlay(application, overlay)
-                coverCache.invalidate(touchedAlbumKeys)
-                _coverGeneration.value += 1
             }
         }
         return updated
     }
-
-    /**
-     * 专辑封面文件：已缓存直接给文件，否则解析音频内嵌图后落进封面缓存；
-     * 没有内嵌图时返回 null，卡片与专辑页显示占位图（系统专辑图属票据 04）。
-     * 完全离线，不发起任何网络请求。
-     *
-     * 传专辑对象而不是专辑键：卡片拿到的就是当下这批成员，不会赶上「刚编辑完封面已作废、
-     * 专辑分组还没重算」的错位（按键反查 [albums] 就可能找不到这张专辑）。
-     */
-    suspend fun albumCover(album: LocalAlbum): File? = coverCache.cover(album)
 
     /** 启动恢复的结果：快照与覆盖层一起从 IO 线程带回，主线程只做状态落位 */
     private data class RestoredLibrary(

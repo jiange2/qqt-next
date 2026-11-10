@@ -1,5 +1,6 @@
 package com.qqt.music.data.local
 
+import android.net.Uri
 import android.util.Base64
 import java.text.Collator
 import java.util.Locale
@@ -17,11 +18,15 @@ data class LocalAlbum(
     val songs: List<LocalSong>,
 ) {
     /**
-     * 封面取样歌曲：取它的内嵌图作为这张专辑的封面来源（票据 04 起改为系统预抽取的专辑图）。
+     * 专辑封面：按排在最前的成员行取系统预抽取的专辑图（spec「专辑与封面」：封面归专辑，
+     * 按成员行的媒体库专辑 ID 取图，由图片加载器直接加载与缓存，App 不自管封面文件）。
      *
-     * 元数据编辑可以把不同文件改到同一张专辑，取样的是这张专辑里排在最前的那首（ADR 0020：封面归专辑，不归单曲）。
+     * 元数据编辑可以把不同文件改到同一张专辑，取样的是这张专辑里排在最前的那首（ADR 0020：
+     * 封面归专辑，不归单曲）。编辑换组后新旧专辑各自按当前成员行重新取图——URI 带卷与专辑 ID，
+     * 图片加载器按它作请求键，换组自然重取、不串用旧图。
      */
-    val coverSong: LocalSong get() = songs.first()
+    val albumArtUri: Uri
+        get() = songs.first().albumArtUri
 }
 
 /**
