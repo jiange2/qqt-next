@@ -377,10 +377,15 @@ fun LocalMusicTopBarMenu(
     }
 }
 
-/** 已授权目录列表（管理入口）：移除单个根目录在后续票据接入 */
+/**
+ * 「管理音乐文件夹」：列出已授权的根目录，可逐个移除。
+ * 移除立即生效、不必重扫：该目录下的歌曲直接从列表消失，用户改过的元数据按身份保留
+ * （重新添加同一目录即恢复）。
+ */
 @Composable
 fun AuthorizedFoldersDialog(
     roots: List<LocalMusicRoot>,
+    onRemove: (LocalMusicRoot) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -388,15 +393,38 @@ fun AuthorizedFoldersDialog(
         title = { Text("音乐文件夹") },
         text = {
             Column {
+                Text(
+                    text = if (roots.isEmpty()) {
+                        "还没有添加音乐文件夹"
+                    } else {
+                        "App 只扫描这些目录。移除后其中的歌曲会从列表消失，你改过的信息会保留。"
+                    },
+                    color = InkSecondary,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(4.dp))
                 roots.forEach { root ->
-                    Text(
-                        text = root.name,
-                        color = InkPrimary,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(vertical = 6.dp),
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = root.name,
+                            color = InkPrimary,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 6.dp),
+                        )
+                        TextButton(
+                            onClick = { onRemove(root) },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            Text("移除", color = BrandOrange, fontSize = 13.sp)
+                        }
+                    }
                 }
             }
         },

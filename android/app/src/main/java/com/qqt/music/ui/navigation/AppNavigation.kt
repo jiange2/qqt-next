@@ -300,10 +300,11 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             )
         }
 
-        // 本地音乐管理入口：已授权目录列表
+        // 本地音乐管理入口：已授权目录列表，可逐个移除（移除后其歌曲立即从列表消失）
         if (showFolderDialog) {
             AuthorizedFoldersDialog(
                 roots = localMusicRoots,
+                onRemove = { root -> localMusicViewModel.removeRoot(root.treeUri) },
                 onDismiss = { showFolderDialog = false },
             )
         }
