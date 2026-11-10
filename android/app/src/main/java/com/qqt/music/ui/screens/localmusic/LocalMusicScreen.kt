@@ -74,6 +74,7 @@ fun LocalMusicScreen(
     onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
+    val refreshing by viewModel.refreshing.collectAsState()
     val permissionGranted by viewModel.permissionGranted.collectAsState()
     val permissionDeniedOnce by viewModel.permissionDeniedOnce.collectAsState()
     val songs by viewModel.songs.collectAsState()
@@ -146,6 +147,10 @@ fun LocalMusicScreen(
                     onAction = { permissionLauncher.launch(audioPermission) },
                 )
             }
+
+        // 已授权但列表为空：刷新可能还在路上（尤其首次授权后的第一次刷新提交之前）——
+        // 等它落定再下「没有音乐」的结论，不闪一帧空态；查询毫秒级，这一加载帧多数时候不被看到
+        songs.isEmpty() && refreshing -> LoadingState()
 
         // 已授权但库是空的：不是权限问题，媒体库里确实没有音乐
         songs.isEmpty() -> EmptyState(
@@ -378,7 +383,7 @@ internal fun LocalAlbumCover(albumArtUri: Uri, albumName: String, modifier: Modi
     }
 }
 
-/** 首帧/启动读快照：只做“App 正在把上次的列表拿回来”的提示，不阻塞页面 */
+/** 等待态：启动读快照，以及「已授权 + 快照为空 + 刷新在途」（空结果等刷新落定再下结论，不闪空态帧） */
 @Composable
 private fun LoadingState() {
     Column(

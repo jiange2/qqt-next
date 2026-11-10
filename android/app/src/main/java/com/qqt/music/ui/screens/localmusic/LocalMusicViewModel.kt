@@ -142,6 +142,13 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     /**
+     * 是否有库刷新在跑。查询毫秒级，页面只在「空快照 + 已授权 + 刷新在途」用它：首次授权后
+     * 第一次刷新提交前不闪「没有音乐」的空态——空结果要等刷新落定才能下结论。
+     */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    /**
      * 一次性轻提示（重扫完成的新增 / 移除数、刷新失败）：页面 Toast 后清空。
      * 用 StateFlow 而不是 SharedFlow，提示在页面尚未重组完成时也不会丢。
      */
@@ -278,6 +285,8 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
      * 不放空列表假装没歌），只有真正的查询结果才提交。
      */
     private fun refresh(notify: Boolean) {
+        // 先同步置「刷新中」再起协程：重扫排队补跑（finally → refresh）时两值同帧切换，页面不闪空态
+        _refreshing.value = true
         refreshJob = viewModelScope.launch {
             try {
                 // 冷启动时快照可能还没读回：先等它落位，diff 与落盘都以它为基线
@@ -321,6 +330,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 if (notify && _songs.value.isNotEmpty()) _notice.value = "刷新失败，请重试"
             } finally {
                 refreshJob = null
+                _refreshing.value = false
                 if (rescanRequested) {
                     rescanRequested = false
                     refresh(notify = true)
