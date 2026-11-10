@@ -121,7 +121,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
      * 列表变了（刷新提交）清单自然跟着变。
      */
     val libraryFolders: StateFlow<List<LocalFolder>> = _songs
-        .map { songs -> withContext(Dispatchers.Default) { songs.distinctFolders() } }
+        .map { rows -> withContext(Dispatchers.Default) { rows.distinctFolders() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
