@@ -100,7 +100,7 @@ data class HomeData(
 - **白名单**：全部只读接口可回放；`app_details` 与全部写接口（评分/访问上报/时长写回）不拦不写
 - **回放时机**：断网（NetworkMonitor 判定，含已连网未通过验证）时命中即回放；弱网发包失败（IOException，含 failover 主域/回退都失败后）兜底回放
 - **回写口径**：仅 ONLINE_MP3 非空有效的响应落盘，空列表不覆盖既有快照；在线时始终发真实请求并回写覆盖，无 TTL
-- **实体级特例**：`get_recent_songs` 的 key 含 ID 串（最近播放每多一首即变，整串缓存必然 miss），特殊化为按歌曲 ID 的实体级缓存，回放时按请求 ID 串顺序切片重组（调用方本就按传入顺序重排，合并结果等价）
+- **实体级特例**：`get_recent_songs` 的 key 含 ID 串（收藏页按 ID 批量换详情时，ID 串一变整串缓存必然 miss），特殊化为按歌曲 ID 的实体级缓存，回放时按请求 ID 串顺序切片重组（调用方本就按传入顺序重排，合并结果等价）
 - **歌词纳入**：`fetchText` 走同一 client，GET 文本按 URL 留档；封面图维持 Coil 默认磁盘缓存
 - **存储**：`cacheDir/response_snapshot/`，5MB 独立预算 LRU（不并入音频缓存预算），用户不可感知不可管理
 - **离线横幅**：断网时 AppNavigation 内容区顶部常显「当前离线，展示最近一次内容」（`ui/components/OfflineBanner.kt`）
