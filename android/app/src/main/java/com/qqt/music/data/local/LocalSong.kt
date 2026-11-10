@@ -80,9 +80,14 @@ data class LocalSong(
     /** 播放兼容层 ID：`local:<身份键>` */
     val id: String get() = LOCAL_SONG_ID_PREFIX + identityKey
 
-    /** 所在文件夹名（专辑名兜底用）：文件直接在存储根时为空串 */
+    /**
+     * 所在文件夹名（专辑名兜底用，spec 用户故事 23）：文件直接在存储根时为空串。
+     * 与排除清单共用同一份目录段推导（[folderNameOf]）——RELATIVE_PATH 形态（Android 10+）
+     * 取目录名，DATA 全路径形态（低版本）取目录段尾名；两种形态不再各推各的，
+     * 此前本处自行 trimEnd + 取尾段，低版本 DATA 形态会错把文件名当文件夹名。
+     */
     val folderName: String
-        get() = path.trimEnd('/').substringAfterLast('/', "")
+        get() = folderNameOf(this)
 
     /** 本行所属媒体库专辑的系统预抽取专辑图 URI（spec「专辑与封面」），图片加载器直接加载与缓存 */
     val albumArtUri: Uri

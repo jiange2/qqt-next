@@ -56,6 +56,36 @@ class LocalFolderExclusionTest {
         assertEquals("", folderNameOf(row(path = "/a.mp3")))
     }
 
+    // ========== LocalSong.folderName（专辑名兜底，spec 用户故事 23）与排除清单共用同一份推导 ==========
+
+    @Test
+    fun `RELATIVE_PATH 形态的 folderName 是目录名`() {
+        assertEquals("Foo", row(path = "Music/Foo/").folderName)
+    }
+
+    @Test
+    fun `DATA 全路径形态的 folderName 是目录段尾名而不是文件名`() {
+        // 修复前此处自行 trimEnd + 取尾段，低版本（DATA 全路径）会错把「a.mp3」当文件夹名兜底成专辑名
+        assertEquals("Foo", row(path = "/storage/emulated/0/Music/Foo/a.mp3").folderName)
+    }
+
+    @Test
+    fun `存储根文件的 folderName 为空串`() {
+        assertEquals("", row(path = "/a.mp3").folderName)
+        assertEquals("", row(path = "a.mp3").folderName)
+    }
+
+    @Test
+    fun `无专辑标签的行以所在文件夹名兜底成组`() {
+        val albums = listOf(
+            row(path = "/storage/emulated/0/Music/Foo/a.mp3", displayName = "one.mp3"),
+            row(path = "/storage/emulated/0/Music/Foo/b.mp3", displayName = "two.mp3"),
+        ).groupIntoAlbums()
+        // 同文件夹的散装文件归成一张专辑，专辑名是文件夹名——修复前会按文件名裂成两张
+        assertEquals(1, albums.size)
+        assertEquals("Foo", albums.single().name)
+    }
+
     // ========== 候选文件夹清单（排除面板自动列出，无需手输路径）==========
 
     @Test

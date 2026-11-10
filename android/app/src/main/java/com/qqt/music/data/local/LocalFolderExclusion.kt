@@ -29,7 +29,9 @@ data class LocalFolder(
 fun folderPathOf(song: LocalSong): String =
     if (song.path.endsWith("/")) song.path.trimEnd('/') else song.path.substringBeforeLast('/', "")
 
-/** 展示名：所在目录名（Android 10+ 与 `BUCKET_DISPLAY_NAME` 同源，低版本即目录段尾名） */
+/** 展示名：所在目录名（Android 10+ 与 `BUCKET_DISPLAY_NAME` 同源，低版本即目录段尾名）。
+ *  也是专辑名兜底的文件夹名来源（[LocalSong.folderName]，spec 用户故事 23）——
+ *  专辑分组与排除清单共用这一份推导，不再各推各的。 */
 fun folderNameOf(song: LocalSong): String = folderPathOf(song).substringAfterLast('/', "")
 
 /**
