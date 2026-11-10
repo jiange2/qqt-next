@@ -22,7 +22,7 @@
 | `player/MediaControllerManager.kt` | 单例，异步连接 MusicPlayerService，管理 MediaController 生命周期 |
 | `viewmodel/PlayerViewModel.kt` | 全局播放状态，通过 MediaController 控制播放，定期保存进度 |
 | `player/AudioCache.kt` | LRU 被动缓存单例，占用不超过启动时刻的缓存预算，自动驱逐最旧数据 |
-| `player/SchemeRoutingDataSource.kt` | 按 scheme 分流播放数据源：file:// 直读已下载文件，http(s) 走被动缓存 |
+| `player/SchemeRoutingDataSource.kt` | 按 scheme 分流播放数据源：file:// 与 content:// 直读本地，http(s) 走被动缓存 |
 | `player/LastPlayedStore.kt` | SharedPreferences 封装，保存/加载最后播放的专辑、曲目、位置 |
 | `player/PlayerSettingsManager.kt` | 播放设置单例（StateFlow + SharedPreferences），UI 与 Service 共享 |
 | `service/KeepAliveService.kt` | 独立前台服务，与 MusicPlayerService 双层保活进程优先级 |
@@ -206,9 +206,15 @@ UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点
 - 驱逐策略：LRU（最近最少使用）
 - 集成：MusicPlayerService 构建 CacheDataSource 时使用；DownloadManager 也以它为下载上游（缓存升格，ADR 0003）
 
-### 已下载歌曲的离线播放
+### 本地直读播放（已下载歌曲与本地音乐）
 
-已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，file 直读本地文件（离线可播，不回写缓存），http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成。
+已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）、本地音乐以内容提供者 `content://` URI 构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，`file` 走 FileDataSource 直读本地文件、`content` 走 ContentDataSource 经 SAF 持久化授权直读，两者都离线可播、不写被动缓存；http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成。
+
+本地直读（`content://`）的字节不经过网络栈，打开失败即播放失败，不回退到网络分支：
+
+- 不进被动缓存，进度条缓存染色按「整曲本地可得」显示
+- 不上报访问事实与时长写回；车机歌词同步不为它拉歌词（本地音乐无服务端歌时）
+- 错误自愈（ADR 0011）只作用于媒体 host，`content://` 不触发缓存清理与重取
 
 ### LastPlayedStore - 进度持久化
 

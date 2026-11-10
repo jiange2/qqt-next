@@ -151,8 +151,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     return
                 }
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
-                // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）
-                song?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
+                // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）；
+                // 本地音乐直读文件不是在线内容，不上报（否则会为本地播放产生网络请求）
+                song?.takeUnless { isLocalMusicPlayback(it) }
+                    ?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
                 // 缓存可视化切曲即刷（装载时刻判定），此后随轮询生长（ADR 0013）
                 refreshCacheVisual()
                 // 切歌立即保存（ADR 0010）
@@ -171,10 +173,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     else -> "UNKNOWN"
                 }
                 Log.d(TAG, "🎵 playback state: $state")
-                // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）
+                // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）；
+                // 本地音乐没有服务端歌时，跳过
                 if (playbackState == Player.STATE_READY) {
                     selfHealUri = null
-                    _currentSong.value?.let { song ->
+                    _currentSong.value?.takeUnless { isLocalMusicPlayback(it) }?.let { song ->
                         AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
                     }
                 }
@@ -230,7 +233,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     // ========== 缓存可视化（ADR 0013）==========
 
     /**
-     * 刷新缓存染色状态：已下载歌曲（file:// 直读）直接整曲本地可得；
+     * 刷新缓存染色状态：已下载歌曲（file:// 直读）与本地音乐（content:// 直读）直接整曲本地可得；
      * 流式播放按缓存 key（播放 URI 字符串，经 AudioCache.cacheKey 版本化，与 CacheDataSource 键同口径）
      * 查命中与前缀。
      */
@@ -241,7 +244,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             return
         }
         val uri = resolveUri(song)
-        if (uri.scheme == "file") {
+        // 本地直读的两种 scheme 都不写被动缓存，按整曲本地可得染色
+        if (uri.scheme == "file" || uri.scheme == "content") {
             _cacheVisual.value = CacheVisual.FULLY_AVAILABLE
         } else {
             _cacheVisual.value = AudioCache.cacheVisual(uri.toString())
@@ -374,6 +378,12 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     /** 已下载歌曲用本地文件 URI 离线直读，未下载走网络（ADR 0003） */
     private fun resolveUri(track: Song): Uri =
         DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
+
+    /**
+     * 本地音乐直读文件（content://）：不是已下载内容、也没有服务端歌时，
+     * 访问事实与时长写回均跳过，避免为本地播放产生网络请求。
+     */
+    private fun isLocalMusicPlayback(track: Song): Boolean = resolveUri(track).scheme == "content"
 
     /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->

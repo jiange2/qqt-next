@@ -53,7 +53,8 @@ class CarLyricsSync(private val player: Player, private val scope: CoroutineScop
     }
 
     private suspend fun tick() {
-        val songId = player.currentMediaItem?.mediaMetadata?.extras?.getString(EXTRA_SONG_ID)
+        val item = player.currentMediaItem
+        val songId = item?.mediaMetadata?.extras?.getString(EXTRA_SONG_ID)
         if (songId != loadedSongId) {
             loadedSongId = songId
             // 这一刻元数据还是构建时的干净值，标题未被歌词占用，是真实歌名的唯一稳定来源
@@ -63,7 +64,9 @@ class CarLyricsSync(private val player: Player, private val scope: CoroutineScop
             // lastIndex 归位 MIN，歌词就绪即写首两句
             lastIndex = Int.MIN_VALUE
             loadJob?.cancel()
-            loadJob = if (songId.isNullOrEmpty()) null else scope.launch {
+            // 本地音乐以 content:// 直读，没有服务端歌词，也不得为它发起网络请求：保持干净元数据
+            val isLocalFile = item?.localConfiguration?.uri?.scheme == "content"
+            loadJob = if (songId.isNullOrEmpty() || isLocalFile) null else scope.launch {
                 lines = (loadLyrics(songId) as? LyricsOutcome.Ready)?.lines
             }
         }
