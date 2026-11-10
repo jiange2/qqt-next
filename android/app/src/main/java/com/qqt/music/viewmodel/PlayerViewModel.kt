@@ -14,6 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.qqt.music.AppConfig
 import com.qqt.music.data.api.model.Song
+import com.qqt.music.data.local.LOCAL_SONG_ID_PREFIX
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.AudioCache
@@ -49,9 +50,6 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     companion object {
         private const val TAG = "PlayerViewModel"
-
-        /** 本地歌曲 ID 命名空间（spec：`local:<指纹十六进制>`），与服务端数字 ID 天然隔离 */
-        private const val LOCAL_SONG_ID_PREFIX = "local:"
     }
 
     // ========== 播放状态 ==========

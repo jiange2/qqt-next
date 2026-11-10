@@ -77,12 +77,13 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isSearch = currentRoute == Screen.Search.route
     val showBackButton = isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
 
-    // 本地音乐：授权目录状态提升到导航层，页面与顶栏菜单共用一份（选目录入口两处都可达）
+    // 本地音乐：授权目录、扫描状态与结果提升到导航层，页面与顶栏菜单共用一份（选目录入口两处都可达）
     val localMusicViewModel: LocalMusicViewModel = viewModel()
     val localMusicRoots by localMusicViewModel.roots.collectAsState()
+    val localMusicScan by localMusicViewModel.scan.collectAsState()
     var showFolderDialog by remember { mutableStateOf(false) }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { localMusicViewModel.addRoot(context, it) }
+        uri?.let { localMusicViewModel.addRoot(it) }
     }
     val isLocalMusic = currentRoute == Screen.LocalMusic.route
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
@@ -118,6 +119,9 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                 {
                                     LocalMusicTopBarMenu(
                                         roots = localMusicRoots,
+                                        scanning = localMusicScan.running,
+                                        onRescan = { localMusicViewModel.startScan() },
+                                        onCancelScan = { localMusicViewModel.cancelScan() },
                                         onAddFolder = { folderPicker.launch(null) },
                                         onManageFolders = { showFolderDialog = true },
                                     )
@@ -175,6 +179,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     composable(Screen.LocalMusic.route) {
                         LocalMusicScreen(
                             viewModel = localMusicViewModel,
+                            playerViewModel = playerViewModel,
                             onSelectFolder = { folderPicker.launch(null) },
                         )
                     }
