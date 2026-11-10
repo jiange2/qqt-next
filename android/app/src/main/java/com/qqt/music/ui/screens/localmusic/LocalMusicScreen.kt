@@ -1,5 +1,6 @@
 package com.qqt.music.ui.screens.localmusic
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,7 +39,8 @@ import com.qqt.music.viewmodel.PlayerViewModel
 
 /**
  * 本地音乐页（歌曲视图）：未授权文件夹时引导选目录；授权后自动扫描，
- * 扫描中展示进度并可取消，完成后按标题升序（中文排序）列出可播放的本地歌曲。
+ * 扫描中展示进度并可取消，完成后按标题升序（中文排序）列出可播放的本地歌曲，
+ * 并以轻提示报告本次的新增 / 移除数量；重扫期间旧列表照常可用，失败不破坏旧索引。
  * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
  * 专辑视图与专辑页属票据 08。
  */
@@ -52,6 +55,15 @@ fun LocalMusicScreen(
     val songs by viewModel.songs.collectAsState()
     val scan by viewModel.scan.collectAsState()
     val indexUnreadable by viewModel.indexUnreadable.collectAsState()
+
+    val context = LocalContext.current
+    val notice by viewModel.notice.collectAsState()
+    // 扫描完成 / 失败的一次性轻提示：与全 App 的 Toast 轻提示口径一致
+    LaunchedEffect(notice) {
+        val text = notice ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        viewModel.consumeNotice()
+    }
 
     when {
         // 索引还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
@@ -81,6 +93,15 @@ fun LocalMusicScreen(
             icon = Icons.Outlined.MusicNote,
             title = "扫描已取消",
             subtitle = "这次扫描被中断，还没有可播放的音乐",
+            actionText = "重新扫描",
+            onAction = viewModel::startScan,
+        )
+
+        // 首次扫描就失败：没有上一次结果可展示，给出失败提示与重试入口
+        songs.isEmpty() && scan.failed -> EmptyState(
+            icon = Icons.Outlined.MusicOff,
+            title = "扫描失败",
+            subtitle = "读取你授权的音乐文件夹时出错，请稍后重新扫描",
             actionText = "重新扫描",
             onAction = viewModel::startScan,
         )
