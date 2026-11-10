@@ -1,6 +1,10 @@
 package com.qqt.music.ui.screens.localmusic
 
+import android.Manifest
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -30,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.qqt.music.data.local.LocalAlbum
-import com.qqt.music.data.local.LocalMusicRoot
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
@@ -45,31 +48,27 @@ import com.qqt.music.viewmodel.PlayerViewModel
 import java.io.File
 
 /**
- * 本地音乐页（歌曲 / 专辑两视图）：未授权文件夹时引导选目录；授权后自动扫描，
- * 扫描中展示进度并可取消，完成后按标题升序（中文排序）列出可播放的本地歌曲，
- * 并以轻提示报告本次的新增 / 移除数量；重扫期间旧列表照常可用，失败不破坏旧索引。
- * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
- * 专辑视图把同一份索引按专辑归并成卡片墙，点开进本地专辑页。
+ * 本地音乐页（歌曲 / 专辑两视图）：来源是系统媒体库（spec，推翻 ADR 0019）。
+ *
+ * 首次进入（未授权且没有库快照）给一句说明与「授权音乐访问」按钮，拉起系统标准的音频权限弹窗；
+ * 授权后立刻（秒级）按标题升序（中文排序）列出全机音乐；进入页面时静默刷新一次库，
+ * 没有进度条、没有取消（spec：扫描只是一次查询）。
+ * 权限被系统关闭后进页面：快照保留并整体灰显 + 重新授权横幅，不放空列表假装没歌。
+ * 专辑视图把同一份列表按专辑归并成卡片墙，点开进本地专辑页。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
- * 进入页面时异步核对根目录的持久化授权：全部失效给重新选择的空态，部分失效给顶部提示与管理入口，
- * 对应歌曲灰显；文件被删 / 读不到的行同样灰显且不可点。两个视图都不发起任何网络请求。
+ * 顶栏菜单只有「重新扫描」：完成后提示新增 / 移除数量。
+ * 两个视图都不发起任何网络请求。
  */
 @Composable
 fun LocalMusicScreen(
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
-    onSelectFolder: () -> Unit,
-    onManageFolders: () -> Unit = {},
     onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
-    val roots by viewModel.roots.collectAsState()
+    val permissionGranted by viewModel.permissionGranted.collectAsState()
     val songs by viewModel.songs.collectAsState()
     val albums by viewModel.albums.collectAsState()
-    val scan by viewModel.scan.collectAsState()
-    val indexUnreadable by viewModel.indexUnreadable.collectAsState()
-    val revokedTrees by viewModel.revokedTrees.collectAsState()
-    val allRootsRevoked by viewModel.allRootsRevoked.collectAsState()
     // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
     var showAlbums by remember { mutableStateOf(false) }
     // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
@@ -77,124 +76,83 @@ fun LocalMusicScreen(
 
     val context = LocalContext.current
     val notice by viewModel.notice.collectAsState()
-    // 扫描完成 / 失败的一次性轻提示：与全 App 的 Toast 轻提示口径一致
+    // 重扫完成的一次性轻提示：与全 App 的 Toast 轻提示口径一致
     LaunchedEffect(notice) {
         val text = notice ?: return@LaunchedEffect
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         viewModel.consumeNotice()
     }
 
-    // 进入本地音乐页时核对持久化授权：异步进行，不阻塞首帧（spec「权限与失效」）。
-    // 同一次进入含从目录选择器返回的场景，重新授权后由 addRoot 再核对一次
-    LaunchedEffect(Unit) { viewModel.checkRootPermissions() }
+    // 音频权限请求：Android 13+ 是音乐粒度的 READ_MEDIA_AUDIO，12 及以下 READ_EXTERNAL_STORAGE
+    //（清单标 maxSdkVersion 32，spec「扫描来源与权限」）
+    val audioPermission = if (Build.VERSION.SDK_INT >= 33) {
+        Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> viewModel.onPermissionResult(granted) }
+
+    // 进入本地音乐页：核对权限并静默刷新一次库（同一次进入含从权限弹窗返回的场景）
+    LaunchedEffect(Unit) { viewModel.onPageEntered() }
 
     when {
-        // 索引还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
+        // 快照还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
         loading -> LoadingState()
 
-        // 所有根目录的持久化授权都被系统回收：不是歌丢了，而是权限没了——引导重新选择
-        allRootsRevoked -> EmptyState(
-            icon = Icons.Outlined.MusicOff,
-            title = "音乐文件夹访问权限已失效",
-            subtitle = "系统回收了对已添加文件夹的访问权限。重新选择同一个文件夹即可恢复，歌曲和你的修改都还在",
-            actionText = "重新选择文件夹",
-            onAction = onSelectFolder,
-        )
-
-        // 索引坏了且连根目录都没能重建：只能让用户重新选一次目录（授权也没了）
-        indexUnreadable && roots.isEmpty() -> EmptyState(
-            icon = Icons.Outlined.MusicOff,
-            title = "本地索引无法读取",
-            subtitle = "索引文件已损坏，重新选择音乐文件夹后 App 会重新建立列表",
-            actionText = "选择音乐文件夹",
-            onAction = onSelectFolder,
-        )
-
-        roots.isEmpty() -> EmptyState(
+        // 未授权且没有快照：首次进入的说明空态，授权后立刻出全库
+        songs.isEmpty() && !permissionGranted -> EmptyState(
             icon = Icons.Outlined.MusicNote,
-            title = "本地音乐还没有内容",
-            subtitle = "选择一个音乐文件夹，App 只扫描你授权的目录，不需要任何存储权限",
-            actionText = "选择音乐文件夹",
-            onAction = onSelectFolder,
+            title = "这里是你手机里的音乐",
+            subtitle = "授权音乐访问后，App 直接读取系统媒体库，立刻列出全部本地歌曲，不需要选择任何文件夹",
+            actionText = "授权音乐访问",
+            onAction = { permissionLauncher.launch(audioPermission) },
         )
 
-        songs.isEmpty() && scan.running -> ScanningState(scan, onCancel = viewModel::cancelScan)
-
-        // 首次扫描就取消：没有上一次结果可展示，不能当成“目录里没有音乐”
-        songs.isEmpty() && scan.cancelled -> EmptyState(
-            icon = Icons.Outlined.MusicNote,
-            title = "扫描已取消",
-            subtitle = "这次扫描被中断，还没有可播放的音乐",
-            actionText = "重新扫描",
-            onAction = viewModel::startScan,
-        )
-
-        // 首次扫描就失败：没有上一次结果可展示，给出失败提示与重试入口
-        songs.isEmpty() && scan.failed -> EmptyState(
-            icon = Icons.Outlined.MusicOff,
-            title = "扫描失败",
-            subtitle = "读取你授权的音乐文件夹时出错，请稍后重新扫描",
-            actionText = "重新扫描",
-            onAction = viewModel::startScan,
-        )
-
-        // 索引无法识别：根目录已从系统授权重建，重新扫描即重建列表
-        indexUnreadable -> EmptyState(
-            icon = Icons.Outlined.MusicOff,
-            title = "本地索引无法读取",
-            subtitle = "索引文件已损坏，重新扫描你授权过的音乐文件夹即可恢复列表",
-            actionText = "重新扫描",
-            onAction = viewModel::startScan,
-        )
-
+        // 已授权但库是空的：不是权限问题，媒体库里确实没有音乐
         songs.isEmpty() -> EmptyState(
             icon = Icons.Outlined.MusicOff,
             title = "没有找到可播放的音乐",
-            subtitle = "目录里可能没有支持的音频格式（mp3 / m4a / aac / flac / ogg / opus / wav）",
+            subtitle = "系统媒体库里还没有音乐；把音乐文件放进手机存储后点「重新扫描」",
             actionText = "重新扫描",
-            onAction = viewModel::startScan,
+            onAction = viewModel::rescan,
         )
+
+        // 有快照但权限没了：旧列表灰显 + 重新授权横幅（歌没丢，只是权限没了）
+        !permissionGranted -> Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.White),
+        ) {
+            PermissionRevokedBanner(onGrant = { permissionLauncher.launch(audioPermission) })
+            LibraryArea(
+                showAlbums = showAlbums,
+                onSelectView = { showAlbums = it },
+                songs = songs,
+                albums = albums,
+                viewModel = viewModel,
+                playerViewModel = playerViewModel,
+                onSongClick = { editingSong = it },
+                onAlbumClick = onAlbumClick,
+            )
+        }
 
         else -> Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.White),
         ) {
-            // 部分根目录授权失效：提示原因并提供管理入口，来自这些目录的歌曲已在列表里灰显
-            if (revokedTrees.isNotEmpty() && !allRootsRevoked) {
-                RevokedPermissionBanner(
-                    count = revokedTrees.size,
-                    onManage = onManageFolders,
-                )
-            }
-            // 重扫期间旧列表照常可用，进度条只占顶部一条
-            if (scan.running) ScanProgressBanner(scan, onCancel = viewModel::cancelScan)
-            LibraryViewSwitch(albumSelected = showAlbums, onSelect = { showAlbums = it })
-            if (showAlbums) {
-                AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(vertical = 6.dp),
-                ) {
-                    itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
-                        LocalSongRow(
-                            index = index + 1,
-                            song = song,
-                            playerViewModel = playerViewModel,
-                            // 点歌以当前完整歌曲列表为队列，来源记为本地音乐（播放模式按该来源记忆）
-                            onClick = {
-                                playerViewModel.playSong(
-                                    song = song.toSong(),
-                                    queue = songs.map { it.toSong() },
-                                    sourceDescriptor = QueueSource.LOCAL,
-                                )
-                            },
-                            onLongClick = { editingSong = song },
-                        )
-                    }
-                }
-            }
+            LibraryArea(
+                showAlbums = showAlbums,
+                onSelectView = { showAlbums = it },
+                songs = songs,
+                albums = albums,
+                viewModel = viewModel,
+                playerViewModel = playerViewModel,
+                onSongClick = { editingSong = it },
+                onAlbumClick = onAlbumClick,
+            )
         }
     }
 
@@ -206,6 +164,46 @@ fun LocalMusicScreen(
             playerViewModel = playerViewModel,
             onDismiss = { editingSong = null },
         )
+    }
+}
+
+/** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列） */
+@Composable
+private fun LibraryArea(
+    showAlbums: Boolean,
+    onSelectView: (Boolean) -> Unit,
+    songs: List<LocalSong>,
+    albums: List<LocalAlbum>,
+    viewModel: LocalMusicViewModel,
+    playerViewModel: PlayerViewModel,
+    onSongClick: (LocalSong) -> Unit,
+    onAlbumClick: (LocalAlbum) -> Unit,
+) {
+    LibraryViewSwitch(albumSelected = showAlbums, onSelect = onSelectView)
+    if (showAlbums) {
+        AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
+    } else {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(vertical = 6.dp),
+        ) {
+            itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+                LocalSongRow(
+                    index = index + 1,
+                    song = song,
+                    playerViewModel = playerViewModel,
+                    // 点歌以当前完整歌曲列表为队列，来源记为本地音乐（播放模式按该来源记忆）
+                    onClick = {
+                        playerViewModel.playSong(
+                            song = song.toSong(),
+                            queue = songs.map { it.toSong() },
+                            sourceDescriptor = QueueSource.LOCAL,
+                        )
+                    },
+                    onLongClick = { onSongClick(song) },
+                )
+            }
+        }
     }
 }
 
@@ -272,7 +270,7 @@ private fun AlbumGrid(
 @Composable
 private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, onClick: () -> Unit) {
     val generation by viewModel.coverGeneration.collectAsState()
-    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（重扫清缓存则靠代次）
+    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（库刷新清缓存则靠代次）
     val cover by produceState<File?>(null, album, generation) {
         value = viewModel.albumCover(album)
     }
@@ -332,7 +330,7 @@ internal fun LocalAlbumCover(cover: File?, albumName: String, modifier: Modifier
     }
 }
 
-/** 首帧/启动读索引：只做“App 正在把上次的列表拿回来”的提示，不阻塞页面 */
+/** 首帧/启动读快照：只做“App 正在把上次的列表拿回来”的提示，不阻塞页面 */
 @Composable
 private fun LoadingState() {
     Column(
@@ -352,103 +350,12 @@ private fun LoadingState() {
     }
 }
 
-/** 首次扫描时的整页进度：没有旧列表可展示，给出进度、进度条与取消入口 */
-@Composable
-private fun ScanningState(scan: LocalScanState, onCancel: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(WarmBackground)
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text("正在扫描音乐", color = InkSecondary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "已处理 ${scan.scannedFiles} 个文件，已找到 ${scan.foundSongs} 首",
-            color = InkFaint,
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center,
-        )
-        if (scan.currentName.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = scan.currentName,
-                color = InkFaint,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.height(18.dp))
-        LinearProgressIndicator(
-            modifier = Modifier
-                .width(160.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp)),
-            color = BrandOrange,
-            trackColor = PlaceholderBg,
-        )
-        Spacer(Modifier.height(10.dp))
-        TextButton(onClick = onCancel) {
-            Text("取消扫描", color = BrandOrange, fontSize = 13.sp)
-        }
-    }
-}
-
-/** 列表顶部的扫描进度条：旧列表仍可点播，进度只做提示 */
-@Composable
-private fun ScanProgressBanner(scan: LocalScanState, onCancel: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BrandOrangeSoft)
-            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "正在扫描 · 已找到 ${scan.foundSongs} 首",
-                color = InkPrimary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(
-                onClick = onCancel,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Text("取消", color = BrandOrange, fontSize = 13.sp)
-            }
-        }
-        LinearProgressIndicator(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp)),
-            color = BrandOrange,
-            trackColor = PlaceholderBg,
-        )
-        if (scan.currentName.isNotBlank()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = scan.currentName,
-                color = InkFaint,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-        }
-    }
-}
-
 /**
- * 部分根目录授权失效的顶部提示条：说明哪些歌曲为什么灰显，右侧「管理」直接打开文件夹管理弹层
- * 去移除失效目录或重新添加（spec「权限与失效」）。
+ * 权限被系统关闭后的顶部提示条：说明为什么列表灰显，右侧按钮直接再次拉起授权
+ * （重新授权成功后自动刷新，灰显的行恢复可播；spec 用户故事 6）。
  */
 @Composable
-private fun RevokedPermissionBanner(count: Int, onManage: () -> Unit) {
+private fun PermissionRevokedBanner(onGrant: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -457,35 +364,30 @@ private fun RevokedPermissionBanner(count: Int, onManage: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = "有 $count 个音乐文件夹的访问权限已失效，其中的歌曲暂不可用",
+            text = "音乐访问权限已被关闭，重新授权后即可播放",
             color = InkPrimary,
             fontSize = 13.sp,
             modifier = Modifier.weight(1f),
         )
         TextButton(
-            onClick = onManage,
+            onClick = onGrant,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         ) {
-            Text("管理", color = BrandOrange, fontSize = 13.sp)
+            Text("授权音乐访问", color = BrandOrange, fontSize = 13.sp)
         }
     }
 }
 
 /**
- * 本地音乐页的顶栏菜单（替换默认搜索入口）：重新扫描、添加音乐文件夹、管理音乐文件夹。
- * 扫描中「重新扫描」换成「取消扫描」；未授权任何目录时后两项不可用。
+ * 本地音乐页的顶栏菜单（替换默认搜索入口）：只有「重新扫描」——整库一次查询，
+ * 完成后提示新增 / 移除数量；未授权音频权限时不可用（排除文件夹入口属票据 03）。
  */
 @Composable
 fun LocalMusicTopBarMenu(
-    roots: List<LocalMusicRoot>,
-    scanning: Boolean,
+    rescanEnabled: Boolean,
     onRescan: () -> Unit,
-    onCancelScan: () -> Unit,
-    onAddFolder: () -> Unit,
-    onManageFolders: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val hasRoots = roots.isNotEmpty()
 
     Box {
         IconButton(onClick = { menuExpanded = true }) {
@@ -493,97 +395,13 @@ fun LocalMusicTopBarMenu(
         }
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
             DropdownMenuItem(
-                text = { Text(if (scanning) "取消扫描" else "重新扫描") },
-                enabled = hasRoots,
+                text = { Text("重新扫描") },
+                enabled = rescanEnabled,
                 onClick = {
                     menuExpanded = false
-                    if (scanning) onCancelScan() else onRescan()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("添加音乐文件夹") },
-                onClick = {
-                    menuExpanded = false
-                    onAddFolder()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text("管理音乐文件夹") },
-                enabled = hasRoots,
-                onClick = {
-                    menuExpanded = false
-                    onManageFolders()
+                    onRescan()
                 },
             )
         }
     }
-}
-
-/**
- * 「管理音乐文件夹」：列出已授权的根目录，可逐个移除。
- * 移除立即生效、不必重扫：该目录下的歌曲直接从列表消失，用户改过的元数据按身份保留
- * （重新添加同一目录即恢复）。授权已被系统回收的目录带一行说明，重新添加同一目录即可恢复。
- */
-@Composable
-fun AuthorizedFoldersDialog(
-    roots: List<LocalMusicRoot>,
-    onRemove: (LocalMusicRoot) -> Unit,
-    onDismiss: () -> Unit,
-    revokedTrees: Set<String> = emptySet(),
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("音乐文件夹") },
-        text = {
-            Column {
-                Text(
-                    text = if (roots.isEmpty()) {
-                        "还没有添加音乐文件夹"
-                    } else {
-                        "App 只扫描这些目录。移除后其中的歌曲会从列表消失，你改过的信息会保留。"
-                    },
-                    color = InkSecondary,
-                    fontSize = 13.sp,
-                )
-                Spacer(Modifier.height(4.dp))
-                roots.forEach { root ->
-                    val revoked = root.treeUri.toString() in revokedTrees
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(vertical = 6.dp),
-                        ) {
-                            Text(
-                                text = root.name,
-                                color = if (revoked) InkFaint else InkPrimary,
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (revoked) {
-                                Text(
-                                    text = "访问权限已失效，重新添加同一个文件夹即可恢复",
-                                    color = BrandOrange,
-                                    fontSize = 11.sp,
-                                )
-                            }
-                        }
-                        TextButton(
-                            onClick = { onRemove(root) },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        ) {
-                            Text("移除", color = BrandOrange, fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        },
-    )
 }
