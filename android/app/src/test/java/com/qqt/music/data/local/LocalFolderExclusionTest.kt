@@ -35,7 +35,7 @@ class LocalFolderExclusionTest {
     @Test
     fun `RELATIVE_PATH 形态的行目录就是去掉尾斜杠的路径本身`() {
         val song = row(path = "Music/Foo/")
-        assertEquals("Music/Foo", song.let(::folderPathOf))
+        assertEquals("Music/Foo", folderPathOf(song))
     }
 
     @Test
