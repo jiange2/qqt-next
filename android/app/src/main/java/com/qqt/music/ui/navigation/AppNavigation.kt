@@ -124,10 +124,11 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             onSearchClick = { navController.navigate(Screen.Search.route) },
                             showBackButton = showBackButton,
                             onBackClick = { navController.popBackStack() },
-                            // 本地音乐不兼搜索：右侧换成该页自己的菜单（重新扫描）
+                            // 本地音乐不兼搜索：右侧换成该页自己的菜单（重新扫描 / 排除的文件夹）
                             actions = if (isLocalMusic) {
                                 {
                                     LocalMusicTopBarMenu(
+                                        viewModel = localMusicViewModel,
                                         rescanEnabled = localMusicPermissionGranted,
                                         onRescan = { localMusicViewModel.rescan() },
                                     )

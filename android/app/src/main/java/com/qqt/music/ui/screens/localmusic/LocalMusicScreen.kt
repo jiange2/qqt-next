@@ -56,7 +56,7 @@ import java.io.File
  * 权限被系统关闭后进页面：快照保留并整体灰显 + 重新授权横幅，不放空列表假装没歌。
  * 专辑视图把同一份列表按专辑归并成卡片墙，点开进本地专辑页。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
- * 顶栏菜单只有「重新扫描」：完成后提示新增 / 移除数量。
+ * 顶栏菜单：「重新扫描」（完成后提示新增 / 移除数量）与「排除的文件夹」（票据 03）。
  * 两个视图都不发起任何网络请求。
  */
 @Composable
@@ -379,15 +379,19 @@ private fun PermissionRevokedBanner(onGrant: () -> Unit) {
 }
 
 /**
- * 本地音乐页的顶栏菜单（替换默认搜索入口）：只有「重新扫描」——整库一次查询，
- * 完成后提示新增 / 移除数量；未授权音频权限时不可用（排除文件夹入口属票据 03）。
+ * 本地音乐页的顶栏菜单（替换默认搜索入口）：
+ * - 「重新扫描」：整库一次查询，完成后提示新增 / 移除数量；未授权音频权限时不可用
+ * - 「排除的文件夹」：打开排除面板（票据 03）——自动列出库中含音乐的文件夹并带开关，
+ *   切换即时生效、不需要重新扫描，飞行模式下照常可用（纯本地过滤），故始终可点
  */
 @Composable
 fun LocalMusicTopBarMenu(
+    viewModel: LocalMusicViewModel,
     rescanEnabled: Boolean,
     onRescan: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var showExcludedFolders by remember { mutableStateOf(false) }
 
     Box {
         IconButton(onClick = { menuExpanded = true }) {
@@ -402,6 +406,17 @@ fun LocalMusicTopBarMenu(
                     onRescan()
                 },
             )
+            DropdownMenuItem(
+                text = { Text("排除的文件夹") },
+                onClick = {
+                    menuExpanded = false
+                    showExcludedFolders = true
+                },
+            )
         }
+    }
+
+    if (showExcludedFolders) {
+        LocalExcludedFoldersSheet(viewModel = viewModel, onDismiss = { showExcludedFolders = false })
     }
 }
