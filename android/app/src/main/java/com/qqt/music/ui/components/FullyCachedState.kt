@@ -5,6 +5,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import com.qqt.music.data.api.model.Song
+import com.qqt.music.data.local.isLocalSong
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AudioCache
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,9 @@ import kotlinx.coroutines.withContext
 fun rememberFullyCached(song: Song): Boolean {
     val downloadedSongs by DownloadManager.downloadedSongs.collectAsState()
     if (downloadedSongs.any { it.id == song.id }) return true
+    // 本地歌曲直接读设备上的文件（content:// 直读，不进被动缓存）：整曲必然本地可得，
+    // 与播放器进度条的缓存染色（PlayerViewModel 对直读 URI 给 FULLY_AVAILABLE）同口径，也不去查缓存索引
+    if (song.isLocalSong()) return true
     val passive by produceState(initialValue = false, key1 = song.url) {
         value = withContext(Dispatchers.IO) { AudioCache.cacheVisual(song.url).fullyCached }
     }

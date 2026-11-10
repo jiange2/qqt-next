@@ -14,7 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.qqt.music.AppConfig
 import com.qqt.music.data.api.model.Song
-import com.qqt.music.data.local.LOCAL_SONG_ID_PREFIX
+import com.qqt.music.data.local.isLocalSong
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.AudioCache
@@ -25,7 +25,6 @@ import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.player.QueueSource
 import com.qqt.music.player.isLocalDirectReadUri
-import com.qqt.music.player.isLocalSongUri
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -155,7 +154,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
                 // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）；
                 // 本地歌曲不是在线内容，不上报（否则会为本地播放产生网络请求）
-                song?.takeUnless { isLocalSongPlayback(it) }
+                song?.takeUnless { it.isLocalSong() }
                     ?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
                 // 缓存可视化切曲即刷（装载时刻判定），此后随轮询生长（ADR 0013）
                 refreshCacheVisual()
@@ -179,7 +178,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 // 本地歌曲没有服务端歌时，跳过
                 if (playbackState == Player.STATE_READY) {
                     selfHealUri = null
-                    _currentSong.value?.takeUnless { isLocalSongPlayback(it) }?.let { song ->
+                    _currentSong.value?.takeUnless { it.isLocalSong() }?.let { song ->
                         AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
                     }
                 }
@@ -378,16 +377,9 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private fun resolveUri(track: Song): Uri =
         DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
 
-    /**
-     * 本地歌曲判定：ID 走 `local:` 命名空间（spec 契约），也认 content:// 直读 URI（与在线歌、已下载歌区分）。
-     * 本地歌曲没有服务端歌与歌词，播放期间不为它发起任何后端请求。
-     */
-    private fun isLocalSongPlayback(track: Song): Boolean =
-        track.id.startsWith(LOCAL_SONG_ID_PREFIX) || resolveUri(track).isLocalSongUri()
-
     /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
-        val isLocalSong = isLocalSongPlayback(track)
+        val isLocalSong = track.isLocalSong()
         MediaItem.Builder()
             .setUri(resolveUri(track))
             // 稳定媒体身份：mediaId 默认空串（所有条目同 id），切歌去重判据依赖它（ADR 0016）

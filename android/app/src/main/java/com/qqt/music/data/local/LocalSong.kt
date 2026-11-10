@@ -6,6 +6,14 @@ import com.qqt.music.data.api.model.Song
 const val LOCAL_SONG_ID_PREFIX = "local:"
 
 /**
+ * 播放模型侧的本地歌曲判定（UI 与播放层共用同一判据）：ID 走 `local:` 命名空间（spec 契约），
+ * URL 为 SAF 的 content:// 直读。本地歌曲没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载 / 歌词入口与
+ * 相关请求一律不成立；在线歌为 http(s)、已下载歌为 file://，都不会命中。
+ */
+fun Song.isLocalSong(): Boolean =
+    id.startsWith(LOCAL_SONG_ID_PREFIX) || url.startsWith("content://")
+
+/**
  * 文件标签快照（ADR 0019 用 MediaMetadataRetriever 读取）。空串 / null 表示文件没有该标签，
  * 展示值由 [LocalSong] 的 displayXxx() 兜底；用户覆盖层（ADR 0020）在后续票据接入。
  */
