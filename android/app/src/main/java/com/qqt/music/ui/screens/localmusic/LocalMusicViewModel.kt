@@ -31,6 +31,8 @@ data class LocalScanState(
     val foundSongs: Int = 0,
     val currentName: String = "",
     val cancelled: Boolean = false,
+    /** 本次扫描失败：索引保持上一次完整结果，页面给失败提示（空列表时用失败空态） */
+    val failed: Boolean = false,
 )
 
 /**
@@ -39,6 +41,8 @@ data class LocalScanState(
  * 索引与覆盖层各一个 App 私有 JSON 文件（[LocalMusicStore]）：启动时在 IO 线程读回并合并，
  * 冷启动直接出列表、不必先扫一遍；扫描完成后再落盘。页面与顶栏菜单共用同一个实例（提升在导航层），
  * 离开页面扫描继续、回到页面不重复发起；扫描结果整体替换：取消或失败都保留上一次完整结果。
+ * 重扫是增量的：把当前索引交给扫描器，未变文件跳过指纹与标签读取，
+ * 完成时按内容身份（指纹）提示新增 / 移除条数。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -61,13 +65,20 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     private val _indexUnreadable = MutableStateFlow(false)
     val indexUnreadable: StateFlow<Boolean> = _indexUnreadable.asStateFlow()
 
+    /**
+     * 一次性轻提示（扫描完成的新增 / 移除数、扫描失败）：页面 Toast 后清空。
+     * 用 StateFlow 而不是 SharedFlow，提示在页面尚未重组完成时也不会丢。
+     */
+    private val _notice = MutableStateFlow<String?>(null)
+    val notice: StateFlow<String?> = _notice.asStateFlow()
+
     /** 覆盖层（ADR 0020）：身份 → 用户改过的字段；自己的文件，重扫只换索引不动它 */
     private var overlay: Map<String, LocalSongOverride> = emptyMap()
 
     /** 同一时刻只允许一个扫描任务：重复触发（重新选目录、菜单重扫、重新进页面）都不叠加 */
     private var scanJob: Job? = null
 
-    /** 扫描中又被要求重扫（例如扫描中又加了目录）：当前任务结束后补跑一次，避免两个任务同时遍历同一批文件 */
+    /** 扫描中又被要求重扫：取消当前任务，收尾后按最新目录重跑一次（同一时刻只有一个扫描任务） */
     private var rescanRequested = false
 
     init {
@@ -149,10 +160,14 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** 扫描全部已授权目录；已有扫描在跑时只记一个“结束后补跑”的意图，不并发起第二个任务 */
+    /**
+     * 扫描全部已授权目录。同一时刻只允许一个扫描任务：已有任务在跑时，新请求取消旧任务，
+     * 旧任务收尾后按最新的目录与索引重跑一次，不会有两个任务同时遍历。
+     */
     fun startScan() {
-        if (scanJob?.isActive == true) {
+        if (scanJob != null) {
             rescanRequested = true
+            scanJob?.cancel()
             return
         }
         val roots = _roots.value
@@ -160,10 +175,12 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         _scan.value = LocalScanState(running = true)
         scanJob = viewModelScope.launch {
             try {
+                // 上一份索引交给扫描器做增量比对：未变文件直接复用指纹与标签，不重新读盘（spec）
+                val previous = _songs.value
                 // 进度节流：扫描每秒可能过上百个文件，合并成每 100ms 一次，
                 // 免得主线程被进度重组刷满
                 var lastProgressAt = 0L
-                val scanned = scanner.scan(roots) { progress ->
+                val result = scanner.scan(roots, previous) { progress ->
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastProgressAt >= PROGRESS_INTERVAL_MS) {
                         lastProgressAt = now
@@ -176,7 +193,7 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
                 // 展示值统一走「覆盖层优先、缺失取标签」的合并结果（ADR 0020）
-                val merged = scanned.map { it.withOverride(overlay[it.fingerprint]) }
+                val merged = result.songs.map { it.withOverride(overlay[it.fingerprint]) }
                 // 原子提交：整份索引构建完成才替换，此前列表一直是上一次的完整结果
                 _songs.value = merged
                 _indexUnreadable.value = false
@@ -185,13 +202,19 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 withContext(NonCancellable) {
                     LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, merged))
                 }
-                Log.d(TAG, "扫描完成：${merged.size} 首")
+                // 扫描完成轻提示本次的增量结果（spec「扫描与索引」）
+                _notice.value = "新增 ${result.added} 首、移除 ${result.removed} 首"
+                Log.d(TAG, "扫描完成：${merged.size} 首（新增 ${result.added}、移除 ${result.removed}）")
             } catch (e: CancellationException) {
                 Log.d(TAG, "扫描已取消，保留上一次结果")
-                _scan.value = _scan.value.copy(cancelled = true)
+                // 取消是为了换新请求重跑时不把「已取消」闪给用户；用户主动取消才展示该状态
+                if (!rescanRequested) _scan.value = _scan.value.copy(cancelled = true)
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "扫描失败，保留上一次结果", e)
+                // 索引不动：列表仍是上一次的完整结果；空列表时页面另有失败空态，不重复轻提示
+                _scan.value = _scan.value.copy(failed = true)
+                if (_songs.value.isNotEmpty()) _notice.value = "扫描失败，请重试"
             } finally {
                 _scan.value = _scan.value.copy(running = false)
                 scanJob = null
@@ -201,6 +224,11 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
         }
+    }
+
+    /** 页面 Toast 后清空一次性提示 */
+    fun consumeNotice() {
+        _notice.value = null
     }
 
     /** 取消当前扫描：本次结果整体丢弃，列表回到上一次扫描的完整状态 */
