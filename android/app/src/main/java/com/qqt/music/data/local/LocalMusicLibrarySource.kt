@@ -150,67 +150,62 @@ class MediaStoreLibrarySource(
     }
 
     /**
-     * 投影列与 [COL_XXX] 索引一一对应：基础列全程可用，`DISPLAY_NAME` / `RELATIVE_PATH`
-     * 为 29+、`ALBUM_ARTIST` 为 30+，低版本不进投影也不读。
+     * 投影列与列索引的唯一事实源：列常量与「该列自哪个 API 起可读」成对、顺序即投影顺序，
+     * 投影数组（[projection]）与列名 → 索引映射（[columnIndexOf]）都从这一份清单派生——
+     * 读列处不再手写位置，重排或增删列只改声明，不会出现两处顺序对不上的错位读。
      */
-    private fun projection(): Array<String> = buildList {
-        add(MediaStore.Audio.Media._ID)
-        add(MediaStore.Audio.Media.DATA)
-        add(MediaStore.Audio.Media.SIZE)
-        add(MediaStore.Audio.Media.DATE_MODIFIED)
-        add(MediaStore.Audio.Media.DURATION)
-        add(MediaStore.Audio.Media.TITLE)
-        add(MediaStore.Audio.Media.ARTIST)
-        add(MediaStore.Audio.Media.ALBUM)
-        add(MediaStore.Audio.Media.ALBUM_ID)
-        add(MediaStore.Audio.Media.TRACK)
-        add(MediaStore.Audio.Media.YEAR)
-        if (sdkInt >= 29) {
-            add(MediaStore.Audio.Media.DISPLAY_NAME)
-            add(MediaStore.Audio.Media.RELATIVE_PATH)
-        }
-        if (sdkInt >= 30) {
-            add(MediaStore.Audio.Media.ALBUM_ARTIST)
-        }
-    }.toTypedArray()
+    private val usableColumns: List<String> = mediaStoreProjection(sdkInt)
+
+    private fun projection(): Array<String> = usableColumns.toTypedArray()
+
+    /** 列名 → 投影内索引（与投影同源派生；未进投影的列取 -1，读取处按「无该列」处理） */
+    private val columnIndexByName: Map<String, Int> =
+        usableColumns.withIndex().associate { (index, name) -> name to index }
+
+    private fun columnIndexOf(name: String): Int = columnIndexByName[name] ?: -1
 
     private fun buildRows(cursor: Cursor, volumeName: String, collection: Uri): List<LocalSong> {
+        // 列索引全部从唯一声明派生（[columnIndexOf]），此处不手写位置；低版本不进投影的列为 -1
+        val colId = columnIndexOf(MediaStore.Audio.Media._ID)
+        val colData = columnIndexOf(MediaStore.Audio.Media.DATA)
+        val colSize = columnIndexOf(MediaStore.Audio.Media.SIZE)
+        val colDateModified = columnIndexOf(MediaStore.Audio.Media.DATE_MODIFIED)
+        val colDuration = columnIndexOf(MediaStore.Audio.Media.DURATION)
+        val colTitle = columnIndexOf(MediaStore.Audio.Media.TITLE)
+        val colArtist = columnIndexOf(MediaStore.Audio.Media.ARTIST)
+        val colAlbum = columnIndexOf(MediaStore.Audio.Media.ALBUM)
+        val colAlbumId = columnIndexOf(MediaStore.Audio.Media.ALBUM_ID)
+        val colTrack = columnIndexOf(MediaStore.Audio.Media.TRACK)
+        val colYear = columnIndexOf(MediaStore.Audio.Media.YEAR)
+        val colDisplayName = columnIndexOf(MediaStore.Audio.Media.DISPLAY_NAME)
+        val colRelativePath = columnIndexOf(MediaStore.Audio.Media.RELATIVE_PATH)
+        val colAlbumArtist = columnIndexOf(MediaStore.Audio.Media.ALBUM_ARTIST)
         val rows = ArrayList<LocalSong>()
         while (cursor.moveToNext()) {
-            val rowId = cursor.getLong(COL_ID)
-            val data = cursor.text(COL_DATA)
-            // 文件名：29+ 直接读 DISPLAY_NAME，低版本从 DATA 的尾段取
-            val displayName = if (colDisplayName >= 0) cursor.text(colDisplayName).ifBlank {
-                data.substringAfterLast('/')
-            } else {
-                data.substringAfterLast('/')
-            }
-            // 路径：29+ 优先 RELATIVE_PATH（排除清单与专辑分组都以它为准），缺了退回 DATA
-            val path = if (colRelativePath >= 0) {
-                cursor.text(colRelativePath).ifBlank { data }
-            } else {
-                data
-            }
+            val rowId = cursor.getLong(colId)
+            val data = cursor.text(colData)
             rows.add(
                 LocalSong(
                     rowId = rowId,
                     volume = volumeName,
                     contentUri = ContentUris.withAppendedId(collection, rowId).toString(),
-                    path = path,
-                    displayName = displayName,
-                    size = cursor.getLong(COL_SIZE),
+                    // 路径：29+ 优先 RELATIVE_PATH（排除清单与专辑分组都以它为准），缺了退回 DATA
+                    path = cursor.text(colRelativePath).ifBlank { data },
+                    // 文件名：29+ 直接读 DISPLAY_NAME，低版本（无该列）从 DATA 的尾段取
+                    displayName = cursor.text(colDisplayName).ifBlank { data.substringAfterLast('/') },
+                    size = cursor.getLong(colSize),
                     // DATE_MODIFIED 的单位是秒，换算成毫秒与文件系统口径一致
-                    lastModified = cursor.getLong(COL_DATE_MODIFIED) * 1000L,
-                    durationMs = cursor.getLong(COL_DURATION),
-                    albumId = cursor.getLong(COL_ALBUM_ID),
+                    lastModified = cursor.getLong(colDateModified) * 1000L,
+                    durationMs = cursor.getLong(colDuration),
+                    albumId = cursor.getLong(colAlbumId),
                     tags = LocalSongTags(
-                        title = cursor.text(COL_TITLE),
-                        artist = cursor.text(COL_ARTIST),
-                        album = cursor.text(COL_ALBUM),
+                        title = cursor.text(colTitle),
+                        artist = cursor.text(colArtist),
+                        album = cursor.text(colAlbum),
                         // 专辑艺术家 Android 11+ 起才有该列，低版本为空、走现有兜底路径
-                        albumArtist = if (colAlbumArtist >= 0) cursor.text(colAlbumArtist) else "",
-                        trackNo = decodeMediaStoreTrack(cursor.getInt(COL_TRACK)),
-                        year = cursor.getInt(COL_YEAR).takeIf { it > 0 },
+                        albumArtist = cursor.text(colAlbumArtist),
+                        trackNo = decodeMediaStoreTrack(cursor.getInt(colTrack)),
+                        year = cursor.getInt(colYear).takeIf { it > 0 },
                     ),
                 )
             )
@@ -218,34 +213,44 @@ class MediaStoreLibrarySource(
         return rows
     }
 
-    /** NULL 读成空串并裁掉首尾空白（媒体库标签值可能带脏空白） */
+    /** NULL 读成空串并裁掉首尾空白（媒体库标签值可能带脏空白）；索引 -1（该列未进投影）同样按空串 */
     private fun Cursor.text(index: Int): String =
         if (index >= 0 && !isNull(index)) getString(index)?.trim().orEmpty() else ""
-
-    /** 29+ 才进投影，低版本置 -1 表示该列不存在（跟随注入的 [sdkInt]，测试可指定） */
-    private val colDisplayName = if (sdkInt >= 29) 11 else -1
-    private val colRelativePath = if (sdkInt >= 29) 12 else -1
-    private val colAlbumArtist = if (sdkInt >= 30) 13 else -1
 
     private companion object {
         const val TAG = "MediaStoreLibrarySource"
 
         /** Android 9 及以下的唯一外置卷：不参与身份限定，仅作占位 */
         const val VOLUME_LEGACY = ""
-
-        const val COL_ID = 0
-        const val COL_DATA = 1
-        const val COL_SIZE = 2
-        const val COL_DATE_MODIFIED = 3
-        const val COL_DURATION = 4
-        const val COL_TITLE = 5
-        const val COL_ARTIST = 6
-        const val COL_ALBUM = 7
-        const val COL_ALBUM_ID = 8
-        const val COL_TRACK = 9
-        const val COL_YEAR = 10
     }
 }
+
+/**
+ * 投影列的唯一声明（[MediaStoreLibrarySource] 的 [MediaStoreLibrarySource.projection] 与列索引
+ * 都从这里派生）：列名与「该列自哪个 API 起可读」成对，顺序即投影顺序——基础列全程可用，
+ * `DISPLAY_NAME` / `RELATIVE_PATH` 为 29+、`ALBUM_ARTIST` 为 30+（与 spec 的版本口径一致）。
+ * 顶层纯函数，JVM 可测（[com.qqt.music.data.local.MediaStoreProjectionTest] 断言版本门槛）。
+ */
+internal fun mediaStoreColumnDeclarations(): List<Pair<String, Int>> = listOf(
+    MediaStore.Audio.Media._ID to 0,
+    MediaStore.Audio.Media.DATA to 0,
+    MediaStore.Audio.Media.SIZE to 0,
+    MediaStore.Audio.Media.DATE_MODIFIED to 0,
+    MediaStore.Audio.Media.DURATION to 0,
+    MediaStore.Audio.Media.TITLE to 0,
+    MediaStore.Audio.Media.ARTIST to 0,
+    MediaStore.Audio.Media.ALBUM to 0,
+    MediaStore.Audio.Media.ALBUM_ID to 0,
+    MediaStore.Audio.Media.TRACK to 0,
+    MediaStore.Audio.Media.YEAR to 0,
+    MediaStore.Audio.Media.DISPLAY_NAME to 29,
+    MediaStore.Audio.Media.RELATIVE_PATH to 29,
+    MediaStore.Audio.Media.ALBUM_ARTIST to 30,
+)
+
+/** 指定 API 级别实际进投影的列名（按声明顺序保留；低版本列不进投影也不读） */
+internal fun mediaStoreProjection(sdkInt: Int): List<String> =
+    mediaStoreColumnDeclarations().filter { sdkInt >= it.second }.map { it.first }
 
 /**
  * `TRACK` 列的音轨号解码（Android 多碟惯例，官方文档：碟位编码在千位——
