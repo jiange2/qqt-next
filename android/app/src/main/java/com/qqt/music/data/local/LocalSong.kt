@@ -7,8 +7,11 @@ const val LOCAL_SONG_ID_PREFIX = "local:"
 
 /**
  * 播放模型侧的本地歌曲判定（UI 与播放层共用同一判据）：ID 走 `local:` 命名空间（spec 契约），
- * URL 为 SAF 的 content:// 直读。本地歌曲没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载 / 歌词入口与
- * 相关请求一律不成立；在线歌为 http(s)、已下载歌为 file://，都不会命中。
+ * 或 [Song.url] 是 SAF 的 content:// 直读。本地歌曲没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载 / 歌词入口
+ * 与相关请求一律不成立。
+ *
+ * 判据读的是 [Song.url] 本身：在线歌与已下载歌的 url 都是 http(s)（已下载只在播放时由 `resolveUri()`
+ * 换成 file://），两者都不会命中。改这里的取值口径时需同步 `PlayerViewModel.resolveUri()`
  */
 fun Song.isLocalSong(): Boolean =
     id.startsWith(LOCAL_SONG_ID_PREFIX) || url.startsWith("content://")

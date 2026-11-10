@@ -177,9 +177,10 @@ fun PlayerScreen(
         }
     }
     val tabSelection = (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(0f, 1f)
-    // 切到本地歌曲时歌词页整体消失：正停在歌词页的收回到歌曲页（同时停掉常亮与歌词请求）
+    // 切到本地歌曲时歌词页整体消失：不管库层是否已经把页码归一，都显式回到歌曲页——
+    // 否则本地歌曲期间封面区会是空白，切回在线歌又突然落回歌词页并补发一次 song_info 请求
     LaunchedEffect(isLocalSong) {
-        if (isLocalSong && pagerState.currentPage != 0) pagerState.scrollToPage(0)
+        if (isLocalSong) pagerState.scrollToPage(0)
     }
     // 全域横滑松手后的落页校正：拖动/fling 结束（isScrollInProgress 变 false）若停在两页之间，动画到最近页；
     // 页签点击的 animateScrollToPage 结束时已在整页位置，此处为空操作
