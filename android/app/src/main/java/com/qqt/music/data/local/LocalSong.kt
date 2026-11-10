@@ -1,5 +1,6 @@
 package com.qqt.music.data.local
 
+import android.net.Uri
 import com.qqt.music.data.api.model.Song
 
 /** 本地歌曲 ID 命名空间（spec：`local:<媒体库行 ID>`，Android 10+ 带卷名限定），与服务端数字 ID 天然隔离 */
@@ -83,6 +84,10 @@ data class LocalSong(
     val folderName: String
         get() = path.trimEnd('/').substringAfterLast('/', "")
 
+    /** 本行所属媒体库专辑的系统预抽取专辑图 URI（spec「专辑与封面」），图片加载器直接加载与缓存 */
+    val albumArtUri: Uri
+        get() = Uri.parse(albumArtUriString(volume, albumId))
+
     /** 展示标题：覆盖值优先；标签缺失回退为去掉扩展名的文件名 */
     fun displayTitle(): String = overlay?.title ?: tags.title.ifBlank { displayName.substringBeforeLast('.') }
 
@@ -100,7 +105,8 @@ data class LocalSong(
     /**
      * 队列元素沿用现有歌曲模型：URL 为 MediaStore content URI（播放数据源按 scheme 直读），
      * 标题 / 艺术家 / 时长取展示值，歌词字段为空（本地歌不加载歌词）。
-     * 封面由专辑封面缓存（[LocalCoverCache]）在专辑卡片与专辑页展示，队列元素暂不带封面。
+     * 封面不在队列元素上：专辑卡片与专辑页按成员行的媒体库专辑 ID 取系统预抽取的专辑图
+     * （[albumArtUri]），由图片加载器直接加载与缓存。
      */
     fun toSong(): Song = Song(
         id = id,
@@ -117,6 +123,22 @@ data class LocalSong(
  * 查询出来的原始结果不带上覆盖值，快照落盘时也不写它——覆盖层是自己的文件。
  */
 fun LocalSong.withOverride(overlay: LocalSongOverride?): LocalSong = copy(overlay = overlay)
+
+/**
+ * 系统预抽取专辑图的 albumart URI 字符串口径（[LocalSong.albumArtUri] 用它解析成 [Uri]）：
+ * `content://media/<卷>/audio/albumart/<专辑 ID>`，由图片加载器按行取图并缓存——App 不再自己
+ * 解析或落盘封面（票据 04 删除自管 LRU 封面文件缓存）。卷名进 URI 使请求键 = 卷 + 专辑 ID：
+ * 元数据编辑换组后，新旧专辑各自按当前成员行取图、同号专辑跨存储卷互不串图；卷名缺失
+ * （Android 9 及以下只有主外置卷）统一回退旧式外置卷段。系统没有该专辑的预抽取图时
+ * 内容提供方按文件不存在报错，UI 据此显示占位图。全程 content:// 本地读取，不发起网络请求。
+ *
+ * 纯字符串不碰 [Uri]，JVM 单测（[com.qqt.music.data.local.LocalAlbumCoverTest]）可直接断言。
+ */
+fun albumArtUriString(volume: String, albumId: Long): String =
+    "content://media/" + (volume.ifBlank { VOLUME_EXTERNAL_LEGACY }) + "/audio/albumart/" + albumId
+
+/** 旧式外置主卷卷名：albumart URI 的卷段在行没有卷名（Android 9 及以下）时用它 */
+private const val VOLUME_EXTERNAL_LEGACY = "external"
 
 /** 一次库刷新与上一次列表按身份比较的差异（spec：重扫完成后提示「新增 x、移除 y」） */
 data class LibraryDiff(val added: Int, val removed: Int)
