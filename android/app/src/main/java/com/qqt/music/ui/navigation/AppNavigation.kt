@@ -21,11 +21,15 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qqt.music.data.local.decodeLocalAlbumKey
+import com.qqt.music.data.local.encodeLocalAlbumKey
 import com.qqt.music.ui.components.DrawerContent
 import com.qqt.music.ui.components.MiniPlayer
 import com.qqt.music.ui.components.MusicBottomBar
@@ -43,6 +47,7 @@ import com.qqt.music.ui.screens.download.DownloadScreen
 import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
 import com.qqt.music.ui.screens.latest.LatestScreen
+import com.qqt.music.ui.screens.localalbum.LocalAlbumScreen
 import com.qqt.music.ui.screens.localmusic.AuthorizedFoldersDialog
 import com.qqt.music.ui.screens.localmusic.LocalMusicScreen
 import com.qqt.music.ui.screens.localmusic.LocalMusicTopBarMenu
@@ -74,8 +79,9 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isMyPlaylistDetail = currentRoute?.startsWith("mylist_detail") == true
     val isSearchSongs = currentRoute?.startsWith("search_songs") == true
     val isArtistSongs = currentRoute?.startsWith("artist_songs") == true
+    val isLocalAlbum = currentRoute?.startsWith("local_album") == true
     val isSearch = currentRoute == Screen.Search.route
-    val showBackButton = isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
+    val showBackButton = isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch || isLocalAlbum
 
     // 本地音乐：授权目录、扫描状态与结果提升到导航层，页面与顶栏菜单共用一份（选目录入口两处都可达）
     val localMusicViewModel: LocalMusicViewModel = viewModel()
@@ -86,6 +92,8 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         uri?.let { localMusicViewModel.addRoot(it) }
     }
     val isLocalMusic = currentRoute == Screen.LocalMusic.route
+    // 本地音乐域（歌曲/专辑视图与本地专辑页）不发任何请求：断网/服务不可达横幅对它没有意义（spec 用户故事 38）
+    val isLocalMusicArea = isLocalMusic || isLocalAlbum
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
     // 关闭时下层原样即时露出（无任何过渡动画），滚动位置等页面状态全程保留。
     // 系统返回由 PlayerScreen 内部 BackHandler 接管（统一走整页下滑收出），顶层无需重复拦截
@@ -103,7 +111,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     currentRoute = currentRoute,
                 )
             },
-            gesturesEnabled = !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isBookList && !isReader && !isMyPlaylistDetail && !isSearchSongs && !isArtistSongs && !isSearch,
+            gesturesEnabled = !isBannerSongs && !isAlbumSongs && !isCategoryAlbums && !isBookList && !isReader && !isMyPlaylistDetail && !isSearchSongs && !isArtistSongs && !isSearch && !isLocalAlbum,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Scaffold(
@@ -143,7 +151,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                     // 断网横幅（ADR 0012）置于内容区顶部：TopBar 下方，出现时页面内容整体下移；
                     // 全屏播放器为覆盖层，覆盖期间自然遮住横幅（播放场景无需离线提示）
                     Column(modifier = Modifier.padding(innerPadding)) {
-                        OfflineBanner()
+                        if (!isLocalMusicArea) OfflineBanner()
                         NavHost(
                             navController = navController,
                             startDestination = Screen.Home.route,
@@ -181,6 +189,23 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                     viewModel = localMusicViewModel,
                                     playerViewModel = playerViewModel,
                                     onSelectFolder = { folderPicker.launch(null) },
+                                    onAlbumClick = { album ->
+                                        // 专辑键按 URL 安全编码后作为路由参数；专辑名给顶栏标题
+                                        LocalAlbumNav.albumName = album.name
+                                        navController.navigate("local_album/${encodeLocalAlbumKey(album.key)}")
+                                    },
+                                )
+                            }
+                            composable(
+                                route = Screen.LocalAlbum.route,
+                                arguments = listOf(navArgument("lid") { type = NavType.StringType }),
+                            ) { entry ->
+                                // 页面自己从路由参数解出专辑键：进程被杀后重建也能定位回同一张专辑
+                                val albumKey = entry.arguments?.getString("lid")?.let(::decodeLocalAlbumKey)
+                                LocalAlbumScreen(
+                                    albumKey = albumKey,
+                                    viewModel = localMusicViewModel,
+                                    playerViewModel = playerViewModel,
                                 )
                             }
                             composable(Screen.Download.route) {

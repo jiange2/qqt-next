@@ -22,6 +22,9 @@ sealed class Screen(val route: String, val title: String) {
     // Album songs detail page (title comes from the album itself)
     object AlbumSongs : Screen("album_songs/{aid}", "专辑")
 
+    // Local album detail page (title comes from the local album itself, local music ADR 0019)
+    object LocalAlbum : Screen("local_album/{lid}", "本地专辑")
+
     // Category albums detail page (title comes from the category itself, backend-next ADR 0009)
     object CategoryAlbums : Screen("category_albums/{cid}", "分类")
 
@@ -51,6 +54,7 @@ sealed class Screen(val route: String, val title: String) {
             route == null -> "倾轻听"
             route.startsWith("banner_songs") -> BannerNav.banner?.title ?: "歌曲"
             route.startsWith("album_songs") -> AlbumNav.album?.name ?: "专辑"
+            route.startsWith("local_album") -> LocalAlbumNav.albumName ?: "本地专辑"
             route.startsWith("category_albums") -> CategoryNav.category?.name ?: "分类"
             route.startsWith("book_list") -> CategoryNav.category?.name ?: "书籍"
             route.startsWith("reader") -> ReaderNav.book?.name ?: "阅读"

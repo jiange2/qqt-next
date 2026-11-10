@@ -5,10 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MusicOff
 import androidx.compose.material3.*
@@ -17,17 +21,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalMusicRoot
-import com.qqt.music.data.local.LocalSong
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
-import com.qqt.music.ui.components.songIndexFontSize
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.BrandOrangeSoft
 import com.qqt.music.ui.theme.InkFaint
@@ -36,25 +41,31 @@ import com.qqt.music.ui.theme.InkSecondary
 import com.qqt.music.ui.theme.PlaceholderBg
 import com.qqt.music.ui.theme.WarmBackground
 import com.qqt.music.viewmodel.PlayerViewModel
+import java.io.File
 
 /**
- * 本地音乐页（歌曲视图）：未授权文件夹时引导选目录；授权后自动扫描，
+ * 本地音乐页（歌曲 / 专辑两视图）：未授权文件夹时引导选目录；授权后自动扫描，
  * 扫描中展示进度并可取消，完成后按标题升序（中文排序）列出可播放的本地歌曲，
  * 并以轻提示报告本次的新增 / 移除数量；重扫期间旧列表照常可用，失败不破坏旧索引。
  * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
- * 专辑视图与专辑页属票据 08。
+ * 专辑视图把同一份索引按专辑归并成卡片墙，点开进本地专辑页。
+ * 两个视图都不发起任何网络请求。
  */
 @Composable
 fun LocalMusicScreen(
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
     onSelectFolder: () -> Unit,
+    onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
     val roots by viewModel.roots.collectAsState()
     val songs by viewModel.songs.collectAsState()
+    val albums by viewModel.albums.collectAsState()
     val scan by viewModel.scan.collectAsState()
     val indexUnreadable by viewModel.indexUnreadable.collectAsState()
+    // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
+    var showAlbums by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val notice by viewModel.notice.collectAsState()
@@ -130,84 +141,153 @@ fun LocalMusicScreen(
         ) {
             // 重扫期间旧列表照常可用，进度条只占顶部一条
             if (scan.running) ScanProgressBanner(scan, onCancel = viewModel::cancelScan)
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(vertical = 6.dp),
-            ) {
-                itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
-                    LocalSongRow(
-                        index = index + 1,
-                        song = song,
-                        playerViewModel = playerViewModel,
-                        // 点歌以当前完整歌曲列表为队列，来源记为本地音乐（播放模式按该来源记忆）
-                        onClick = {
-                            playerViewModel.playSong(
-                                song = song.toSong(),
-                                queue = songs.map { it.toSong() },
-                                sourceDescriptor = QueueSource.LOCAL,
-                            )
-                        },
-                    )
+            LibraryViewSwitch(albumSelected = showAlbums, onSelect = { showAlbums = it })
+            if (showAlbums) {
+                AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick)
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 6.dp),
+                ) {
+                    itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+                        LocalSongRow(
+                            index = index + 1,
+                            song = song,
+                            playerViewModel = playerViewModel,
+                            // 点歌以当前完整歌曲列表为队列，来源记为本地音乐（播放模式按该来源记忆）
+                            onClick = {
+                                playerViewModel.playSong(
+                                    song = song.toSong(),
+                                    queue = songs.map { it.toSong() },
+                                    sourceDescriptor = QueueSource.LOCAL,
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/** 本地歌曲行：序号 / 标题 / 艺术家 / 时长；当前曲目序号与标题转橙 */
+/**
+ * 「歌曲 / 专辑」切换：分段控件，选中项白底橙字。
+ * 视图选择不落盘、不记忆，进页面就是歌曲视图（spec「导航与页面」）。
+ */
 @Composable
-private fun LocalSongRow(
-    index: Int,
-    song: LocalSong,
-    playerViewModel: PlayerViewModel,
-    onClick: () -> Unit,
-) {
-    val currentSong by playerViewModel.currentSong.collectAsState()
-    val isCurrent = currentSong?.id == song.id
+private fun LibraryViewSwitch(albumSelected: Boolean, onSelect: (Boolean) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(PlaceholderBg)
+            .padding(3.dp),
+    ) {
+        ViewSwitchSegment("歌曲", selected = !albumSelected, onClick = { onSelect(false) }, modifier = Modifier.weight(1f))
+        ViewSwitchSegment("专辑", selected = albumSelected, onClick = { onSelect(true) }, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ViewSwitchSegment(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (selected) Color.White else Color.Transparent)
             .clickable(onClick = onClick)
-            // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
-            .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "$index",
-            fontSize = songIndexFontSize("$index".length),
-            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-            textAlign = TextAlign.Center,
-            color = if (isCurrent) BrandOrange else InkSecondary,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.width(26.dp),
+            text = text,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) BrandOrange else InkSecondary,
         )
-        Spacer(Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = song.displayTitle(),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isCurrent) BrandOrange else InkPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    }
+}
+
+/** 专辑卡片墙：两列，与在线「音乐专辑」页同一套卡片尺寸（1:1 封面 + 名称在下） */
+@Composable
+private fun AlbumGrid(
+    albums: List<LocalAlbum>,
+    viewModel: LocalMusicViewModel,
+    onAlbumClick: (LocalAlbum) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.weight(1f),
+    ) {
+        items(albums, key = { it.key }) { album ->
+            LocalAlbumCard(album = album, viewModel = viewModel, onClick = { onAlbumClick(album) })
+        }
+    }
+}
+
+/** 专辑卡片：封面（无封面时占位图）+ 专辑名 + 艺术家 · 歌曲数 */
+@Composable
+private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, onClick: () -> Unit) {
+    val generation by viewModel.coverGeneration.collectAsState()
+    val cover by produceState<File?>(null, album.key, generation) {
+        value = viewModel.albumCover(album.key)
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
+        LocalAlbumCover(cover = cover, albumName = album.name, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+        Text(
+            text = album.name,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = InkPrimary,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "${album.artist.ifBlank { "未知艺术家" }} · ${album.songs.size} 首",
+            fontSize = 11.sp,
+            color = InkSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * 专辑封面：封面文件来自 App 私有封面缓存（[LocalMusicViewModel.albumCover]），
+ * 没有封面时显示占位图。model 是本地 File，AsyncImage 不会发起网络请求。
+ */
+@Composable
+internal fun LocalAlbumCover(cover: File?, albumName: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(PlaceholderBg),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (cover != null) {
+            AsyncImage(
+                model = cover,
+                contentDescription = albumName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
             )
-            Spacer(Modifier.height(1.dp))
-            Text(
-                text = song.displayArtist().ifBlank { "未知艺术家" },
-                fontSize = 12.sp,
-                color = InkSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        } else {
+            Icon(
+                Icons.Outlined.Album,
+                contentDescription = null,
+                tint = InkFaint,
+                modifier = Modifier.size(32.dp),
             )
         }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = formatDuration(song.durationMs),
-            fontSize = 12.sp,
-            color = InkFaint,
-            maxLines = 1,
-        )
     }
 }
 
@@ -320,13 +400,6 @@ private fun ScanProgressBanner(scan: LocalScanState, onCancel: () -> Unit) {
             )
         }
     }
-}
-
-/** mm:ss；时长未知（标签读不到）显示 --:-- */
-private fun formatDuration(millis: Long): String {
-    if (millis <= 0L) return "--:--"
-    val totalSeconds = millis / 1000
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 /**

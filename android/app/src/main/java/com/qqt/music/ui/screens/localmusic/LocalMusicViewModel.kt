@@ -8,20 +8,27 @@ import android.provider.DocumentsContract
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.qqt.music.data.local.LocalAlbum
+import com.qqt.music.data.local.LocalCoverCache
 import com.qqt.music.data.local.LocalMusicRoot
 import com.qqt.music.data.local.LocalMusicScanner
 import com.qqt.music.data.local.LocalMusicStore
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.findOverlap
+import com.qqt.music.data.local.groupIntoAlbums
 import com.qqt.music.data.local.withOverride
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -46,16 +53,36 @@ data class LocalScanState(
  * 完成时按内容身份（指纹）提示新增 / 移除条数。
  * 根目录可以授权多个（结果合并成一份库）：与已有目录重叠的授权被拒绝，
  * 移除某个目录只按树剔除索引里的歌曲，不触发全量重扫。
+ * 专辑视图与专辑页共用同一份索引派生出的 [albums]；封面按专辑懒解析、带容量上限（[coverCache]）。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private val scanner = LocalMusicScanner(application)
+
+    /** 本地专辑封面缓存：文件夹封面 → 内嵌图，按专辑键落到 App 私有目录，容量有上限 */
+    private val coverCache = LocalCoverCache(application)
 
     private val _roots = MutableStateFlow<List<LocalMusicRoot>>(emptyList())
     val roots: StateFlow<List<LocalMusicRoot>> = _roots.asStateFlow()
 
     private val _songs = MutableStateFlow<List<LocalSong>>(emptyList())
     val songs: StateFlow<List<LocalSong>> = _songs.asStateFlow()
+
+    /**
+     * 专辑视图（spec「专辑与封面」）：完全从索引派生，按「专辑名 + 专辑艺术家」分组并排好序。
+     * 不单独存状态——歌曲变了（扫描提交、移除目录、编辑覆盖层）专辑分组自然跟着变。
+     */
+    val albums: StateFlow<List<LocalAlbum>> = _songs
+        // 分组与排序（中文 Collator）放在默认调度器上：歌多时也不占主线程
+        .map { songs -> withContext(Dispatchers.Default) { songs.groupIntoAlbums() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * 封面缓存代次：每次清空缓存（重扫提交）加一。专辑键不变而封面文件可能换了，
+     * 卡片以它为 key 重新取封面，不必等用户退出再进入页面。
+     */
+    private val _coverGeneration = MutableStateFlow(0)
+    val coverGeneration: StateFlow<Int> = _coverGeneration.asStateFlow()
 
     private val _scan = MutableStateFlow(LocalScanState())
     val scan: StateFlow<LocalScanState> = _scan.asStateFlow()
@@ -245,7 +272,10 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 withContext(NonCancellable) {
                     val snapshot = LocalMusicStore.Snapshot(_roots.value, _songs.value)
                     LocalMusicStore.saveIndex(application, snapshot)
+                    // 提交后封面缓存作废：文件夹里换了封面文件，只能靠一次重扫被感知（spec）
+                    coverCache.clear()
                 }
+                _coverGeneration.value += 1
                 // 扫描完成轻提示本次的增量结果（spec「扫描与索引」）
                 _notice.value = "新增 ${result.added} 首、移除 ${result.removed} 首"
                 Log.d(TAG, "扫描完成：${merged.size} 首")
@@ -273,6 +303,15 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     /** 页面 Toast 后清空一次性提示 */
     fun consumeNotice() {
         _notice.value = null
+    }
+
+    /**
+     * 专辑封面文件：已缓存直接给文件，否则按「文件夹封面 → 内嵌图」解析后落进封面缓存；
+     * 都没有时返回 null，卡片与专辑页显示占位图。完全离线，不发起任何网络请求。
+     */
+    suspend fun albumCover(albumKey: String): File? {
+        val album = albums.value.firstOrNull { it.key == albumKey } ?: return null
+        return coverCache.cover(album)
     }
 
     /** 取消当前扫描：本次结果整体丢弃，列表回到上一次扫描的完整状态 */
