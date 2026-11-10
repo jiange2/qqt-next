@@ -51,13 +51,15 @@ import java.io.File
  * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
  * 专辑视图把同一份索引按专辑归并成卡片墙，点开进本地专辑页。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
- * 两个视图都不发起任何网络请求。
+ * 进入页面时异步核对根目录的持久化授权：全部失效给重新选择的空态，部分失效给顶部提示与管理入口，
+ * 对应歌曲灰显；文件被删 / 读不到的行同样灰显且不可点。两个视图都不发起任何网络请求。
  */
 @Composable
 fun LocalMusicScreen(
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
     onSelectFolder: () -> Unit,
+    onManageFolders: () -> Unit = {},
     onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
@@ -66,6 +68,8 @@ fun LocalMusicScreen(
     val albums by viewModel.albums.collectAsState()
     val scan by viewModel.scan.collectAsState()
     val indexUnreadable by viewModel.indexUnreadable.collectAsState()
+    val revokedTrees by viewModel.revokedTrees.collectAsState()
+    val allRootsRevoked by viewModel.allRootsRevoked.collectAsState()
     // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
     var showAlbums by remember { mutableStateOf(false) }
     // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
@@ -80,9 +84,22 @@ fun LocalMusicScreen(
         viewModel.consumeNotice()
     }
 
+    // 进入本地音乐页时核对持久化授权：异步进行，不阻塞首帧（spec「权限与失效」）。
+    // 同一次进入含从目录选择器返回的场景，重新授权后由 addRoot 再核对一次
+    LaunchedEffect(Unit) { viewModel.checkRootPermissions() }
+
     when {
         // 索引还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
         loading -> LoadingState()
+
+        // 所有根目录的持久化授权都被系统回收：不是歌丢了，而是权限没了——引导重新选择
+        allRootsRevoked -> EmptyState(
+            icon = Icons.Outlined.MusicOff,
+            title = "音乐文件夹访问权限已失效",
+            subtitle = "系统回收了对已添加文件夹的访问权限。重新选择同一个文件夹即可恢复，歌曲和你的修改都还在",
+            actionText = "重新选择文件夹",
+            onAction = onSelectFolder,
+        )
 
         // 索引坏了且连根目录都没能重建：只能让用户重新选一次目录（授权也没了）
         indexUnreadable && roots.isEmpty() -> EmptyState(
@@ -143,6 +160,13 @@ fun LocalMusicScreen(
                 .fillMaxSize()
                 .background(Color.White),
         ) {
+            // 部分根目录授权失效：提示原因并提供管理入口，来自这些目录的歌曲已在列表里灰显
+            if (revokedTrees.isNotEmpty() && !allRootsRevoked) {
+                RevokedPermissionBanner(
+                    count = revokedTrees.size,
+                    onManage = onManageFolders,
+                )
+            }
             // 重扫期间旧列表照常可用，进度条只占顶部一条
             if (scan.running) ScanProgressBanner(scan, onCancel = viewModel::cancelScan)
             LibraryViewSwitch(albumSelected = showAlbums, onSelect = { showAlbums = it })
@@ -419,6 +443,34 @@ private fun ScanProgressBanner(scan: LocalScanState, onCancel: () -> Unit) {
 }
 
 /**
+ * 部分根目录授权失效的顶部提示条：说明哪些歌曲为什么灰显，右侧「管理」直接打开文件夹管理弹层
+ * 去移除失效目录或重新添加（spec「权限与失效」）。
+ */
+@Composable
+private fun RevokedPermissionBanner(count: Int, onManage: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BrandOrangeSoft)
+            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "有 $count 个音乐文件夹的访问权限已失效，其中的歌曲暂不可用",
+            color = InkPrimary,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = onManage,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Text("管理", color = BrandOrange, fontSize = 13.sp)
+        }
+    }
+}
+
+/**
  * 本地音乐页的顶栏菜单（替换默认搜索入口）：重新扫描、添加音乐文件夹、管理音乐文件夹。
  * 扫描中「重新扫描」换成「取消扫描」；未授权任何目录时后两项不可用。
  */
@@ -469,13 +521,14 @@ fun LocalMusicTopBarMenu(
 /**
  * 「管理音乐文件夹」：列出已授权的根目录，可逐个移除。
  * 移除立即生效、不必重扫：该目录下的歌曲直接从列表消失，用户改过的元数据按身份保留
- * （重新添加同一目录即恢复）。
+ * （重新添加同一目录即恢复）。授权已被系统回收的目录带一行说明，重新添加同一目录即可恢复。
  */
 @Composable
 fun AuthorizedFoldersDialog(
     roots: List<LocalMusicRoot>,
     onRemove: (LocalMusicRoot) -> Unit,
     onDismiss: () -> Unit,
+    revokedTrees: Set<String> = emptySet(),
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -493,20 +546,31 @@ fun AuthorizedFoldersDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 roots.forEach { root ->
+                    val revoked = root.treeUri.toString() in revokedTrees
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = root.name,
-                            color = InkPrimary,
-                            fontSize = 15.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                        Column(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(vertical = 6.dp),
-                        )
+                        ) {
+                            Text(
+                                text = root.name,
+                                color = if (revoked) InkFaint else InkPrimary,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (revoked) {
+                                Text(
+                                    text = "访问权限已失效，重新添加同一个文件夹即可恢复",
+                                    color = BrandOrange,
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
                         TextButton(
                             onClick = { onRemove(root) },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),

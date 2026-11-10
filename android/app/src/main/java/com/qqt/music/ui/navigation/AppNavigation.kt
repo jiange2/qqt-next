@@ -2,6 +2,7 @@ package com.qqt.music.ui.navigation
 
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
@@ -87,9 +88,19 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val localMusicViewModel: LocalMusicViewModel = viewModel()
     val localMusicRoots by localMusicViewModel.roots.collectAsState()
     val localMusicScan by localMusicViewModel.scan.collectAsState()
+    val localMusicRevokedTrees by localMusicViewModel.revokedTrees.collectAsState()
     var showFolderDialog by remember { mutableStateOf(false) }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let { localMusicViewModel.addRoot(it) }
+    }
+    // 本地歌曲播放失败（文件被删、授权被回收或损坏）：提示「文件不可用」并把该行标为不可用。
+    // 放在导航层而不是本地音乐页：在播放器 / 专辑页触发时同样要提示与落状态；不自动重扫、不重试
+    val unavailableLocalSongId by playerViewModel.unavailableLocalSongId.collectAsState()
+    LaunchedEffect(unavailableLocalSongId) {
+        val songId = unavailableLocalSongId ?: return@LaunchedEffect
+        localMusicViewModel.markUnavailable(songId)
+        Toast.makeText(context, "文件不可用", Toast.LENGTH_SHORT).show()
+        playerViewModel.consumeUnavailableLocalSong()
     }
     val isLocalMusic = currentRoute == Screen.LocalMusic.route
     // 本地音乐域（歌曲/专辑视图与本地专辑页）不发任何请求：断网/服务不可达横幅对它没有意义（spec 用户故事 38）
@@ -189,6 +200,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                     viewModel = localMusicViewModel,
                                     playerViewModel = playerViewModel,
                                     onSelectFolder = { folderPicker.launch(null) },
+                                    onManageFolders = { showFolderDialog = true },
                                     onAlbumClick = { album ->
                                         // 专辑键按 URL 安全编码后作为路由参数；专辑名给顶栏标题
                                         LocalAlbumNav.albumName = album.name
@@ -333,6 +345,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                 roots = localMusicRoots,
                 onRemove = { root -> localMusicViewModel.removeRoot(root.treeUri) },
                 onDismiss = { showFolderDialog = false },
+                revokedTrees = localMusicRevokedTrees,
             )
         }
     }

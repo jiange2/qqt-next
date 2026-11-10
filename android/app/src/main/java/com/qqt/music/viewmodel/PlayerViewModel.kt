@@ -78,6 +78,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     private val _cacheVisual = MutableStateFlow(CacheVisual.NOT_CACHED)
     val cacheVisual: StateFlow<CacheVisual> = _cacheVisual.asStateFlow()
 
+    /**
+     * 播放失败的本地歌曲 ID（文件被删、权限失效或损坏）。界面消费后把该行标为不可用并清空；
+     * 本地播放失败不自动重扫、不重试，也不影响队列里其它歌曲的下一次播放。
+     */
+    private val _unavailableLocalSongId = MutableStateFlow<String?>(null)
+    val unavailableLocalSongId: StateFlow<String?> = _unavailableLocalSongId.asStateFlow()
+
     private var mediaController: MediaController? = null
     private var currentQueue: List<Song> = emptyList()
 
@@ -188,6 +195,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             // 须端侧清除后重取。护栏：仅解析/解码类错误参与（乱码数据的确切表现，IO 类是网络问题）；
             // 仅媒体 host；同曲再败升级 #raw 通道（旁路 -31 直读、独立缓存键），#raw 再败即停防循环。
             override fun onPlayerError(error: PlaybackException) {
+                // 本地文件（content URI）播放失败：文件被删、授权被回收或已损坏。
+                // 交给界面把该行标为不可用并提示「文件不可用」；不重试、不自动重扫（spec「权限与失效」）
+                _currentSong.value?.takeIf { it.isLocalSong() }?.let { song ->
+                    Log.w(TAG, "本地文件不可用：${song.title}（${error.errorCode}）")
+                    _unavailableLocalSongId.value = song.id
+                    return
+                }
                 val controller = mediaController ?: return
                 val item = controller.currentMediaItem ?: return
                 val uri = item.localConfiguration?.uri ?: return
@@ -373,6 +387,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         Log.d(TAG, "📍 seek to ${positionMs}ms")
+    }
+
+    /** 界面把「文件不可用」提示与灰显处理完后清空，避免重复消费 */
+    fun consumeUnavailableLocalSong() {
+        _unavailableLocalSongId.value = null
     }
 
     /** 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer */

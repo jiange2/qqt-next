@@ -33,6 +33,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 歌曲视图与本地专辑页共用（在线列表行走 [com.qqt.music.ui.components.SongListItem]，
  * 那行的播放、下载计数对本地歌曲没有意义，所以本地另写一行）。
  * 长按打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
+ * 文件不可用的行整体灰显、不可点，右侧以「不可用」代替时长（spec「权限与失效」）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -45,10 +46,12 @@ internal fun LocalSongRow(
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isCurrent = currentSong?.id == song.id
+    // 不可用：文件被删 / 读不到（播放失败标记），或所在目录授权被系统回收
+    val available = song.available
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(enabled = available, onClick = onClick, onLongClick = onLongClick)
             // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
             .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -56,9 +59,9 @@ internal fun LocalSongRow(
         Text(
             text = "$index",
             fontSize = songIndexFontSize("$index".length),
-            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+            fontWeight = if (isCurrent && available) FontWeight.SemiBold else FontWeight.Normal,
             textAlign = TextAlign.Center,
-            color = if (isCurrent) BrandOrange else InkSecondary,
+            color = if (isCurrent && available) BrandOrange else InkSecondary,
             maxLines = 1,
             softWrap = false,
             modifier = Modifier.width(26.dp),
@@ -69,7 +72,7 @@ internal fun LocalSongRow(
                 text = song.displayTitle(),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = if (isCurrent) BrandOrange else InkPrimary,
+                color = if (!available) InkFaint else if (isCurrent) BrandOrange else InkPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -77,14 +80,14 @@ internal fun LocalSongRow(
             Text(
                 text = song.displayArtist().ifBlank { "未知艺术家" },
                 fontSize = 12.sp,
-                color = InkSecondary,
+                color = if (available) InkSecondary else InkFaint,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.width(12.dp))
         Text(
-            text = formatDuration(song.durationMs),
+            text = if (available) formatDuration(song.durationMs) else "不可用",
             fontSize = 12.sp,
             color = InkFaint,
             maxLines = 1,

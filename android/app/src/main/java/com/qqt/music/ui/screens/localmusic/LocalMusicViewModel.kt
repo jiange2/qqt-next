@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -78,6 +79,8 @@ sealed interface LocalMetadataSaveResult {
  * 移除某个目录只按树剔除索引里的歌曲，不触发全量重扫。
  * 专辑视图与专辑页共用同一份索引派生出的 [albums]；封面按专辑懒解析、带容量上限（[coverCache]）。
  * 元数据编辑（[saveMetadata] / [restoreDefaultMetadata]）只改写覆盖层与展示值，不重扫、不碰文件。
+ * 权限与失效：进入页面核对根目录的持久化授权（[checkRootPermissions]），失效目录的歌曲灰显；
+ * 播放时文件被删 / 读不到（[markUnavailable]）只标记该行不可用，不自动重扫，也不影响其它歌曲。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -90,13 +93,36 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     val roots: StateFlow<List<LocalMusicRoot>> = _roots.asStateFlow()
 
     private val _songs = MutableStateFlow<List<LocalSong>>(emptyList())
-    val songs: StateFlow<List<LocalSong>> = _songs.asStateFlow()
+
+    /**
+     * 持久化授权失效的根目录（tree URI）。授权检查在 IO 线程异步进行，不阻塞页面首帧；
+     * 只影响展示：这里不写回索引，重新授权成功后歌曲自然恢复可播。
+     */
+    private val _revokedTrees = MutableStateFlow<Set<String>>(emptySet())
+    val revokedTrees: StateFlow<Set<String>> = _revokedTrees.asStateFlow()
+
+    /**
+     * 展示用歌曲列表：来自被回收授权的目录的歌曲在这里标成不可用（灰显、不可点），
+     * 但不改动磁盘上的可用状态——重新授权后无需重扫或清数据即恢复（spec「权限与失效」）。
+     */
+    val songs: StateFlow<List<LocalSong>> = combine(_songs, _revokedTrees) { songs, revoked ->
+        if (revoked.isEmpty()) {
+            songs
+        } else {
+            songs.map { if (it.treeUri in revoked && it.available) it.copy(available = false) else it }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** 所有根目录的授权都被回收：页面改为「重新选择目录」的空态，而不是让用户以为歌丢了 */
+    val allRootsRevoked: StateFlow<Boolean> = combine(_roots, _revokedTrees) { roots, revoked ->
+        roots.isNotEmpty() && roots.all { it.treeUri.toString() in revoked }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /**
      * 专辑视图（spec「专辑与封面」）：完全从索引派生，按「专辑名 + 专辑艺术家」分组并排好序。
      * 不单独存状态——歌曲变了（扫描提交、移除目录、编辑覆盖层）专辑分组自然跟着变。
      */
-    val albums: StateFlow<List<LocalAlbum>> = _songs
+    val albums: StateFlow<List<LocalAlbum>> = songs
         // 分组与排序（中文 Collator）放在默认调度器上：歌多时也不占主线程
         .map { songs -> withContext(Dispatchers.Default) { songs.groupIntoAlbums() } }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -185,8 +211,33 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
             _songs.value = restored.songs
             _indexUnreadable.value = restored.indexUnreadable
             _loading.value = false
+            // 进入本地音乐页 / 冷启动后核对持久化授权（异步）：权限被系统回收时在列表上标出来
+            checkRootPermissions()
             // 根目录已有但索引还没有：直接开扫，不必让用户先看到「目录里没有音乐」
             if (restored.needsScan) startScan()
+        }
+    }
+
+    /**
+     * 核对每个根目录的持久化读授权（spec「权限与失效」）：
+     * 全部失效 → 页面给重新选择的空态；部分失效 → 顶部提示 + 管理入口，对应歌曲灰显。
+     * 检查在 IO 线程异步进行，不阻塞页面首帧；不写索引，重新授权成功后歌曲自然恢复。
+     */
+    fun checkRootPermissions() {
+        val roots = _roots.value
+        if (roots.isEmpty()) return
+        viewModelScope.launch {
+            val granted = withContext(Dispatchers.IO) {
+                runCatching {
+                    getApplication<Application>().contentResolver.persistedUriPermissions
+                        .filter { it.isReadPermission }
+                        .mapTo(HashSet()) { it.uri.toString().trimEnd('/') }
+                }.getOrNull()
+            } ?: return@launch
+            _revokedTrees.value = roots
+                .map { it.treeUri.toString() }
+                .filterNot { it.trimEnd('/') in granted }
+                .toSet()
         }
     }
 
@@ -196,7 +247,13 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun addRoot(treeUri: Uri) {
         if (_roots.value.any { it.treeUri == treeUri }) {
-            startScan()
+            // 同一棵树重新选择：也可能是在授权被回收后重新授权（spec：重新授权即恢复可播）。
+            // 拾取器给的只是临时授权，这里重新持久化并核对一次，然后重扫把标签与可用状态刷新回来
+            viewModelScope.launch {
+                persistPermission(treeUri)
+                checkRootPermissions()
+                startScan()
+            }
             return
         }
         viewModelScope.launch {
@@ -210,23 +267,27 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 _notice.value = "「$name」与已添加的「${overlapping.name}」重叠，请选择不重叠的文件夹"
                 return@launch
             }
-            withContext(Dispatchers.IO) {
-                // 选择目录即是唯一一次授权：从此本机可长期读取该树，无任何存储权限弹窗
-                runCatching {
-                    getApplication<Application>().contentResolver.takePersistableUriPermission(
-                        treeUri,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                    )
-                }
-            }
+            persistPermission(treeUri)
             val root = LocalMusicRoot(treeUri, name)
             if (_roots.value.none { it.treeUri == root.treeUri }) {
                 _roots.value = _roots.value + root
             }
+            checkRootPermissions()
             // 根目录立即落盘：这次扫描被取消，下次启动也不至于丢掉这个授权
             LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, _songs.value))
             startScan()
         }
+    }
+
+    /** 选择目录即是唯一一次授权：从此本机可长期读取该树，无任何存储权限弹窗 */
+    private suspend fun persistPermission(treeUri: Uri) = withContext(Dispatchers.IO) {
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        Unit
     }
 
     /**
@@ -239,6 +300,7 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     fun removeRoot(treeUri: Uri) {
         val root = _roots.value.firstOrNull { it.treeUri == treeUri } ?: return
         _roots.value = _roots.value - root
+        _revokedTrees.value = _revokedTrees.value - root.treeUri.toString()
         _songs.value = _songs.value.filterNot { it.treeUri == treeUri.toString() }
         // 落盘不交给重扫：根目录被清空、用户取消、扫描失败都走不到写盘那一步，
         // 磁盘会停在含该目录的旧快照，重启就把它连歌一起捡回来。
@@ -338,6 +400,23 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
+     * 文件在播放时已被删除或不可读（spec「权限与失效」）：把这条索引标为不可用并落盘，
+     * 列表灰显、不可点；不自动重扫（下次重扫时该文件不在目录树里，自然从索引移除）。
+     * 其它歌曲照常可播——播放器下一次装载会重新构建队列，不受这条错误状态影响。
+     */
+    fun markUnavailable(songId: String) {
+        val current = _songs.value
+        val index = current.indexOfFirst { it.id == songId }
+        if (index < 0 || !current[index].available) return
+        val updated = current.toMutableList().apply {
+            this[index] = this[index].copy(available = false)
+        }
+        _songs.value = updated
+        val snapshot = LocalMusicStore.Snapshot(_roots.value, updated)
+        viewModelScope.launch { LocalMusicStore.saveIndex(application, snapshot) }
+    }
+
+    /**
      * 保存元数据编辑（spec「元数据编辑」，ADR 0020）：只写覆盖层，音频文件本身一个字节都不改，
      * 只作用于 App 内的展示。带校验——音轨号只接受正整数、年份只接受四位数字，非法即拒收。
      */
@@ -386,10 +465,17 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             // 整条链排在一把锁里：换列表要基于上一次编辑提交后的结果，落盘也只按调用顺序走
             editLock.withLock {
-                // 顺序也跟着标题走（spec：歌曲视图按标题升序），排序与专辑分组一样不占主线程
+                // 顺序也跟着标题走（spec：歌曲视图按标题升序），排序与专辑分组一样不占主线程。
+                // 可用状态取索引里的本值：传进来的 song 可能是因授权失效而临时标记的展示副本
                 _songs.value = withContext(Dispatchers.Default) {
                     _songs.value
-                        .map { if (it.fingerprint == updated.fingerprint) updated else it }
+                        .map { existing ->
+                            if (existing.fingerprint == updated.fingerprint) {
+                                updated.copy(available = existing.available)
+                            } else {
+                                existing
+                            }
+                        }
                         .sortedByDisplayTitle()
                 }
                 // 覆盖层是独立文件：写完才作废封面并抬代次，卡片重新取图时看到的已经是新分组成员
