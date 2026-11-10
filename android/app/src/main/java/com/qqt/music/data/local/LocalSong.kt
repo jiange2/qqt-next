@@ -155,3 +155,16 @@ fun List<LocalSong>.diffAgainst(previous: Collection<LocalSong>): LibraryDiff {
         removed = previousIds.count { it !in currentIds },
     )
 }
+
+/**
+ * 重扫提示的差异口径（spec 用户故事 17：完成后提示「新增 x、移除 y」，以便知道这次刷新改变了什么）：
+ * 在排除过滤后的可见库上比较——被排除文件夹里的增删列表根本看不见，不该计入提示；
+ * 两侧用同一份（当前的）排除清单：用户此刻看到的列表正是「旧库按现清单过滤」的形态，
+ * 切换排除开关的即时重过滤已把所见对齐，这里再按它算才是「这次刷新改变了什么」。
+ */
+fun visibleLibraryDiff(
+    current: List<LocalSong>,
+    previous: List<LocalSong>,
+    excludedFolders: Collection<String>,
+): LibraryDiff =
+    current.excludingFolders(excludedFolders).diffAgainst(previous.excludingFolders(excludedFolders))

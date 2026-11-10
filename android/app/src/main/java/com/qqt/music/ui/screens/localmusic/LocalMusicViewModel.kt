@@ -14,7 +14,6 @@ import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreLibrarySource
-import com.qqt.music.data.local.diffAgainst
 import com.qqt.music.data.local.distinctFolders
 import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
@@ -22,6 +21,7 @@ import com.qqt.music.data.local.overrideFrom
 import com.qqt.music.data.local.sortedByDisplayTitle
 import com.qqt.music.data.local.trackNoInput
 import com.qqt.music.data.local.valueOrNull
+import com.qqt.music.data.local.visibleLibraryDiff
 import com.qqt.music.data.local.withOverride
 import com.qqt.music.data.local.yearInput
 import kotlinx.coroutines.CancellationException
@@ -302,7 +302,8 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                     LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(merged, _excludedFolders.value.toList()))
                 }
                 if (notify) {
-                    val diff = merged.diffAgainst(previous)
+                    // 提示的是可见库的变化（spec 用户故事 17）：被排除文件夹里的增删列表看不见，不计入
+                    val diff = visibleLibraryDiff(merged, previous, _excludedFolders.value)
                     _notice.value = "新增 ${diff.added}、移除 ${diff.removed}"
                 }
                 Log.d(TAG, "库刷新完成：${merged.size} 首")
