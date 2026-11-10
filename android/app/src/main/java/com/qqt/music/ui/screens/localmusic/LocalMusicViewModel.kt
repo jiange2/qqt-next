@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalFolder
+import com.qqt.music.data.local.LocalLibraryResult
 import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicLibrarySource
 import com.qqt.music.data.local.LocalMusicStore
@@ -267,6 +268,8 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /**
      * 整库静默刷新 / 重扫（spec「库快照与刷新」）：等快照读回 → 整库重查 → 按身份 diff →
      * 合并覆盖层 → 原子提交并落盘。全程无进度状态：查询即事实，期间旧列表照常可用。
+     * 查询失败（任一卷）不算空库：快照原样保留、直接跳过这次刷新（spec「播放与失效」：
+     * 不放空列表假装没歌），只有真正的查询结果才提交。
      */
     private fun refresh(notify: Boolean) {
         refreshJob = viewModelScope.launch {
@@ -275,7 +278,16 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 _loading.first { !it }
                 if (!source.hasAudioPermission()) return@launch
                 val previous = _songs.value
-                val rows = withContext(Dispatchers.IO) { source.queryLibrary() }
+                val rows = when (val result = withContext(Dispatchers.IO) { source.queryLibrary() }) {
+                    is LocalLibraryResult.Failure -> {
+                        // 查询失败 ≠ 空库：内存与磁盘快照都原样保留（spec「播放与失效」：不放空列表假装没歌），
+                        // 静默刷新无声跳过；重扫与下方 catch 同口径轻提示失败
+                        Log.w(TAG, "库查询失败，保留上一次快照", result.cause)
+                        if (notify && _songs.value.isNotEmpty()) _notice.value = "刷新失败，请重试"
+                        return@launch
+                    }
+                    is LocalLibraryResult.Success -> result.rows
+                }
                 // 覆盖层在主线程先取一份快照：查询期间它可能正被元数据编辑改写。
                 // 顺序按合并后的标题（改过标题的歌在刷新后也不会跳回旧位置），
                 // 排序与专辑分组一样离开主线程

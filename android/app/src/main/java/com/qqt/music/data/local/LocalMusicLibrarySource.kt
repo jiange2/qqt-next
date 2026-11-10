@@ -27,8 +27,45 @@ interface LocalMusicLibrarySource {
      * 整库查询：按卷查 `MediaStore.Audio.Media` 并归一化为歌曲行。
      * 铃声明 / 闹钟 / 通知 / 录音 / 播客由 `IS_MUSIC != 0` 天然排除，`.nomedia` 与隐藏文件
      * 由系统媒体扫描器排除——App 不再重复判断（spec「扫描来源与权限」）。
+     * 失败与真空库分开报告（[LocalLibraryResult]）：失败时刷新方保留上一次快照原样不动，
+     * 不把空结果当「没有歌」提交（spec「播放与失效」：不放空列表假装没歌）。
      */
-    suspend fun queryLibrary(): List<LocalSong>
+    suspend fun queryLibrary(): LocalLibraryResult
+}
+
+/**
+ * 整库查询结果：查询失败与「真空库」是两回事——空列表也是一种查询事实（媒体库确实没有音乐），
+ * 可以提交；失败则不携带任何行，刷新方保留上一次快照（内存与磁盘都不动），静默刷新无声跳过。
+ */
+sealed interface LocalLibraryResult {
+    /** 全部卷查询成功：[rows] 为整库归一化行，可能为空（真空库） */
+    data class Success(val rows: List<LocalSong>) : LocalLibraryResult
+
+    /** 至少一卷查询失败（卷不可用、授权中途被收、provider 出错等） */
+    data class Failure(val cause: Throwable) : LocalLibraryResult
+}
+
+/** 单卷查询结果（[MediaStoreLibrarySource] 逐卷产出，[mergeVolumeQueries] 的入参） */
+internal sealed interface VolumeQueryResult {
+    data class Rows(val rows: List<LocalSong>) : VolumeQueryResult
+
+    data class Failed(val cause: Throwable) : VolumeQueryResult
+}
+
+/**
+ * 多卷合并（纯函数，JVM 可测）：任一卷失败即整体 [LocalLibraryResult.Failure]——
+ * 多卷合并是全有或全无：只把成功卷的部分结果当全量提交，会把失败卷的歌从快照里悄悄抹掉；
+ * 全部成功则按卷序合并行（空卷清单与空结果同样是合法的 [LocalLibraryResult.Success]）。
+ */
+internal fun mergeVolumeQueries(results: List<VolumeQueryResult>): LocalLibraryResult {
+    val rows = ArrayList<LocalSong>()
+    for (result in results) {
+        when (result) {
+            is VolumeQueryResult.Rows -> rows += result.rows
+            is VolumeQueryResult.Failed -> return LocalLibraryResult.Failure(result.cause)
+        }
+    }
+    return LocalLibraryResult.Success(rows)
 }
 
 /**
@@ -47,6 +84,8 @@ fun audioReadPermission(sdkInt: Int): String =
  * - 权限：Android 13+ 申请 `READ_MEDIA_AUDIO`，12 及以下申请 `READ_EXTERNAL_STORAGE`（清单标 maxSdkVersion 32）
  * - 多存储卷：Android 10+ 用 `getExternalVolumeNames` 逐外置卷查询合并（机身存储 + SD 卡）；
  *   Android 9 及以下只有主外置卷一个集合
+ * - 失败口径：任一卷查询失败即整体失败（[LocalLibraryResult.Failure]），不把部分结果当全量提交——
+ *   刷新方据此保留上一次快照，不放空列表假装没歌（spec「播放与失效」）
  * - 行归一化：行 ID、卷名、路径、文件名、大小、修改时间、时长、标签字段（专辑艺术家 Android 11+ 起
  *   取 `ALBUM_ARTIST` 列）、专辑 ID；音轨号按 Android 多碟惯例解出（碟位编码在高位）
  * - 不读标签解析器、不算指纹：查询即事实，标题等都是系统预抽取的现成结果
@@ -67,17 +106,20 @@ class MediaStoreLibrarySource(
     private fun isGranted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
-    override suspend fun queryLibrary(): List<LocalSong> = withContext(Dispatchers.IO) {
-        if (sdkInt >= 29) {
-            MediaStore.getExternalVolumeNames(context).flatMap { volume -> queryVolume(volume) }
+    override suspend fun queryLibrary(): LocalLibraryResult = withContext(Dispatchers.IO) {
+        val volumes = if (sdkInt >= 29) {
+            // 卷清单本身也可能取不到（个别 ROM 异常）：与单卷查询同口径按失败处理，不做部分合并
+            runCatching { MediaStore.getExternalVolumeNames(context).toList() }
+                .getOrElse { return@withContext LocalLibraryResult.Failure(it) }
         } else {
             // Android 9 及以下：只有主外置卷；卷名留空，歌曲身份退化为纯行 ID（单卷不会撞号）
-            queryVolume(VOLUME_LEGACY)
+            listOf(VOLUME_LEGACY)
         }
+        mergeVolumeQueries(volumes.map { queryVolume(it) })
     }
 
-    /** 单卷查询：单点失败（卷不可用、授权中途被收）只损失该卷，不影响其它卷合并 */
-    private fun queryVolume(volumeName: String): List<LocalSong> {
+    /** 单卷查询：失败不吞成空列表（[VolumeQueryResult.Failed]），整体成败由 [mergeVolumeQueries] 裁决 */
+    private fun queryVolume(volumeName: String): VolumeQueryResult {
         val collection = if (sdkInt >= 29) {
             MediaStore.Audio.Media.getContentUri(volumeName)
         } else {
@@ -91,10 +133,13 @@ class MediaStoreLibrarySource(
                 null,
                 null,
             )?.use { cursor -> buildRows(cursor, volumeName, collection) } ?: emptyList()
-        }.getOrElse { e ->
-            Log.w(TAG, "媒体库查询失败：$volumeName", e)
-            emptyList()
-        }
+        }.fold(
+            onSuccess = { VolumeQueryResult.Rows(it) },
+            onFailure = { e ->
+                Log.w(TAG, "媒体库查询失败：$volumeName", e)
+                VolumeQueryResult.Failed(e)
+            },
+        )
     }
 
     /** 查询条件：`IS_MUSIC != 0`，Android 10+ 排除 pending，Android 11+ 排除回收站（列按版本可用） */
