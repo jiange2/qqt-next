@@ -104,7 +104,7 @@ object LocalMusicStore {
             .toMap()
     }
 
-    /** 整表写覆盖层（元数据编辑接入后由票据 09 调用）；空条目不入盘，保持「只存非空值」 */
+    /** 整表写覆盖层（元数据编辑保存 / 恢复默认后调用）；空条目不入盘，保持「只存非空值」 */
     suspend fun saveOverlay(context: Context, overlay: Map<String, LocalSongOverride>) =
         withContext(Dispatchers.IO) {
             val entries = overlay.filterValues { !it.isEmpty }.mapValues { it.value.toDto() }

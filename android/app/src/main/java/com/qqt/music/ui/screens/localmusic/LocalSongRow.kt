@@ -1,6 +1,7 @@
 package com.qqt.music.ui.screens.localmusic
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,20 +32,23 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 本地歌曲行：序号 / 标题 / 艺术家 / 时长；当前曲目序号与标题转橙。
  * 歌曲视图与本地专辑页共用（在线列表行走 [com.qqt.music.ui.components.SongListItem]，
  * 那行的播放、下载计数对本地歌曲没有意义，所以本地另写一行）。
+ * 长按打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LocalSongRow(
     index: Int,
     song: LocalSong,
     playerViewModel: PlayerViewModel,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isCurrent = currentSong?.id == song.id
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
             .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,

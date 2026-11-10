@@ -47,6 +47,22 @@ class LocalCoverCache(private val context: Context) {
         lock.withLock { resolve(album) }
     }
 
+    /**
+     * 指定专辑键的封面作废（元数据编辑改了专辑名 / 专辑艺术家，分组成员就变了）：
+     * 删掉缓存文件并清掉「没有封面」的记录，下次展示时按新成员重新解析来源。
+     */
+    suspend fun invalidate(keys: Collection<String>) = withContext(Dispatchers.IO) {
+        lock.withLock {
+            for (key in keys) {
+                val name = entryName(key)
+                recent.remove(name)
+                missing.remove(key)
+                runCatching { File(cacheDir, name).delete() }
+                    .onFailure { e -> Log.w(TAG, "封面缓存作废失败：$name", e) }
+            }
+        }
+    }
+
     /** 清空缓存：重扫提交后用，好让「文件夹封面变化」在重扫后生效 */
     suspend fun clear() = withContext(Dispatchers.IO) {
         lock.withLock {

@@ -10,14 +10,22 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalCoverCache
+import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicRoot
 import com.qqt.music.data.local.LocalMusicScanner
 import com.qqt.music.data.local.LocalMusicStore
+import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
+import com.qqt.music.data.local.albumKey
 import com.qqt.music.data.local.findOverlap
 import com.qqt.music.data.local.groupIntoAlbums
+import com.qqt.music.data.local.overrideFrom
+import com.qqt.music.data.local.sortedByDisplayTitle
+import com.qqt.music.data.local.trackNoInput
+import com.qqt.music.data.local.valueOrNull
 import com.qqt.music.data.local.withOverride
+import com.qqt.music.data.local.yearInput
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +38,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** 扫描状态：目录树给不出可靠总量，进度只报已处理文件数与已收录歌曲数 */
@@ -44,6 +54,19 @@ data class LocalScanState(
 )
 
 /**
+ * 元数据保存结果：写入成功（带合并后的歌曲，调用方拿去同步播放器展示值）或字段非法：
+ * 面板上按字段提示（音轨号只接受正整数、年份只接受四位数字）。
+ */
+sealed interface LocalMetadataSaveResult {
+    data class Saved(val song: LocalSong) : LocalMetadataSaveResult
+
+    data class Invalid(
+        val trackNoError: String? = null,
+        val yearError: String? = null,
+    ) : LocalMetadataSaveResult
+}
+
+/**
  * 本地音乐页状态：授权目录、扫描状态与扫描结果。
  *
  * 索引与覆盖层各一个 App 私有 JSON 文件（[LocalMusicStore]）：启动时在 IO 线程读回并合并，
@@ -54,6 +77,7 @@ data class LocalScanState(
  * 根目录可以授权多个（结果合并成一份库）：与已有目录重叠的授权被拒绝，
  * 移除某个目录只按树剔除索引里的歌曲，不触发全量重扫。
  * 专辑视图与专辑页共用同一份索引派生出的 [albums]；封面按专辑懒解析、带容量上限（[coverCache]）。
+ * 元数据编辑（[saveMetadata] / [restoreDefaultMetadata]）只改写覆盖层与展示值，不重扫、不碰文件。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -104,6 +128,9 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
 
     /** 覆盖层（ADR 0020）：身份 → 用户改过的字段；自己的文件，重扫只换索引不动它 */
     private var overlay: Map<String, LocalSongOverride> = emptyMap()
+
+    /** 元数据编辑串行化：「换列表 → 写覆盖层 → 作废封面」是一条链，两次编辑不交错 */
+    private val editLock = Mutex()
 
     /** 同一时刻只允许一个扫描任务：重复触发（重新选目录、菜单重扫、重新进页面）都不叠加 */
     private var scanJob: Job? = null
@@ -260,8 +287,13 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 // 遍历范围是扫描开始时捕获的 roots，内存里的根目录表才是当下的事实
                 val liveTreeUris = _roots.value.mapTo(HashSet()) { it.treeUri.toString() }
                 val scanned = result.songs.filter { it.treeUri in liveTreeUris }
-                // 展示值统一走「覆盖层优先、缺失取标签」的合并结果（ADR 0020）
-                val merged = scanned.map { it.withOverride(overlay[it.fingerprint]) }
+                // 展示值统一走「覆盖层优先、缺失取标签」的合并结果（ADR 0020）；
+                // 顺序按合并后的标题（改过标题的歌在重扫后也不会跳回旧位置），排序与专辑分组一样离开主线程。
+                // 覆盖层在主线程先取一份快照：扫描期间它可能正被元数据编辑改写
+                val overlaySnapshot = overlay
+                val merged = withContext(Dispatchers.Default) {
+                    scanned.map { it.withOverride(overlaySnapshot[it.fingerprint]) }.sortedByDisplayTitle()
+                }
                 // 原子提交：整份索引构建完成才替换，此前列表一直是上一次的完整结果
                 _songs.value = merged
                 _indexUnreadable.value = false
@@ -306,13 +338,77 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
+     * 保存元数据编辑（spec「元数据编辑」，ADR 0020）：只写覆盖层，音频文件本身一个字节都不改，
+     * 只作用于 App 内的展示。带校验——音轨号只接受正整数、年份只接受四位数字，非法即拒收。
+     */
+    fun saveMetadata(song: LocalSong, draft: LocalMetadataDraft): LocalMetadataSaveResult {
+        val trackNo = song.trackNoInput(draft.trackNo)
+        val year = song.yearInput(draft.year)
+        if (trackNo is LocalNumberInput.Invalid || year is LocalNumberInput.Invalid) {
+            return LocalMetadataSaveResult.Invalid(
+                trackNoError = (trackNo as? LocalNumberInput.Invalid)?.message,
+                yearError = (year as? LocalNumberInput.Invalid)?.message,
+            )
+        }
+        val override = song
+            .overrideFrom(
+                draft = draft,
+                // 已过了非法检查，剩下的只可能是 Ok（留空为 null）
+                trackNo = trackNo.valueOrNull,
+                year = year.valueOrNull,
+            )
+            // 六个字段都回到标签值：等同「恢复默认」，不落一条空壳覆盖项
+            .takeUnless { it.isEmpty }
+        return LocalMetadataSaveResult.Saved(applyOverride(song, override))
+    }
+
+    /**
+     * 「恢复默认」：删掉这首歌的整条覆盖，全部回到文件标签值（ADR 0020：不需要备份原标签）。
+     * 返回合并后的歌曲，供调用方同步播放器上的展示值。
+     */
+    fun restoreDefaultMetadata(song: LocalSong): LocalSong = applyOverride(song, null)
+
+    /**
+     * 覆盖层落位并刷新展示：只替换这一条记录——索引不动、不重扫、不碰文件，
+     * 所以重扫、移动文件、改名之后改动照样生效（覆盖层以内容身份为键）。
+     *
+     * 列表、专辑分组与封面都从 [_songs] 派生，换掉这一条即全部刷新；新旧专辑键的封面分别作废重取
+     * （改了专辑名或专辑艺术家，分组成员就变了，封面来源可能在文件夹封面与内嵌图之间切换）。
+     */
+    private fun applyOverride(song: LocalSong, override: LocalSongOverride?): LocalSong {
+        overlay = if (override == null) {
+            overlay - song.fingerprint
+        } else {
+            overlay + (song.fingerprint to override)
+        }
+        val updated = song.withOverride(override)
+        val touchedAlbumKeys = listOf(song.albumKey(), updated.albumKey()).distinct()
+        viewModelScope.launch {
+            // 整条链排在一把锁里：换列表要基于上一次编辑提交后的结果，落盘也只按调用顺序走
+            editLock.withLock {
+                // 顺序也跟着标题走（spec：歌曲视图按标题升序），排序与专辑分组一样不占主线程
+                _songs.value = withContext(Dispatchers.Default) {
+                    _songs.value
+                        .map { if (it.fingerprint == updated.fingerprint) updated else it }
+                        .sortedByDisplayTitle()
+                }
+                // 覆盖层是独立文件：写完才作废封面并抬代次，卡片重新取图时看到的已经是新分组成员
+                LocalMusicStore.saveOverlay(application, overlay)
+                coverCache.invalidate(touchedAlbumKeys)
+                _coverGeneration.value += 1
+            }
+        }
+        return updated
+    }
+
+    /**
      * 专辑封面文件：已缓存直接给文件，否则按「文件夹封面 → 内嵌图」解析后落进封面缓存；
      * 都没有时返回 null，卡片与专辑页显示占位图。完全离线，不发起任何网络请求。
+     *
+     * 传专辑对象而不是专辑键：卡片拿到的就是当下这批成员，不会赶上「刚编辑完封面已作废、
+     * 专辑分组还没重算」的错位（按键反查 [albums] 就可能找不到这张专辑）。
      */
-    suspend fun albumCover(albumKey: String): File? {
-        val album = albums.value.firstOrNull { it.key == albumKey } ?: return null
-        return coverCache.cover(album)
-    }
+    suspend fun albumCover(album: LocalAlbum): File? = coverCache.cover(album)
 
     /** 取消当前扫描：本次结果整体丢弃，列表回到上一次扫描的完整状态 */
     fun cancelScan() {

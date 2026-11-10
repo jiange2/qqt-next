@@ -9,7 +9,6 @@ import android.util.Log
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.security.MessageDigest
-import java.text.Collator
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -115,11 +114,8 @@ class LocalMusicScanner(private val context: Context) {
                 }
             }
         }
-        val collator = Collator.getInstance(Locale.CHINA)
-        val byTitle = Comparator<LocalSong> { left, right ->
-            collator.compare(left.displayTitle(), right.displayTitle())
-        }
-        val songs = byFingerprint.values.sortedWith(byTitle)
+        // 顺序口径与元数据编辑共用（[sortedByDisplayTitle]）：扫描提交与改完标题的列表同一种排序
+        val songs = byFingerprint.values.sortedByDisplayTitle()
         val currentFingerprints = songs.mapTo(HashSet()) { it.fingerprint }
         val added = currentFingerprints.count { it !in previousFingerprints }
         val removed = previousFingerprints.count { it !in currentFingerprints }

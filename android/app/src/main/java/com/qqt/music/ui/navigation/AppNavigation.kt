@@ -317,10 +317,12 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             }
         }
 
-        // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；收起整页滑出即露出下层页面
+        // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；收起整页滑出即露出下层页面。
+        // 本地歌曲的「更多菜单 → 编辑信息」要用本地音乐的索引与覆盖层，与导航层共用同一个实例
         if (playerOverlay) {
             PlayerScreen(
                 playerViewModel = playerViewModel,
+                localMusicViewModel = localMusicViewModel,
                 onBackClick = { playerOverlay = false },
             )
         }

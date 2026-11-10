@@ -18,7 +18,9 @@ data class LocalAlbum(
 ) {
     /**
      * 封面取样歌曲：文件夹封面取它所在目录，没有封面文件时取它的内嵌图。
-     * 同一专辑的歌曲同在一个目录（无专辑名的分组更以目录为键），取第一首即可。
+     *
+     * 元数据编辑可以把不同文件夹的歌改到同一张专辑，所以「同一张专辑的歌曲同在一个目录」不再是必然：
+     * 取样的是这张专辑里排在最前那首所在的目录，文件夹封面只代表那一个来源（ADR 0020：封面归专辑，不归单曲）。
      */
     val coverSong: LocalSong get() = songs.first()
 }
@@ -69,8 +71,11 @@ fun List<LocalSong>.groupIntoAlbums(): List<LocalAlbum> {
  * - 有专辑名：专辑名 + 专辑艺术家
  * - 无专辑名：文件夹名 + 文件夹路径（文件夹路径带上所属树 URI）——只靠文件夹名会让
  *   `Music/Live` 与 `SD/Live` 两个目录被合并成一张专辑
+ *
+ * 元数据编辑（票据 09）也读它：改了专辑名 / 专辑艺术家，同一首歌的新旧键会落进两张不同的
+ * 专辑，封面缓存要按这两个键分别作废重取。
  */
-private fun LocalSong.albumKey(): String {
+fun LocalSong.albumKey(): String {
     val album = displayAlbum()
     if (album.isNotBlank()) return "album\u0001$album\u0001${displayAlbumArtist()}"
     val folderPath = relativePath.substringBeforeLast('/', "")
@@ -93,6 +98,15 @@ private fun trackOrder(collator: Collator): Comparator<LocalSong> = Comparator {
     } else {
         collator.compare(left.displayTitle(), right.displayTitle())
     }
+}
+
+/**
+ * 歌曲视图顺序：按合并展示标题升序，与专辑分组共用 [Locale.CHINA] 的中文排序规则。
+ * 扫描提交与元数据编辑都走这一份口径——改了标题，列表顺序也跟着变。
+ */
+fun Collection<LocalSong>.sortedByDisplayTitle(): List<LocalSong> {
+    val collator = Collator.getInstance(Locale.CHINA)
+    return sortedWith(Comparator { left, right -> collator.compare(left.displayTitle(), right.displayTitle()) })
 }
 
 /**

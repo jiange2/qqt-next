@@ -21,7 +21,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,9 +32,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.qqt.music.data.local.LocalAlbum
+import com.qqt.music.data.local.LocalSong
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.screens.localmusic.LocalAlbumCover
+import com.qqt.music.ui.screens.localmusic.LocalMetadataEditSheet
 import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
 import com.qqt.music.ui.screens.localmusic.LocalSongRow
 import com.qqt.music.ui.theme.BrandOrange
@@ -46,6 +52,7 @@ import java.io.File
  *
  * 歌曲按音轨号升序（音轨号为空按标题）——顺序在分组时就算好了（[com.qqt.music.data.local.groupIntoAlbums]）；
  * 点歌以整张专辑为播放队列，来源仍是本地音乐（与本地音乐页共用同一份来源记忆）。
+ * 长按歌曲行同样可以打开元数据编辑面板（与歌曲视图、全屏播放器同一个面板）。
  * 数据全部来自扫描索引，页面不发起任何网络请求。
  */
 @Composable
@@ -57,6 +64,8 @@ fun LocalAlbumScreen(
     val albums by viewModel.albums.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val album = albums.firstOrNull { it.key == albumKey }
+    // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
+    var editingSong by remember { mutableStateOf<LocalSong?>(null) }
 
     when {
         // 索引还没读回来：先别把「还没读出来」当成「专辑没有了」
@@ -76,13 +85,7 @@ fun LocalAlbumScreen(
                 .fillMaxSize()
                 .background(Color.White),
         ) {
-            LocalAlbumHeader(
-                albumKey = album.key,
-                albumName = album.name,
-                artist = album.artist,
-                songCount = album.songs.size,
-                viewModel = viewModel,
-            )
+            LocalAlbumHeader(album = album, viewModel = viewModel)
             val queue = album.songs.map { it.toSong() }
             LazyColumn(
                 modifier = Modifier.weight(1f),
@@ -101,26 +104,33 @@ fun LocalAlbumScreen(
                                 sourceDescriptor = QueueSource.LOCAL,
                             )
                         },
+                        onLongClick = { editingSong = song },
                     )
                 }
             }
         }
     }
+
+    // 元数据编辑面板：长按歌曲行打开。改专辑名后歌曲可能当场换组，这张专辑的列表随之刷新
+    editingSong?.let { song ->
+        LocalMetadataEditSheet(
+            song = song,
+            viewModel = viewModel,
+            playerViewModel = playerViewModel,
+            onDismiss = { editingSong = null },
+        )
+    }
 }
 
 /** 专辑头：封面 + 专辑名 + 艺术家 + 歌曲数 */
 @Composable
-private fun LocalAlbumHeader(
-    albumKey: String,
-    albumName: String,
-    artist: String,
-    songCount: Int,
-    viewModel: LocalMusicViewModel,
-) {
+private fun LocalAlbumHeader(album: LocalAlbum, viewModel: LocalMusicViewModel) {
     val generation by viewModel.coverGeneration.collectAsState()
-    val cover by produceState<File?>(null, albumKey, generation) {
-        value = viewModel.albumCover(albumKey)
+    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（重扫清缓存则靠代次）
+    val cover by produceState<File?>(null, album, generation) {
+        value = viewModel.albumCover(album)
     }
+    val albumName = album.name
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -140,14 +150,14 @@ private fun LocalAlbumHeader(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = artist.ifBlank { "未知艺术家" },
+                text = album.artist.ifBlank { "未知艺术家" },
                 fontSize = 13.sp,
                 color = InkSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
-            Text(text = "$songCount 首", fontSize = 12.sp, color = InkFaint)
+            Text(text = "${album.songs.size} 首", fontSize = 12.sp, color = InkFaint)
         }
     }
 }

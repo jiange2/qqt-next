@@ -355,6 +355,21 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         Log.d(TAG, "⏭️ skip to queue #$index")
     }
 
+    /**
+     * 本地歌曲的元数据被编辑后同步展示值（ADR 0020：列表、播放器都只认合并后的值）：
+     * 队列里的副本与当前歌一起换成新标题 / 艺术家，MiniPlayer 与全屏播放器立即跟随。
+     * 不动正在播放的 MediaItem——不重新装载、不打断播放；通知栏与车机的文案等下次装载时刷新。
+     */
+    fun refreshLocalSongDisplay(id: String, title: String, artist: String) {
+        if (currentQueue.none { it.id == id }) return
+        val redisplayed: (Song) -> Song = { song ->
+            if (song.id == id) song.copy(title = title, artist = artist) else song
+        }
+        currentQueue = currentQueue.map(redisplayed)
+        _queue.value = _queue.value.map(redisplayed)
+        _currentSong.value = _currentSong.value?.let(redisplayed)
+    }
+
     fun seekTo(positionMs: Long) {
         mediaController?.seekTo(positionMs)
         Log.d(TAG, "📍 seek to ${positionMs}ms")

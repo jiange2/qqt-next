@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalMusicRoot
+import com.qqt.music.data.local.LocalSong
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.theme.BrandOrange
@@ -49,6 +50,7 @@ import java.io.File
  * 并以轻提示报告本次的新增 / 移除数量；重扫期间旧列表照常可用，失败不破坏旧索引。
  * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
  * 专辑视图把同一份索引按专辑归并成卡片墙，点开进本地专辑页。
+ * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
  * 两个视图都不发起任何网络请求。
  */
 @Composable
@@ -66,6 +68,8 @@ fun LocalMusicScreen(
     val indexUnreadable by viewModel.indexUnreadable.collectAsState()
     // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
     var showAlbums by remember { mutableStateOf(false) }
+    // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
+    var editingSong by remember { mutableStateOf<LocalSong?>(null) }
 
     val context = LocalContext.current
     val notice by viewModel.notice.collectAsState()
@@ -162,11 +166,22 @@ fun LocalMusicScreen(
                                     sourceDescriptor = QueueSource.LOCAL,
                                 )
                             },
+                            onLongClick = { editingSong = song },
                         )
                     }
                 }
             }
         }
+    }
+
+    // 元数据编辑面板：长按歌曲行打开。保存只写覆盖层，列表与专辑分组立即跟着变
+    editingSong?.let { song ->
+        LocalMetadataEditSheet(
+            song = song,
+            viewModel = viewModel,
+            playerViewModel = playerViewModel,
+            onDismiss = { editingSong = null },
+        )
     }
 }
 
@@ -232,8 +247,9 @@ private fun AlbumGrid(
 @Composable
 private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, onClick: () -> Unit) {
     val generation by viewModel.coverGeneration.collectAsState()
-    val cover by produceState<File?>(null, album.key, generation) {
-        value = viewModel.albumCover(album.key)
+    // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（重扫清缓存则靠代次）
+    val cover by produceState<File?>(null, album, generation) {
+        value = viewModel.albumCover(album)
     }
     Column(
         modifier = Modifier

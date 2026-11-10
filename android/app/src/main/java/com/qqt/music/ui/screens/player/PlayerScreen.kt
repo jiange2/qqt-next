@@ -84,6 +84,7 @@ import coil.imageLoader
 import coil.request.ImageRequest
 import com.qqt.music.data.local.FavoriteStore
 import com.qqt.music.data.local.LocalPlaylistStore
+import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.RatingStore
 import com.qqt.music.data.local.isLocalSong
 import com.qqt.music.data.repository.MusicRepository
@@ -95,6 +96,8 @@ import com.qqt.music.ui.components.PlayerIcons
 import com.qqt.music.ui.components.SongThumbnail
 import com.qqt.music.ui.components.rememberFullyCached
 import com.qqt.music.ui.components.songIndexFontSize
+import com.qqt.music.ui.screens.localmusic.LocalMetadataEditSheet
+import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.CachedGold
 import com.qqt.music.ui.theme.DownloadedGreen
@@ -122,13 +125,16 @@ import kotlinx.coroutines.withContext
  * 覆盖层进出（抽屉式）：打开整页从屏幕底部滑入，关闭（下箭头/系统返回）统一整页向下滑出，动画结束才关覆盖层；
  * 正常屏中部播放区固定高度、整体不可拖动（四段间距 = 最小值 + weight 均摊剩余，估算误差由间距吸收）；
  * 矮屏内容整体滚动托底。状态栏图标在本页保持深色，离开时还原；歌词页可见且播放进行中（含装载与缓冲）时屏幕常亮，滑回歌曲页、暂停或关闭本页即恢复系统熄屏（CONTEXT.md「屏幕常亮」）。
- * 播放本地歌曲时（播放兼容层 ID 走 `local:` 命名空间）只剩播放设置：收藏 / 下载 / 加入歌单 / 更多（评分）与歌词页
- * 一律不出现，播放期间也不发起歌词（song_info）请求；切回在线歌曲后全部恢复。
+ * 播放本地歌曲时（播放兼容层 ID 走 `local:` 命名空间）只剩播放设置与「更多」：收藏 / 下载 / 加入歌单与歌词页
+ * 一律不出现，播放期间也不发起歌词（song_info）请求；「更多」里在线歌是评分、本地歌是「编辑信息」
+ * （与歌曲列表长按同一个编辑面板）；切回在线歌曲后全部恢复。
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PlayerScreen(
     playerViewModel: PlayerViewModel,
+    // 本地歌曲的元数据编辑走本地音乐的同一份索引与覆盖层（只在本地歌曲时用到）
+    localMusicViewModel: LocalMusicViewModel,
     onBackClick: () -> Unit = {},
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
@@ -147,6 +153,10 @@ fun PlayerScreen(
     val songId = currentSong?.id
     // 本地歌曲（spec：`local:<指纹十六进制>`）：没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载注定失败
     val isLocalSong = currentSong?.isLocalSong() == true
+    // 当前在播的本地歌曲（索引里按 ID 找回来）：元数据编辑要以它为准，
+    // 找不到时（目录被移除等）连「编辑信息」入口也不出现——没有可改的记录
+    val localSongs by localMusicViewModel.songs.collectAsState()
+    val localSong = if (isLocalSong) localSongs.firstOrNull { it.id == songId } else null
 
     // 收藏选中态实时来自 FavoriteStore，切歌自动跟随（本地收藏，ADR 0005）
     val favouriteIds by FavoriteStore.favouriteIds.collectAsState()
@@ -249,6 +259,8 @@ fun PlayerScreen(
     var showPlaylistSheet by remember { mutableStateOf(false) }
     var showMoreSheet by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
+    // 正在编辑元数据的本地歌曲：非空即打开编辑面板（更多菜单 → 编辑信息）
+    var editingSong by remember { mutableStateOf<LocalSong?>(null) }
 
     // 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer
     val playMode by PlayerSettingsManager.playMode.collectAsState()
@@ -528,13 +540,13 @@ fun PlayerScreen(
 
                 // ── 功能图标行：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多 ──
                 // 图标 28dp 居中于 48dp 触控框；行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘贴进度条两端。
-                // 本地歌曲只留播放设置：收藏 / 加入歌单 / 评分都按服务端 ID 落库，下载对设备上的文件无意义；
-                // 而「更多」当前只有评分（「编辑信息」随票据 09 接入后再对本地歌曲恢复），故四者一律不出
+                // 本地歌曲只留播放设置与「更多」：收藏 / 加入歌单按服务端 ID 落库，下载对设备上的文件无意义；
+                // 「更多」对本地歌曲有内容——里面是「编辑信息」，所以它不随其它三个一起收起
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 18.dp),
-                    // 本地歌曲只剩一个动作，居中放置（SpaceBetween 单条目会贴左）
+                    // 本地歌曲只剩两个动作，居中放置（SpaceBetween 条目少时会贴两边）
                     horizontalArrangement = if (isLocalSong) {
                         Arrangement.spacedBy(40.dp, Alignment.CenterHorizontally)
                     } else {
@@ -589,6 +601,10 @@ fun PlayerScreen(
                         PlayerGlyph(PlayerIcons.PlaylistAdd, "加入歌单", 28.dp, PlayerNavy, touchSize = 48.dp) {
                             showPlaylistSheet = true
                         }
+                    }
+                    // 更多：在线歌是评分，本地歌是「编辑信息」（spec：入口只在当前歌曲为本地歌曲时出现）；
+                    // 本地歌曲的索引记录都找不到时（目录已被移除）没有可改的记录，入口一并收起
+                    if (!isLocalSong || localSong != null) {
                         PlayerGlyph(PlayerIcons.More, "更多", 28.dp, PlayerNavy, touchSize = 48.dp) {
                             showMoreSheet = true
                         }
@@ -911,7 +927,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── 更多菜单浮层：当前歌曲的扩展操作（现仅评分，按可扩展列表实现，ADR 0007）──
+        // ── 更多菜单浮层：当前歌曲的扩展操作（在线歌是评分，本地歌是编辑信息；按可扩展列表实现，ADR 0007）──
         if (showMoreSheet) {
             var showRatingDialog by remember { mutableStateOf(false) }
             ModalBottomSheet(
@@ -933,7 +949,7 @@ fun PlayerScreen(
                     Spacer(Modifier.height(12.dp))
 
                     // 评分入口：无播放歌曲时为不可操作态（不提供按压反馈，与 PlayerGlyph enabled 语义一致）；
-                    // 本地歌曲按服务端 ID 评分必然失败，整条不出现（「更多」入口本身也不出，这里兼作兜底）
+                    // 本地歌曲按服务端 ID 评分必然失败，整条不出现（本地歌没有评分，这里兼作兜底）
                     if (!isLocalSong) {
                         val canRate = currentSong != null
                         Row(
@@ -948,6 +964,27 @@ fun PlayerScreen(
                             Icon(PlayerIcons.Star, contentDescription = null, tint = PlayerNavy, modifier = Modifier.size(22.dp))
                             Spacer(Modifier.width(10.dp))
                             Text("评分", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = PlayerNavy)
+                        }
+                    }
+
+                    // 编辑信息：只对本地歌曲出现（spec：入口仅当前歌曲为本地歌曲时出现），
+                    // 打开的是与歌曲列表长按同一个面板（[LocalMetadataEditSheet]）；先关掉本浮层再开面板
+                    if (localSong != null) {
+                        val editable = localSong
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable {
+                                    showMoreSheet = false
+                                    editingSong = editable
+                                }
+                                .padding(horizontal = 4.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(PlayerIcons.Edit, contentDescription = null, tint = PlayerNavy, modifier = Modifier.size(22.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Text("编辑信息", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = PlayerNavy)
                         }
                     }
                 }
@@ -981,6 +1018,16 @@ fun PlayerScreen(
                     onDismiss = { showRatingDialog = false },
                 )
             }
+        }
+
+        // ── 元数据编辑面板：与歌曲列表长按同一个面板，保存后列表 / 专辑分组 / 封面立即刷新 ──
+        editingSong?.let { song ->
+            LocalMetadataEditSheet(
+                song = song,
+                viewModel = localMusicViewModel,
+                playerViewModel = playerViewModel,
+                onDismiss = { editingSong = null },
+            )
         }
 
         // ── 播放队列浮层：主控行队列入口打开，展示当前会话队列；点选为队列内跳播，不重建队列 ──
