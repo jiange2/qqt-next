@@ -3,6 +3,7 @@ package com.qqt.music.data.local
 import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.util.Log
 import java.io.FileInputStream
@@ -150,17 +151,17 @@ class LocalMusicScanner(private val context: Context) {
     private fun contentFingerprint(uri: Uri, size: Long): String? = runCatching {
         val digest = MessageDigest.getInstance("SHA-256")
         digest.update(ByteBuffer.allocate(Long.SIZE_BYTES).putLong(size).array())
-        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
-            FileInputStream(descriptor.fileDescriptor).use { stream ->
-                if (size <= 0L) {
-                    // 个别 provider 不给大小：退化为全文哈希，仍不会把两份不同文件当成同一首
-                    digestChunk(stream, Long.MAX_VALUE, digest)
-                } else {
-                    digestChunk(stream, minOf(CHUNK_BYTES, size), digest)
-                    if (size > CHUNK_BYTES * 2) {
-                        stream.channel.position(size - CHUNK_BYTES)
-                        digestChunk(stream, CHUNK_BYTES, digest)
-                    }
+        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            ?: error("无法打开文件：$uri")
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
+            if (size <= 0L) {
+                // 个别 provider 不给大小：退化为全文哈希，仍不会把两份不同文件当成同一首
+                digestChunk(stream, Long.MAX_VALUE, digest)
+            } else {
+                digestChunk(stream, minOf(CHUNK_BYTES, size), digest)
+                if (size > CHUNK_BYTES * 2) {
+                    stream.channel.position(size - CHUNK_BYTES)
+                    digestChunk(stream, CHUNK_BYTES, digest)
                 }
             }
         }
