@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
+import com.qqt.music.data.local.LocalFolder
 import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicLibrarySource
 import com.qqt.music.data.local.LocalMusicStore
@@ -13,6 +14,8 @@ import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreLibrarySource
 import com.qqt.music.data.local.diffAgainst
+import com.qqt.music.data.local.distinctFolders
+import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
 import com.qqt.music.data.local.overrideFrom
 import com.qqt.music.data.local.sortedByDisplayTitle
@@ -59,6 +62,8 @@ sealed interface LocalMetadataSaveResult {
  * 进入页面（[onPageEntered]）与授权成功（[onPermissionResult]）后静默刷新一次：整库重查 → 按身份
  * diff → 合并覆盖层 → 原子提交；顶栏「重新扫描」（[rescan]）走同一管线，完成后提示「新增 x、移除 y」，
  * 静默刷新不提示。刷新期间旧列表照常可用、播放不受影响（身份不变，队列里的条目不重建）。
+ * 文件夹黑名单（票据 03，[excludedFolders] / [setFolderExcluded]）：被排除的文件夹及其子文件夹
+ * 不进列表、不进专辑分组、不进播放队列候选；切换只重过滤、不重扫，状态随快照落盘。
  * 权限被系统关闭后进页面：快照保留并灰显，重新授权后自动刷新恢复。
  * 专辑视图与专辑页共用同一份列表派生出的 [albums]；封面由图片加载器按成员行的媒体库专辑 ID
  * 直载系统预抽取的专辑图（[com.qqt.music.data.local.LocalAlbum.albumArtUri]），ViewModel 不经手封面。
@@ -84,16 +89,35 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     val permissionGranted: StateFlow<Boolean> = _permissionGranted.asStateFlow()
 
     /**
-     * 展示用歌曲列表：权限未授予时全部行灰显（不可点），但不改动快照里的可用状态——
-     * 重新授权并刷新后自然恢复。快照本身按「覆盖层优先、缺失取媒体库标签」合并好（ADR 0020）。
+     * 排除清单（spec「文件夹黑名单」）：被排除的文件夹路径集合。[_songs] 始终保存整库
+     * （含被排除的行）——这样取消排除立即恢复，不需要重查媒体库；过滤只发生在展示派生上。
      */
-    val songs: StateFlow<List<LocalSong>> = combine(_songs, _permissionGranted) { songs, granted ->
-        if (granted) {
-            songs
-        } else {
-            songs.map { if (it.available) it.copy(available = false) else it }
-        }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val _excludedFolders = MutableStateFlow<Set<String>>(emptySet())
+    val excludedFolders: StateFlow<Set<String>> = _excludedFolders.asStateFlow()
+
+    /**
+     * 展示用歌曲列表：先按排除清单滤掉被排除的文件夹及其子文件夹（票据 03，纯内存过滤，
+     * 切换开关即时生效），再在权限未授予时把剩余行全部灰显（不可点），但不改动快照里的
+     * 可用状态——重新授权并刷新后自然恢复。快照本身按「覆盖层优先、缺失取媒体库标签」合并好（ADR 0020）。
+     */
+    val songs: StateFlow<List<LocalSong>> =
+        combine(_songs, _permissionGranted, _excludedFolders) { songs, granted, excluded ->
+            val visible = songs.excludingFolders(excluded)
+            if (granted) {
+                visible
+            } else {
+                visible.map { if (it.available) it.copy(available = false) else it }
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * 排除面板的候选文件夹（spec：自动列出当前库中所有含音乐的文件夹并带开关，无需手输路径）：
+     * 从整库行路径派生——含已被排除的文件夹，否则取消排除无从谈起。纯派生，不查媒体库，
+     * 列表变了（刷新提交）清单自然跟着变。
+     */
+    val libraryFolders: StateFlow<List<LocalFolder>> = _songs
+        .map { rows -> withContext(Dispatchers.Default) { rows.distinctFolders() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
      * 专辑视图（spec「专辑与封面」）：完全从列表派生，按「专辑名 + 专辑艺术家」分组并排好序。
@@ -117,9 +141,6 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
 
     /** 覆盖层（ADR 0020）：歌曲身份 → 用户改过的字段；自己的文件，刷新只换快照不动它 */
     private var overlay: Map<String, LocalSongOverride> = emptyMap()
-
-    /** 排除清单（票据 03 接管）：先原样保留在快照里，刷新落盘时带回去，不做任何过滤 */
-    private var excludedFolders: List<String> = emptyList()
 
     /** 元数据编辑串行化：「换列表 → 写覆盖层」是一条链，两次编辑不交错 */
     private val editLock = Mutex()
@@ -161,7 +182,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 RestoredLibrary(overlay = overlay)
             }
             overlay = restored.overlay
-            excludedFolders = restored.excludedFolders
+            _excludedFolders.value = restored.excludedFolders.toSet()
             _songs.value = restored.songs
             _loading.value = false
         }
@@ -200,6 +221,23 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     }
 
     /**
+     * 切换一个文件夹的排除状态（spec：切换排除开关后列表立即生效、不需要重新扫描）：
+     * 歌曲列表、专辑分组与播放队列候选都从 [songs] 派生，改 [_excludedFolders] 即时生效；
+     * 随后把整库快照（含被排除的行，取消排除时无需重查）带最新排除清单原子落盘，重启后仍然生效。
+     * 落盘异步进行、与刷新共用同一把写锁：并发刷新时各自按提交时刻的现值落盘，最后一次写入胜出。
+     */
+    fun setFolderExcluded(folderPath: String, excluded: Boolean) {
+        val updated = if (excluded) _excludedFolders.value + folderPath else _excludedFolders.value - folderPath
+        if (updated == _excludedFolders.value) return
+        _excludedFolders.value = updated
+        // 落盘的行列表此刻取好：协程排队期间即使又来一次刷新提交，这次写入的也是一致的完整状态
+        val songsToSave = _songs.value
+        viewModelScope.launch {
+            LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(songsToSave, updated.toList()))
+        }
+    }
+
+    /**
      * 整库静默刷新 / 重扫（spec「库快照与刷新」）：等快照读回 → 整库重查 → 按身份 diff →
      * 合并覆盖层 → 原子提交并落盘。全程无进度状态：查询即事实，期间旧列表照常可用。
      */
@@ -221,7 +259,8 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 // 原子提交：整份列表构建完成才替换，此前列表一直是上一次的完整结果
                 _songs.value = merged
                 withContext(NonCancellable) {
-                    LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(merged, excludedFolders))
+                    // 排除清单以提交时刻的现值为准：刷新期间用户切换开关也不会把旧状态写回去
+                    LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(merged, _excludedFolders.value.toList()))
                 }
                 if (notify) {
                     val diff = merged.diffAgainst(previous)
@@ -258,7 +297,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         }
         _songs.value = updated
         viewModelScope.launch {
-            LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(updated, excludedFolders))
+            LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(updated, _excludedFolders.value.toList()))
         }
     }
 
