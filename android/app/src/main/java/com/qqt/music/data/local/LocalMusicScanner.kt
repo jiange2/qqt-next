@@ -50,21 +50,24 @@ class LocalMusicScanner(private val context: Context) {
     /** 待遍历目录：documentId + 相对路径（根为 ""）+ 目录名（根用授权时的树名） */
     private class DirectoryNode(val documentId: String, val relativePath: String, val name: String)
 
+    /** 未变文件的复用键：同一棵树内的相对路径（换根目录或改名都算新文件） */
+    private data class SongLocation(val treeUri: String, val relativePath: String)
+
     /** 标签与时长同一次 retriever 调用读出，避免为一个文件开两次解析器 */
     private class ExtractedTags(val tags: LocalSongTags, val durationMs: Long)
 
     /**
-     * 扫描全部根目录。[previous] 是上一次的索引（可为空）：未变的文件复用其中的身份与标签。
+     * 扫描全部根目录。[previous] 是上一次的索引：未变文件复用其中的身份与标签。
      * [onProgress] 在 IO 线程逐文件回调；协程取消即中止，异常向上抛，
      * 两种情况下都不返回半成品（原子提交由调用方保证）。
      */
     suspend fun scan(
         roots: List<LocalMusicRoot>,
-        previous: List<LocalSong> = emptyList(),
+        previous: List<LocalSong>,
         onProgress: (Progress) -> Unit = {},
     ): ScanResult = withContext(Dispatchers.IO) {
         // 上一份索引按「树 + 相对路径」建表：命中且大小、修改时间一致即为未变文件
-        val previousByPath = previous.associateBy { pathKey(it.treeUri, it.relativePath) }
+        val previousByPath = previous.associateBy { SongLocation(it.treeUri, it.relativePath) }
         val previousFingerprints = previous.mapTo(HashSet()) { it.fingerprint }
         val byFingerprint = LinkedHashMap<String, LocalSong>()
         var scannedFiles = 0
@@ -81,7 +84,8 @@ class LocalMusicScanner(private val context: Context) {
             while (queue.isNotEmpty()) {
                 currentCoroutineContext().ensureActive()
                 val directory = queue.removeFirst()
-                val entries = queryChildren(root.treeUri, directory.documentId)
+                // 根目录读不到（授权被回收、树不可用）即整次扫描失败：不能当成「目录里没有音乐」
+                val entries = queryChildren(root.treeUri, directory.documentId, failOnError = directory.relativePath.isEmpty())
                 // 目录级 .nomedia：整棵子树都不是媒体目录，连遍历都省掉
                 if (entries.any { it.name.equals(NOMEDIA, ignoreCase = true) }) continue
                 for (entry in entries) {
@@ -101,10 +105,11 @@ class LocalMusicScanner(private val context: Context) {
                     currentCoroutineContext().ensureActive()
                     scannedFiles++
                     onProgress(Progress(scannedFiles, byFingerprint.size, entry.name))
-                    val reused = previousByPath[pathKey(root.treeUri.toString(), directory.relativePath + entry.name)]
-                    val reusedUnchanged = reused != null && isUnchanged(reused, entry)
-                    if (reusedUnchanged) reusedFiles++
-                    val song = readSong(root, directory, entry, reused.takeIf { reusedUnchanged }) ?: continue
+                    val unchanged = previousByPath[
+                        SongLocation(root.treeUri.toString(), directory.relativePath + entry.name)
+                    ]?.takeIf { isUnchanged(it, entry) }
+                    if (unchanged != null) reusedFiles++
+                    val song = readSong(root, directory, entry, unchanged) ?: continue
                     // 内容完全相同的副本只留先扫到的一条（ADR 0021）
                     if (song.fingerprint !in byFingerprint) byFingerprint[song.fingerprint] = song
                 }
@@ -116,26 +121,16 @@ class LocalMusicScanner(private val context: Context) {
         }
         val songs = byFingerprint.values.sortedWith(byTitle)
         val currentFingerprints = songs.mapTo(HashSet()) { it.fingerprint }
-        Log.d(
-            TAG,
-            "扫描完成：${songs.size} 首，复用 $reusedFiles 个未变文件，" +
-                "新增 ${currentFingerprints.count { it !in previousFingerprints }}、" +
-                "移除 ${previousFingerprints.count { it !in currentFingerprints }}",
-        )
-        ScanResult(
-            songs = songs,
-            added = currentFingerprints.count { it !in previousFingerprints },
-            removed = previousFingerprints.count { it !in currentFingerprints },
-        )
+        val added = currentFingerprints.count { it !in previousFingerprints }
+        val removed = previousFingerprints.count { it !in currentFingerprints }
+        Log.d(TAG, "扫描完成：${songs.size} 首，复用 $reusedFiles 个未变文件（跳过指纹与标签），新增 $added、移除 $removed")
+        ScanResult(songs = songs, added = added, removed = removed)
     }
 
     /** 未变判定：路径已命中且大小、修改时间都一样。provider 不给大小或修改时间时无法确认，按变更加指纹重读 */
     private fun isUnchanged(previous: LocalSong, entry: DocumentEntry): Boolean =
         entry.size > 0L && entry.lastModified > 0L &&
             previous.size == entry.size && previous.lastModified == entry.lastModified
-
-    /** 未变文件的复用键：同一棵树内的相对路径（换根目录或改名都算新文件） */
-    private fun pathKey(treeUri: String, relativePath: String): String = treeUri + '\u0000' + relativePath
 
     /**
      * 该文件对 [treeUri] 的 document URI：播放队列与封面读取都用它，不另存路径假 URI。
@@ -170,11 +165,14 @@ class LocalMusicScanner(private val context: Context) {
         )
     }
 
-    /** 目录树的一层子项；查询失败按空目录处理（单点失败不中断整次扫描） */
-    private fun queryChildren(treeUri: Uri, parentDocumentId: String): List<DocumentEntry> {
+    /**
+     * 目录树的一层子项。[failOnError] 为 true（根目录）时读取失败向上抛，让整次扫描按失败处理；
+     * 否则（子目录）按空目录处理，单点失败不中断整次扫描。
+     */
+    private fun queryChildren(treeUri: Uri, parentDocumentId: String, failOnError: Boolean): List<DocumentEntry> {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocumentId)
         val rows = ArrayList<DocumentEntry>()
-        runCatching {
+        try {
             context.contentResolver.query(childrenUri, PROJECTION, null, null, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val name = cursor.getString(1) ?: continue
@@ -189,7 +187,10 @@ class LocalMusicScanner(private val context: Context) {
                     )
                 }
             }
-        }.onFailure { e -> Log.w(TAG, "目录读取失败：$parentDocumentId", e) }
+        } catch (e: Exception) {
+            if (failOnError) throw e
+            Log.w(TAG, "子目录读取失败，按空目录处理：$parentDocumentId", e)
+        }
         return rows
     }
 

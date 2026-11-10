@@ -172,6 +172,8 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         }
         val roots = _roots.value
         if (roots.isEmpty()) return
+        // 开始新一轮扫描：上次还没被页面消费的结果提示作废，避免与本次结果混在一起
+        _notice.value = null
         _scan.value = LocalScanState(running = true)
         scanJob = viewModelScope.launch {
             try {
@@ -204,7 +206,7 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 }
                 // 扫描完成轻提示本次的增量结果（spec「扫描与索引」）
                 _notice.value = "新增 ${result.added} 首、移除 ${result.removed} 首"
-                Log.d(TAG, "扫描完成：${merged.size} 首（新增 ${result.added}、移除 ${result.removed}）")
+                Log.d(TAG, "扫描完成：${merged.size} 首")
             } catch (e: CancellationException) {
                 Log.d(TAG, "扫描已取消，保留上一次结果")
                 // 取消是为了换新请求重跑时不把「已取消」闪给用户；用户主动取消才展示该状态
