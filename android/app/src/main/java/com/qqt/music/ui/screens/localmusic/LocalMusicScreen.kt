@@ -38,6 +38,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
 /**
  * 本地音乐页（歌曲视图）：未授权文件夹时引导选目录；授权后自动扫描，
  * 扫描中展示进度并可取消，完成后按标题升序（中文排序）列出可播放的本地歌曲。
+ * 列表来自扫描索引（跨重启保留），启动时读盘未完成前不把空当空态。
  * 专辑视图与专辑页属票据 08。
  */
 @Composable
@@ -46,11 +47,25 @@ fun LocalMusicScreen(
     playerViewModel: PlayerViewModel,
     onSelectFolder: () -> Unit,
 ) {
+    val loading by viewModel.loading.collectAsState()
     val roots by viewModel.roots.collectAsState()
     val songs by viewModel.songs.collectAsState()
     val scan by viewModel.scan.collectAsState()
+    val indexUnreadable by viewModel.indexUnreadable.collectAsState()
 
     when {
+        // 索引还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
+        loading -> LoadingState()
+
+        // 索引坏了且连根目录都没能重建：只能让用户重新选一次目录（授权也没了）
+        indexUnreadable && roots.isEmpty() -> EmptyState(
+            icon = Icons.Outlined.MusicOff,
+            title = "本地索引无法读取",
+            subtitle = "索引文件已损坏，重新选择音乐文件夹后 App 会重新建立列表",
+            actionText = "选择音乐文件夹",
+            onAction = onSelectFolder,
+        )
+
         roots.isEmpty() -> EmptyState(
             icon = Icons.Outlined.MusicNote,
             title = "本地音乐还没有内容",
@@ -66,6 +81,15 @@ fun LocalMusicScreen(
             icon = Icons.Outlined.MusicNote,
             title = "扫描已取消",
             subtitle = "这次扫描被中断，还没有可播放的音乐",
+            actionText = "重新扫描",
+            onAction = viewModel::startScan,
+        )
+
+        // 索引无法识别：根目录已从系统授权重建，重新扫描即重建列表
+        indexUnreadable -> EmptyState(
+            icon = Icons.Outlined.MusicOff,
+            title = "本地索引无法读取",
+            subtitle = "索引文件已损坏，重新扫描你授权过的音乐文件夹即可恢复列表",
             actionText = "重新扫描",
             onAction = viewModel::startScan,
         )
@@ -163,6 +187,26 @@ private fun LocalSongRow(
             color = InkFaint,
             maxLines = 1,
         )
+    }
+}
+
+/** 首帧/启动读索引：只做“App 正在把上次的列表拿回来”的提示，不阻塞页面 */
+@Composable
+private fun LoadingState() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(WarmBackground),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(22.dp),
+            color = BrandOrange,
+            strokeWidth = 2.dp,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text("正在加载本地音乐", color = InkFaint, fontSize = 13.sp)
     }
 }
 

@@ -10,13 +10,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalMusicRoot
 import com.qqt.music.data.local.LocalMusicScanner
+import com.qqt.music.data.local.LocalMusicStore
 import com.qqt.music.data.local.LocalSong
+import com.qqt.music.data.local.LocalSongOverride
+import com.qqt.music.data.local.withOverride
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 扫描状态：目录树给不出可靠总量，进度只报已处理文件数与已收录歌曲数 */
 data class LocalScanState(
@@ -28,10 +33,11 @@ data class LocalScanState(
 )
 
 /**
- * 本地音乐页状态：授权目录、扫描状态与扫描结果（本进程内存，跨重启的索引持久化属票据 05）。
+ * 本地音乐页状态：授权目录、扫描状态与扫描结果。
  *
- * 页面与顶栏菜单共用同一个实例（提升在导航层），离开页面扫描继续、回到页面不重复发起；
- * 扫描结果整体替换：取消或失败都保留上一次完整结果，不留下半份索引。
+ * 索引与覆盖层各一个 App 私有 JSON 文件（[LocalMusicStore]）：启动时在 IO 线程读回并合并，
+ * 冷启动直接出列表、不必先扫一遍；扫描完成后再落盘。页面与顶栏菜单共用同一个实例（提升在导航层），
+ * 离开页面扫描继续、回到页面不重复发起；扫描结果整体替换：取消或失败都保留上一次完整结果。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -46,26 +52,96 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
     private val _scan = MutableStateFlow(LocalScanState())
     val scan: StateFlow<LocalScanState> = _scan.asStateFlow()
 
+    /** 启动时索引还没读回来：首帧不把「还没读出来」当成「没有音乐」 */
+    private val _loading = MutableStateFlow(true)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    /** 索引不可识别：已按空列表降级（根目录仍从系统授权重建），页面提示重新扫描 */
+    private val _indexUnreadable = MutableStateFlow(false)
+    val indexUnreadable: StateFlow<Boolean> = _indexUnreadable.asStateFlow()
+
+    /** 覆盖层（ADR 0020）：身份 → 用户改过的字段；自己的文件，重扫只换索引不动它 */
+    private var overlay: Map<String, LocalSongOverride> = emptyMap()
+
     /** 同一时刻只允许一个扫描任务：重复触发（重新选目录、菜单重扫、重新进页面）都不叠加 */
     private var scanJob: Job? = null
 
     /** 扫描中又被要求重扫（例如扫描中又加了目录）：当前任务结束后补跑一次，避免两个任务同时遍历同一批文件 */
     private var rescanRequested = false
 
+    init {
+        restoreLibrary()
+    }
+
+    /**
+     * 冷启动读回索引与覆盖层并在 IO 线程合并，不做任何网络请求；成功后列表直接可用。
+     * 索引读不出来时降级为空列表，根目录从系统里的持久化授权重建——授权还在，点「重新扫描」即可恢复。
+     */
+    private fun restoreLibrary() {
+        viewModelScope.launch {
+            val restored = try {
+                withContext(Dispatchers.IO) {
+                    val savedOverlay = LocalMusicStore.loadOverlay(application)
+                    when (val index = LocalMusicStore.loadIndex(application)) {
+                        is LocalMusicStore.IndexLoad.Loaded -> RestoredLibrary(
+                            overlay = savedOverlay,
+                            roots = index.roots,
+                            // 展示值走「覆盖层优先、缺失取标签」的同一份合并结果（ADR 0020）
+                            songs = index.songs.map { it.withOverride(savedOverlay[it.fingerprint]) },
+                        )
+
+                        LocalMusicStore.IndexLoad.Unreadable -> RestoredLibrary(
+                            overlay = savedOverlay,
+                            roots = persistedRoots(),
+                            indexUnreadable = true,
+                        )
+
+                        LocalMusicStore.IndexLoad.Absent -> RestoredLibrary(
+                            overlay = savedOverlay,
+                            roots = persistedRoots(),
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 加载本身出错也不能把页面卡在加载态：按空列表走空态，用户可手动重扫
+                Log.w(TAG, "本地索引加载失败，按空列表处理", e)
+                RestoredLibrary(overlay = overlay)
+            }
+            overlay = restored.overlay
+            _roots.value = restored.roots
+            _songs.value = restored.songs
+            _indexUnreadable.value = restored.indexUnreadable
+            _loading.value = false
+        }
+    }
+
     /** 收录用户选中的目录树并立刻扫描；同一棵树重复选择只记一次（重叠根的拒绝属票据 07） */
     fun addRoot(treeUri: Uri) {
-        if (_roots.value.none { it.treeUri == treeUri }) {
-            // 选择目录即是唯一一次授权：从此本机可长期读取该树，无任何存储权限弹窗
-            runCatching {
-                getApplication<Application>().contentResolver.takePersistableUriPermission(
-                    treeUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }
-            val name = queryTreeName(treeUri) ?: treeUri.lastPathSegment ?: "音乐文件夹"
-            _roots.value = _roots.value + LocalMusicRoot(treeUri, name)
+        if (_roots.value.any { it.treeUri == treeUri }) {
+            startScan()
+            return
         }
-        startScan()
+        viewModelScope.launch {
+            // 授权与树名查询都是跨进程 IO，不放在主线程
+            val root = withContext(Dispatchers.IO) {
+                // 选择目录即是唯一一次授权：从此本机可长期读取该树，无任何存储权限弹窗
+                runCatching {
+                    getApplication<Application>().contentResolver.takePersistableUriPermission(
+                        treeUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
+                LocalMusicRoot(treeUri, queryTreeName(treeUri) ?: treeUri.lastPathSegment ?: "音乐文件夹")
+            }
+            if (_roots.value.none { it.treeUri == root.treeUri }) {
+                _roots.value = _roots.value + root
+            }
+            // 根目录立即落盘：这次扫描被取消，下次启动也不至于丢掉这个授权
+            LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, _songs.value))
+            startScan()
+        }
     }
 
     /** 扫描全部已授权目录；已有扫描在跑时只记一个“结束后补跑”的意图，不并发起第二个任务 */
@@ -94,9 +170,14 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     }
                 }
+                // 展示值统一走「覆盖层优先、缺失取标签」的合并结果（ADR 0020）
+                val merged = scanned.map { it.withOverride(overlay[it.fingerprint]) }
                 // 原子提交：整份索引构建完成才替换，此前列表一直是上一次的完整结果
-                _songs.value = scanned
-                Log.d(TAG, "扫描完成：${scanned.size} 首")
+                _songs.value = merged
+                _indexUnreadable.value = false
+                // 索引落盘：下次冷启动直接出列表，不必再扫一遍
+                LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, merged))
+                Log.d(TAG, "扫描完成：${merged.size} 首")
             } catch (e: CancellationException) {
                 Log.d(TAG, "扫描已取消，保留上一次结果")
                 _scan.value = _scan.value.copy(cancelled = true)
@@ -134,6 +215,26 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
             null,
         )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
     }.getOrNull()
+
+    /**
+     * 索引缺失或损坏时的根目录兜底：选目录时已把授权持久化进系统，按授权重建列表。
+     * 目录名查不到就用 URI 尾段——只有索引丢了的路径才走到这里，展示名可以从宽。
+     */
+    private fun persistedRoots(): List<LocalMusicRoot> =
+        getApplication<Application>().contentResolver.persistedUriPermissions
+            .filter { it.isReadPermission }
+            .map { permission ->
+                val treeUri = permission.uri
+                LocalMusicRoot(treeUri, queryTreeName(treeUri) ?: treeUri.lastPathSegment ?: "音乐文件夹")
+            }
+
+    /** 启动恢复的结果：索引与覆盖层一起从 IO 线程带回，主线程只做状态落位 */
+    private data class RestoredLibrary(
+        val overlay: Map<String, LocalSongOverride>,
+        val roots: List<LocalMusicRoot> = emptyList(),
+        val songs: List<LocalSong> = emptyList(),
+        val indexUnreadable: Boolean = false,
+    )
 
     private companion object {
         const val TAG = "LocalMusicViewModel"
