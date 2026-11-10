@@ -1,7 +1,9 @@
 package com.qqt.music.ui.screens.localmusic
 
-import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MoreVert
@@ -27,14 +30,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalSong
+import com.qqt.music.data.local.audioReadPermission
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
 import com.qqt.music.ui.theme.BrandOrange
@@ -51,9 +58,11 @@ import java.io.File
  * 本地音乐页（歌曲 / 专辑两视图）：来源是系统媒体库（spec，推翻 ADR 0019）。
  *
  * 首次进入（未授权且没有库快照）给一句说明与「授权音乐访问」按钮，拉起系统标准的音频权限弹窗；
+ * 拒绝过则升级为「重试 + 去系统设置」双入口（重复拒绝后系统可能不再弹窗，去设置是兜底）。
  * 授权后立刻（秒级）按标题升序（中文排序）列出全机音乐；进入页面时静默刷新一次库，
  * 没有进度条、没有取消（spec：扫描只是一次查询）。
- * 权限被系统关闭后进页面：快照保留并整体灰显 + 重新授权横幅，不放空列表假装没歌。
+ * 权限被系统关闭后进页面（或回前台时复查发现被关）：快照保留并整体灰显 + 重新授权横幅，
+ * 不放空列表假装没歌；重新授权成功（弹窗或系统设置任一路径）自动刷新，灰显的行恢复可播。
  * 专辑视图把同一份列表按专辑归并成卡片墙，点开进本地专辑页。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
  * 顶栏菜单：「重新扫描」（完成后提示新增 / 移除数量）与「排除的文件夹」（票据 03）。
@@ -67,6 +76,7 @@ fun LocalMusicScreen(
 ) {
     val loading by viewModel.loading.collectAsState()
     val permissionGranted by viewModel.permissionGranted.collectAsState()
+    val permissionDeniedOnce by viewModel.permissionDeniedOnce.collectAsState()
     val songs by viewModel.songs.collectAsState()
     val albums by viewModel.albums.collectAsState()
     // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
@@ -83,32 +93,60 @@ fun LocalMusicScreen(
         viewModel.consumeNotice()
     }
 
-    // 音频权限请求：Android 13+ 是音乐粒度的 READ_MEDIA_AUDIO，12 及以下 READ_EXTERNAL_STORAGE
-    //（清单标 maxSdkVersion 32，spec「扫描来源与权限」）
-    val audioPermission = if (Build.VERSION.SDK_INT >= 33) {
-        Manifest.permission.READ_MEDIA_AUDIO
-    } else {
-        Manifest.permission.READ_EXTERNAL_STORAGE
-    }
+    // 音频权限请求：权限名按系统版本取用（13+ 音乐粒度 READ_MEDIA_AUDIO / 12 及以下
+    // READ_EXTERNAL_STORAGE，清单标 maxSdkVersion 32，spec「扫描来源与权限」）。
+    // launch 是一次真实的重新请求：拒绝过后再点「重试」仍会拉起系统弹窗——
+    // 若用户已勾选「不再询问」，系统会直接回绝不给弹窗，此时走「去系统设置」入口（票据02）
+    val audioPermission = audioReadPermission(Build.VERSION.SDK_INT)
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> viewModel.onPermissionResult(granted) }
 
+    // 「去系统设置」：打开本 App 的系统设置页，音频权限开关在那里；打开失败静默忽略（个别桌面形态没有该页）
+    fun openAppSettings() {
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    .setData(Uri.fromParts("package", context.packageName, null)),
+            )
+        }
+    }
+
     // 进入本地音乐页：核对权限并静默刷新一次库（同一次进入含从权限弹窗返回的场景）
     LaunchedEffect(Unit) { viewModel.onPageEntered() }
+
+    // 回到前台（从系统设置页返回等时机）重新核对权限：设置里重新开启 → 自动刷新恢复，
+    // 灰显的行恢复可播；又被关闭 → 灰显与重新授权横幅立即出现（票据02）
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onAppResumed()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     when {
         // 快照还在读：先给加载态，避免闪过一帧「还没有内容」的引导空态
         loading -> LoadingState()
 
-        // 未授权且没有快照：首次进入的说明空态，授权后立刻出全库
-        songs.isEmpty() && !permissionGranted -> EmptyState(
-            icon = Icons.Outlined.MusicNote,
-            title = "这里是你手机里的音乐",
-            subtitle = "授权音乐访问后，App 直接读取系统媒体库，立刻列出全部本地歌曲，不需要选择任何文件夹",
-            actionText = "授权音乐访问",
-            onAction = { permissionLauncher.launch(audioPermission) },
-        )
+        // 未授权且没有快照：说明空态——空列表是权限问题而不是没有歌（spec 用户故事 5）。
+        // 拒绝过 → 「重试 + 去系统设置」双入口；没拒绝过 → 单一授权入口
+        songs.isEmpty() && !permissionGranted ->
+            if (permissionDeniedOnce) {
+                PermissionDeniedState(
+                    onRetry = { permissionLauncher.launch(audioPermission) },
+                    onOpenSettings = { openAppSettings() },
+                )
+            } else {
+                EmptyState(
+                    icon = Icons.Outlined.MusicNote,
+                    title = "这里是你手机里的音乐",
+                    subtitle = "授权音乐访问后，App 直接读取系统媒体库，立刻列出全部本地歌曲，不需要选择任何文件夹",
+                    actionText = "授权音乐访问",
+                    onAction = { permissionLauncher.launch(audioPermission) },
+                )
+            }
 
         // 已授权但库是空的：不是权限问题，媒体库里确实没有音乐
         songs.isEmpty() -> EmptyState(
@@ -119,13 +157,16 @@ fun LocalMusicScreen(
             onAction = viewModel::rescan,
         )
 
-        // 有快照但权限没了：旧列表灰显 + 重新授权横幅（歌没丢，只是权限没了）
+        // 有快照但权限没了：旧列表灰显 + 重新授权横幅（歌没丢，只是权限没了）；专辑卡片同样不可点
         !permissionGranted -> Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.White),
         ) {
-            PermissionRevokedBanner(onGrant = { permissionLauncher.launch(audioPermission) })
+            PermissionRevokedBanner(
+                onRetry = { permissionLauncher.launch(audioPermission) },
+                onOpenSettings = { openAppSettings() },
+            )
             LibraryArea(
                 showAlbums = showAlbums,
                 onSelectView = { showAlbums = it },
@@ -135,6 +176,7 @@ fun LocalMusicScreen(
                 playerViewModel = playerViewModel,
                 onSongClick = { editingSong = it },
                 onAlbumClick = onAlbumClick,
+                albumsEnabled = false,
             )
         }
 
@@ -167,7 +209,8 @@ fun LocalMusicScreen(
     }
 }
 
-/** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列） */
+/** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
+ *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行 */
 @Composable
 private fun LibraryArea(
     showAlbums: Boolean,
@@ -178,10 +221,17 @@ private fun LibraryArea(
     playerViewModel: PlayerViewModel,
     onSongClick: (LocalSong) -> Unit,
     onAlbumClick: (LocalAlbum) -> Unit,
+    albumsEnabled: Boolean = true,
 ) {
     LibraryViewSwitch(albumSelected = showAlbums, onSelect = onSelectView)
     if (showAlbums) {
-        AlbumGrid(albums = albums, viewModel = viewModel, onAlbumClick = onAlbumClick, modifier = Modifier.weight(1f))
+        AlbumGrid(
+            albums = albums,
+            viewModel = viewModel,
+            onAlbumClick = onAlbumClick,
+            enabled = albumsEnabled,
+            modifier = Modifier.weight(1f),
+        )
     } else {
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -252,6 +302,7 @@ private fun AlbumGrid(
     viewModel: LocalMusicViewModel,
     onAlbumClick: (LocalAlbum) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -261,14 +312,19 @@ private fun AlbumGrid(
         modifier = modifier,
     ) {
         items(albums, key = { it.key }) { album ->
-            LocalAlbumCard(album = album, viewModel = viewModel, onClick = { onAlbumClick(album) })
+            LocalAlbumCard(album = album, viewModel = viewModel, enabled = enabled, onClick = { onAlbumClick(album) })
         }
     }
 }
 
-/** 专辑卡片：封面（无封面时占位图）+ 专辑名 + 艺术家 · 歌曲数 */
+/** 专辑卡片：封面（无封面时占位图）+ 专辑名 + 艺术家 · 歌曲数；[enabled] 为 false 时灰显不可点 */
 @Composable
-private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, onClick: () -> Unit) {
+private fun LocalAlbumCard(
+    album: LocalAlbum,
+    viewModel: LocalMusicViewModel,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+) {
     val generation by viewModel.coverGeneration.collectAsState()
     // 键上带专辑本身：编辑元数据改了分组成员或标题后重新取图（库刷新清缓存则靠代次）
     val cover by produceState<File?>(null, album, generation) {
@@ -277,14 +333,14 @@ private fun LocalAlbumCard(album: LocalAlbum, viewModel: LocalMusicViewModel, on
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
     ) {
         LocalAlbumCover(cover = cover, albumName = album.name, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
         Text(
             text = album.name,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
-            color = InkPrimary,
+            color = if (enabled) InkPrimary else InkFaint,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 8.dp),
@@ -351,16 +407,71 @@ private fun LoadingState() {
 }
 
 /**
- * 权限被系统关闭后的顶部提示条：说明为什么列表灰显，右侧按钮直接再次拉起授权
- * （重新授权成功后自动刷新，灰显的行恢复可播；spec 用户故事 6）。
+ * 拒绝授权后的说明空态：解释空列表是权限问题而不是没有歌（spec 用户故事 5），
+ * 「重试」再次拉起系统授权弹窗，「去系统设置」打开本 App 的设置页手动开启。
+ * 视觉沿用共享 [EmptyState] 的语言（浅橙圆底图标 + 主/副文案），但需要两个操作，
+ * 共享组件不为单页扩参，故单独成组件（票据02）。
  */
 @Composable
-private fun PermissionRevokedBanner(onGrant: () -> Unit) {
+private fun PermissionDeniedState(onRetry: () -> Unit, onOpenSettings: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(WarmBackground)
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(88.dp)
+                .clip(CircleShape)
+                .background(BrandOrangeSoft),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.MusicNote, contentDescription = null, tint = BrandOrange, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "还没有音乐访问权限",
+            color = InkSecondary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "没有权限就读取不了系统媒体库；可以重试授权，或到系统设置里手动开启",
+            color = InkFaint,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onRetry,
+            colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.width(140.dp),
+        ) { Text("重试") }
+        TextButton(onClick = onOpenSettings) {
+            Text("去系统设置", color = InkSecondary, fontSize = 13.sp)
+        }
+    }
+}
+
+/**
+ * 权限被系统关闭后的顶部提示条：说明为什么列表灰显（歌没丢，只是权限没了），右侧
+ * 「重试」再次拉起授权弹窗、「去系统设置」跳设置页手动开启——重新授权成功后自动刷新，
+ * 灰显的行恢复可播（spec 用户故事 6）。重复拒绝（或勾了不再询问）后系统可能不再弹窗，
+ * 「去系统设置」是始终可用的兜底路径（票据02）。
+ */
+@Composable
+private fun PermissionRevokedBanner(onRetry: () -> Unit, onOpenSettings: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(BrandOrangeSoft)
-            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -370,10 +481,16 @@ private fun PermissionRevokedBanner(onGrant: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         TextButton(
-            onClick = onGrant,
+            onClick = onRetry,
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         ) {
-            Text("授权音乐访问", color = BrandOrange, fontSize = 13.sp)
+            Text("重试", color = BrandOrange, fontSize = 13.sp)
+        }
+        TextButton(
+            onClick = onOpenSettings,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Text("去系统设置", color = BrandOrange, fontSize = 13.sp)
         }
     }
 }

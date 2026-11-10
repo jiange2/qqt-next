@@ -94,6 +94,14 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     val permissionGranted: StateFlow<Boolean> = _permissionGranted.asStateFlow()
 
     /**
+     * 用户是否拒绝过系统授权弹窗（本进程内记一次）：拒绝过后「授权音乐访问」的单一入口升级为
+     * 「重试 + 去系统设置」双入口——重复拒绝（或勾了不再询问）后系统可能不再弹窗，
+     * 此时只有系统设置能重新开启（票据02）。
+     */
+    private val _permissionDeniedOnce = MutableStateFlow(false)
+    val permissionDeniedOnce: StateFlow<Boolean> = _permissionDeniedOnce.asStateFlow()
+
+    /**
      * 排除清单（spec「文件夹黑名单」）：被排除的文件夹路径集合。[_songs] 始终保存整库
      * （含被排除的行）——这样取消排除立即恢复，不需要重查媒体库；过滤只发生在展示派生上。
      */
@@ -202,15 +210,34 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
 
     /**
      * 进入本地音乐页：核对音频权限；已授予则静默刷新一次（spec：进页面库被静默刷新，
-     * 在外部增删文件后回到 App 就是新状态）。
+     * 在外部增删文件后回到 App 就是新状态）。权限被系统关闭后进页面：快照保留并灰显，
+     * 页面据 [permissionGranted] 出重新授权横幅，不空列表假装没歌（spec 用户故事 6）。
      */
     fun onPageEntered() {
         _permissionGranted.value = source.hasAudioPermission()
         if (_permissionGranted.value) refresh(notify = false)
     }
 
-    /** 系统权限弹窗的回调（首次授权 / 拒绝 / 在系统设置里重新开启后都会走到）：授权成功即静默刷新 */
+    /**
+     * 回到前台（从系统设置页返回等时机）重新核对音频权限：状态有变化才动作——
+     * 重新开启 → 更新状态并静默刷新（灰显的行恢复可播，spec 用户故事 6）；
+     * 又被关闭 → 灰显与重新授权横幅立即出现，不用等再进页面。
+     * 与 [onPageEntered] 不同：无变化不刷新，避免每次回前台都白查一遍库。
+     */
+    fun onAppResumed() {
+        val granted = source.hasAudioPermission()
+        if (granted == _permissionGranted.value) return
+        _permissionGranted.value = granted
+        if (granted) refresh(notify = false)
+    }
+
+    /**
+     * 系统权限弹窗的回调（首次授权 / 拒绝 / 在系统设置里重新开启后都会走到）：
+     * 授权成功即静默刷新（重新授权后自动刷新，灰显的行恢复可播）；
+     * 拒绝则记住（[permissionDeniedOnce]），页面把入口升级为「重试 + 去系统设置」。
+     */
     fun onPermissionResult(granted: Boolean) {
+        if (!granted) _permissionDeniedOnce.value = true
         _permissionGranted.value = granted
         if (granted) refresh(notify = false)
     }
