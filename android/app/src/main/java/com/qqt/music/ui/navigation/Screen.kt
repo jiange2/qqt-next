@@ -3,7 +3,7 @@ package com.qqt.music.ui.navigation
 sealed class Screen(val route: String, val title: String) {
     // Bottom nav tabs
     object Home : Screen("home", "首页")
-    object Recent : Screen("recent", "最近播放")
+    object LocalMusic : Screen("local_music", "本地音乐")
     object Download : Screen("download", "我的下载")
     object Category : Screen("category", "音乐分类")
     object Latest : Screen("latest", "最新歌曲")
@@ -44,7 +44,7 @@ sealed class Screen(val route: String, val title: String) {
     object ArtistSongs : Screen("artist_songs", "艺术家")
 
     companion object {
-        val bottomNavRoutes = setOf("home", "recent", "download", "category", "latest")
+        val bottomNavRoutes = setOf("home", "local_music", "download", "category", "latest")
         val drawerTopRoutes = setOf("album", "mylist", "favorites")
 
         fun titleOf(route: String?): String = when {
@@ -58,7 +58,7 @@ sealed class Screen(val route: String, val title: String) {
             route.startsWith("search_songs") -> SearchNav.query?.takeIf { it.isNotBlank() } ?: "搜索结果"
             route.startsWith("artist_songs") -> ArtistNav.artist?.name ?: "艺术家"
             else -> when (route) {
-                "home" -> "首页"; "recent" -> "最近播放"; "download" -> "我的下载"
+                "home" -> "首页"; "local_music" -> "本地音乐"; "download" -> "我的下载"
                 "category" -> "音乐分类"; "latest" -> "最新歌曲"
                 "album" -> "音乐专辑"; "mylist" -> "我的歌单"
                 "favorites" -> "歌曲收藏"; "player" -> "播放器"

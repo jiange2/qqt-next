@@ -14,7 +14,6 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import com.qqt.music.AppConfig
 import com.qqt.music.data.api.model.Song
-import com.qqt.music.data.local.PrefsManager
 import com.qqt.music.download.DownloadManager
 import com.qqt.music.player.AccessFactReporter
 import com.qqt.music.player.AudioCache
@@ -295,14 +294,11 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         mediaController?.prepare()
         mediaController?.play()
 
-        // 添加到最近播放
-        PrefsManager.addRecentId(song.id)
         Log.d(TAG, "▶️ play song: ${song.title}")
     }
 
     /**
-     * 恢复上次播放：重建队列、prepare 不 play，MiniPlayer 就位，点播放续播；
-     * 不写最近播放，守「点播过」语义（ADR 0010）。
+     * 恢复上次播放：重建队列、prepare 不 play，MiniPlayer 就位，点播放续播（ADR 0010）。
      */
     private fun restoreLastPlayed(tracks: List<Song>, startIndex: Int, positionMs: Long) {
         if (mediaController == null || tracks.isEmpty() || startIndex !in tracks.indices) {

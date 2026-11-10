@@ -9,38 +9,32 @@ import java.util.UUID
 
 object PrefsManager {
     private const val PREF_NAME = "qqt_music_prefs"
-    private const val KEY_RECENT_IDS = "recent_song_ids"
     private const val KEY_DOWNLOADED = "downloaded_songs"
     private const val KEY_FAVOURITE_IDS = "favourite_song_ids"
     private const val KEY_LOCAL_PLAYLISTS = "local_playlists"
     private const val KEY_DEVICE_ID = "device_id"
     private const val KEY_RATED_SONGS = "rated_songs"
-    private const val MAX_RECENT = 50
+
+    // 「最近播放」在本地音乐改造中整体下线（ADR 0019）：旧版遗留的 ID 列表由 init 一次性清除
+    private const val KEY_LEGACY_RECENT_IDS = "recent_song_ids"
+    private const val KEY_LEGACY_RECENT_PURGED = "legacy_recent_ids_purged"
 
     private val gson = Gson()
     private lateinit var prefs: SharedPreferences
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        purgeLegacyRecentIds()
     }
 
-    // --- Recent songs ---
-    fun getRecentIds(): List<String> {
-        val json = prefs.getString(KEY_RECENT_IDS, null) ?: return emptyList()
-        return try {
-            gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
-        } catch (e: Exception) { emptyList() }
+    /** 清除已下线功能的残留键：升级后首次启动写标记，之后不再重复写盘 */
+    private fun purgeLegacyRecentIds() {
+        if (prefs.getBoolean(KEY_LEGACY_RECENT_PURGED, false)) return
+        prefs.edit()
+            .remove(KEY_LEGACY_RECENT_IDS)
+            .putBoolean(KEY_LEGACY_RECENT_PURGED, true)
+            .apply()
     }
-
-    fun addRecentId(songId: String) {
-        val ids = getRecentIds().toMutableList()
-        ids.remove(songId)
-        ids.add(0, songId)
-        val trimmed = ids.take(MAX_RECENT)
-        prefs.edit().putString(KEY_RECENT_IDS, gson.toJson(trimmed)).apply()
-    }
-
-    fun getRecentIdsString(): String = getRecentIds().joinToString(",")
 
     // --- Favourite songs ---
     /** 收藏 ID 列表，最新收藏在最前；不设上限、不自动驱逐（收藏是用户显式拥有，ADR 0005） */

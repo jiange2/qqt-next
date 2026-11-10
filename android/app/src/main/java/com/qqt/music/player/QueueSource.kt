@@ -5,7 +5,7 @@ package com.qqt.music.player
  * 常驻来源（收藏 / 下载列表 / 默认）用常量；实体来源（专辑 / 本地歌单）按 ID 构造。
  */
 object QueueSource {
-    /** 首页/热门/最新/搜索/艺术家/Banner/最近播放等全部临时列表共享的默认来源，兼作无记忆来源的初值 */
+    /** 首页/热门/最新/搜索/艺术家/Banner 等全部临时列表共享的默认来源，兼作无记忆来源的初值 */
     const val DEFAULT = "default"
 
     /** 收藏页 */

@@ -2,6 +2,8 @@ package com.qqt.music.ui.navigation
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +25,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.ui.components.DrawerContent
 import com.qqt.music.ui.components.MiniPlayer
 import com.qqt.music.ui.components.MusicBottomBar
@@ -40,10 +43,13 @@ import com.qqt.music.ui.screens.download.DownloadScreen
 import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
 import com.qqt.music.ui.screens.latest.LatestScreen
+import com.qqt.music.ui.screens.localmusic.AuthorizedFoldersDialog
+import com.qqt.music.ui.screens.localmusic.LocalMusicScreen
+import com.qqt.music.ui.screens.localmusic.LocalMusicTopBarMenu
+import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
 import com.qqt.music.ui.screens.mylist.MyListScreen
 import com.qqt.music.ui.screens.mylist.PlaylistDetailScreen
 import com.qqt.music.ui.screens.player.PlayerScreen
-import com.qqt.music.ui.screens.recent.RecentScreen
 import com.qqt.music.ui.screens.search.ArtistSongsScreen
 import com.qqt.music.ui.screens.search.SearchScreen
 import com.qqt.music.ui.screens.search.SearchSongsScreen
@@ -70,6 +76,15 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     val isArtistSongs = currentRoute?.startsWith("artist_songs") == true
     val isSearch = currentRoute == Screen.Search.route
     val showBackButton = isBannerSongs || isAlbumSongs || isCategoryAlbums || isBookList || isReader || isMyPlaylistDetail || isSearchSongs || isArtistSongs || isSearch
+
+    // 本地音乐：授权目录状态提升到导航层，页面与顶栏菜单共用一份（选目录入口两处都可达）
+    val localMusicViewModel: LocalMusicViewModel = viewModel()
+    val localMusicRoots by localMusicViewModel.roots.collectAsState()
+    var showFolderDialog by remember { mutableStateOf(false) }
+    val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { localMusicViewModel.addRoot(context, it) }
+    }
+    val isLocalMusic = currentRoute == Screen.LocalMusic.route
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
     // 关闭时下层原样即时露出（无任何过渡动画），滚动位置等页面状态全程保留。
     // 系统返回由 PlayerScreen 内部 BackHandler 接管（统一走整页下滑收出），顶层无需重复拦截
@@ -98,6 +113,16 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             onSearchClick = { navController.navigate(Screen.Search.route) },
                             showBackButton = showBackButton,
                             onBackClick = { navController.popBackStack() },
+                            // 本地音乐不兼搜索：右侧换成该页自己的菜单（重新扫描/添加/管理文件夹）
+                            actions = if (isLocalMusic) {
+                                {
+                                    LocalMusicTopBarMenu(
+                                        roots = localMusicRoots,
+                                        onAddFolder = { folderPicker.launch(null) },
+                                        onManageFolders = { showFolderDialog = true },
+                                    )
+                                }
+                            } else null,
                         )
                     },
                     bottomBar = {
@@ -147,8 +172,11 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             },
                         )
                     }
-                    composable(Screen.Recent.route) {
-                        RecentScreen(playerViewModel = playerViewModel)
+                    composable(Screen.LocalMusic.route) {
+                        LocalMusicScreen(
+                            viewModel = localMusicViewModel,
+                            onSelectFolder = { folderPicker.launch(null) },
+                        )
                     }
                     composable(Screen.Download.route) {
                         DownloadScreen(playerViewModel = playerViewModel)
@@ -264,6 +292,14 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             PlayerScreen(
                 playerViewModel = playerViewModel,
                 onBackClick = { playerOverlay = false },
+            )
+        }
+
+        // 本地音乐管理入口：已授权目录列表
+        if (showFolderDialog) {
+            AuthorizedFoldersDialog(
+                roots = localMusicRoots,
+                onDismiss = { showFolderDialog = false },
             )
         }
     }
