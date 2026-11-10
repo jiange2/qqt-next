@@ -32,6 +32,16 @@ interface LocalMusicLibrarySource {
 }
 
 /**
+ * 音频读取权限名按系统版本取用（spec「扫描来源与权限」，票据02）：Android 13（API 33）起
+ * 申请音乐粒度的 `READ_MEDIA_AUDIO`，Android 12（API 32）及以下申请 `READ_EXTERNAL_STORAGE`。
+ * 运行时请求（页面）与权限核对（[MediaStoreLibrarySource.hasAudioPermission]）共用这一个事实源，
+ * 与清单的 `maxSdkVersion="32"` 约束保持同一版本边界；JVM 断言见 AudioReadPermissionTest。
+ */
+fun audioReadPermission(sdkInt: Int): String =
+    if (sdkInt >= 33) Manifest.permission.READ_MEDIA_AUDIO
+    else Manifest.permission.READ_EXTERNAL_STORAGE
+
+/**
  * MediaStore 系统媒体库来源（spec，推翻 ADR 0019 的 SAF 目录扫描）：
  *
  * - 权限：Android 13+ 申请 `READ_MEDIA_AUDIO`，12 及以下申请 `READ_EXTERNAL_STORAGE`（清单标 maxSdkVersion 32）
@@ -48,8 +58,8 @@ class MediaStoreLibrarySource(
 ) : LocalMusicLibrarySource {
 
     override fun hasAudioPermission(): Boolean = when {
-        sdkInt >= 33 -> isGranted(Manifest.permission.READ_MEDIA_AUDIO)
-        sdkInt >= 23 -> isGranted(Manifest.permission.READ_EXTERNAL_STORAGE)
+        // 23 起才有运行时权限：按版本取对应权限名核对（13+ 音乐粒度 / 12 及以下外部存储）
+        sdkInt >= 23 -> isGranted(audioReadPermission(sdkInt))
         // Android 5.x 及以下没有运行时权限：清单声明即授予
         else -> true
     }
