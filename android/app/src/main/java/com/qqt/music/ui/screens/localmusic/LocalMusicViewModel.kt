@@ -13,6 +13,7 @@ import com.qqt.music.data.local.LocalMusicScanner
 import com.qqt.music.data.local.LocalMusicStore
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
+import com.qqt.music.data.local.findOverlap
 import com.qqt.music.data.local.withOverride
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,8 @@ data class LocalScanState(
  * 离开页面扫描继续、回到页面不重复发起；扫描结果整体替换：取消或失败都保留上一次完整结果。
  * 重扫是增量的：把当前索引交给扫描器，未变文件跳过指纹与标签读取，
  * 完成时按内容身份（指纹）提示新增 / 移除条数。
+ * 根目录可以授权多个（结果合并成一份库）：与已有目录重叠的授权被拒绝，
+ * 移除某个目录只按树剔除索引里的歌曲，不触发全量重扫。
  */
 class LocalMusicViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -133,15 +136,27 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** 收录用户选中的目录树并立刻扫描；同一棵树重复选择只记一次（重叠根的拒绝属票据 07） */
+    /**
+     * 收录用户选中的目录树并立刻扫描。同一棵树重复选择只记一次；
+     * 与已有根目录重叠（包含 / 被包含 / 同一棵树）时拒绝并说明——否则同一批文件会被两棵子树重复扫进来。
+     */
     fun addRoot(treeUri: Uri) {
         if (_roots.value.any { it.treeUri == treeUri }) {
             startScan()
             return
         }
         viewModelScope.launch {
-            // 授权与树名查询都是跨进程 IO，不放在主线程
-            val root = withContext(Dispatchers.IO) {
+            // 树名查询是跨进程 IO，不放在主线程
+            val name = withContext(Dispatchers.IO) {
+                queryTreeName(treeUri) ?: treeUri.lastPathSegment ?: "音乐文件夹"
+            }
+            val overlapping = _roots.value.findOverlap(treeUri)
+            if (overlapping != null) {
+                // 拒绝说明：用户刚选完目录，用轻提示告诉他为什么没加进来
+                _notice.value = "「$name」与已添加的「${overlapping.name}」重叠，请选择不重叠的文件夹"
+                return@launch
+            }
+            withContext(Dispatchers.IO) {
                 // 选择目录即是唯一一次授权：从此本机可长期读取该树，无任何存储权限弹窗
                 runCatching {
                     getApplication<Application>().contentResolver.takePersistableUriPermission(
@@ -149,14 +164,41 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                         Intent.FLAG_GRANT_READ_URI_PERMISSION,
                     )
                 }
-                LocalMusicRoot(treeUri, queryTreeName(treeUri) ?: treeUri.lastPathSegment ?: "音乐文件夹")
             }
+            val root = LocalMusicRoot(treeUri, name)
             if (_roots.value.none { it.treeUri == root.treeUri }) {
                 _roots.value = _roots.value + root
             }
             // 根目录立即落盘：这次扫描被取消，下次启动也不至于丢掉这个授权
             LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, _songs.value))
             startScan()
+        }
+    }
+
+    /**
+     * 移除一个已授权的根目录：直接按树把它的歌曲从内存索引里剔除（spec：不触发全量重扫）并落盘。
+     * 覆盖层按身份保留，重新添加同一目录后用户改过的信息仍在。
+     *
+     * 不动系统里的持久化授权：正在播放的歌曲也是该树下的 content URI，撤回授权会让它在 seek 时
+     * 直接读不到文件，与「正在播放的歌曲不受影响」相违；索引不再列出这棵树，不扫也就不会再读它。
+     */
+    fun removeRoot(treeUri: Uri) {
+        val root = _roots.value.firstOrNull { it.treeUri == treeUri } ?: return
+        val remainingRoots = _roots.value - root
+        val remainingSongs = _songs.value.filterNot { it.treeUri == treeUri.toString() }
+        _roots.value = remainingRoots
+        _songs.value = remainingSongs
+        // 扫描在跑时它的结果里还会有这个目录：取消并按新目录重跑，索引也交给那次扫描落盘，
+        // 免得这里写下的快照把重扫刚发现的新歌盖掉
+        val scanning = scanJob != null
+        if (scanning) startScan()
+        if (!scanning) {
+            viewModelScope.launch {
+                LocalMusicStore.saveIndex(
+                    application,
+                    LocalMusicStore.Snapshot(remainingRoots, remainingSongs),
+                )
+            }
         }
     }
 
