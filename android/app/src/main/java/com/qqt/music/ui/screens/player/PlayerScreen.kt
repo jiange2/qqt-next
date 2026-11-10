@@ -151,10 +151,10 @@ fun PlayerScreen(
     val activeDownloads by DownloadManager.activeDownloads.collectAsState()
 
     val songId = currentSong?.id
-    // 本地歌曲（spec：`local:<指纹十六进制>`）：没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载注定失败
+    // 本地歌曲（ID 走 `local:` 命名空间，值为媒体库行身份「卷名:行 ID」）：没有服务端歌与歌词，收藏 / 歌单 / 评分 / 下载注定失败
     val isLocalSong = currentSong?.isLocalSong() == true
-    // 当前在播的本地歌曲（索引里按 ID 找回来）：元数据编辑要以它为准，
-    // 找不到时（目录被移除等）连「编辑信息」入口也不出现——没有可改的记录
+    // 当前在播的本地歌曲（库快照里按 ID 找回来）：元数据编辑要以它为准，
+    // 找不到时（该行已不在媒体库——文件被删后下次刷新消失等）连「编辑信息」入口也不出现——没有可改的记录
     val localSongs by localMusicViewModel.songs.collectAsState()
     val localSong = if (isLocalSong) localSongs.firstOrNull { it.id == songId } else null
 

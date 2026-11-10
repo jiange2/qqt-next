@@ -80,9 +80,14 @@ data class LocalSong(
     /** 播放兼容层 ID：`local:<身份键>` */
     val id: String get() = LOCAL_SONG_ID_PREFIX + identityKey
 
-    /** 所在文件夹名（专辑名兜底用）：文件直接在存储根时为空串 */
+    /**
+     * 所在文件夹名（专辑名兜底用，spec 用户故事 23）：文件直接在存储根时为空串。
+     * 与排除清单共用同一份目录段推导（[folderNameOf]）——RELATIVE_PATH 形态（Android 10+）
+     * 取目录名，DATA 全路径形态（低版本）取目录段尾名；两种形态不再各推各的，
+     * 此前本处自行 trimEnd + 取尾段，低版本 DATA 形态会错把文件名当文件夹名。
+     */
     val folderName: String
-        get() = path.trimEnd('/').substringAfterLast('/', "")
+        get() = folderNameOf(this)
 
     /** 本行所属媒体库专辑的系统预抽取专辑图 URI（spec「专辑与封面」），图片加载器直接加载与缓存 */
     val albumArtUri: Uri
@@ -155,3 +160,16 @@ fun List<LocalSong>.diffAgainst(previous: Collection<LocalSong>): LibraryDiff {
         removed = previousIds.count { it !in currentIds },
     )
 }
+
+/**
+ * 重扫提示的差异口径（spec 用户故事 17：完成后提示「新增 x、移除 y」，以便知道这次刷新改变了什么）：
+ * 在排除过滤后的可见库上比较——被排除文件夹里的增删列表根本看不见，不该计入提示；
+ * 两侧用同一份（当前的）排除清单：用户此刻看到的列表正是「旧库按现清单过滤」的形态，
+ * 切换排除开关的即时重过滤已把所见对齐，这里再按它算才是「这次刷新改变了什么」。
+ */
+fun visibleLibraryDiff(
+    current: List<LocalSong>,
+    previous: List<LocalSong>,
+    excludedFolders: Collection<String>,
+): LibraryDiff =
+    current.excludingFolders(excludedFolders).diffAgainst(previous.excludingFolders(excludedFolders))

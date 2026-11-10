@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalFolder
+import com.qqt.music.data.local.LocalLibraryResult
 import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicLibrarySource
 import com.qqt.music.data.local.LocalMusicStore
@@ -13,7 +14,6 @@ import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreLibrarySource
-import com.qqt.music.data.local.diffAgainst
 import com.qqt.music.data.local.distinctFolders
 import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
@@ -21,6 +21,7 @@ import com.qqt.music.data.local.overrideFrom
 import com.qqt.music.data.local.sortedByDisplayTitle
 import com.qqt.music.data.local.trackNoInput
 import com.qqt.music.data.local.valueOrNull
+import com.qqt.music.data.local.visibleLibraryDiff
 import com.qqt.music.data.local.withOverride
 import com.qqt.music.data.local.yearInput
 import kotlinx.coroutines.CancellationException
@@ -141,6 +142,13 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
     /**
+     * 是否有库刷新在跑。查询毫秒级，页面只在「空快照 + 已授权 + 刷新在途」用它：首次授权后
+     * 第一次刷新提交前不闪「没有音乐」的空态——空结果要等刷新落定才能下结论。
+     */
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+
+    /**
      * 一次性轻提示（重扫完成的新增 / 移除数、刷新失败）：页面 Toast 后清空。
      * 用 StateFlow 而不是 SharedFlow，提示在页面尚未重组完成时也不会丢。
      */
@@ -153,7 +161,13 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /** 元数据编辑串行化：「换列表 → 写覆盖层」是一条链，两次编辑不交错 */
     private val editLock = Mutex()
 
-    /** 同一时刻只允许一个刷新任务：静默刷新与重扫共用（查询很快，不叠加也不取消） */
+    /**
+     * 最近一次启动的刷新任务，供 [rescan] 做串行判断。静默刷新入口（进页面 / 授权回调 / 回前台）
+     * 不查它、允许重叠：查询是毫秒级整库重读，提交是整份列表原子替换，各次结果同为各自查询时刻的
+     * 最新事实、后提交者胜出且内容不旧，重叠无害，不值得为它排队。
+     * 重扫则尽量排队（在途时记 [rescanRequested]，跑完当前这次后非静默补跑一次）：它要提示
+     * 「新增 / 移除」数量，与在途刷新交错时 diff 基线算不清——查询毫秒级即回，重叠窗口本就极小。
+     */
     private var refreshJob: Job? = null
 
     /** 刷新中又被要求重扫：跑完当前这次后按非静默重跑一次（提示数量） */
@@ -267,15 +281,28 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /**
      * 整库静默刷新 / 重扫（spec「库快照与刷新」）：等快照读回 → 整库重查 → 按身份 diff →
      * 合并覆盖层 → 原子提交并落盘。全程无进度状态：查询即事实，期间旧列表照常可用。
+     * 查询失败（任一卷）不算空库：快照原样保留、直接跳过这次刷新（spec「播放与失效」：
+     * 不放空列表假装没歌），只有真正的查询结果才提交。
      */
     private fun refresh(notify: Boolean) {
+        // 先同步置「刷新中」再起协程：重扫排队补跑（finally → refresh）时两值同帧切换，页面不闪空态
+        _refreshing.value = true
         refreshJob = viewModelScope.launch {
             try {
                 // 冷启动时快照可能还没读回：先等它落位，diff 与落盘都以它为基线
                 _loading.first { !it }
                 if (!source.hasAudioPermission()) return@launch
                 val previous = _songs.value
-                val rows = withContext(Dispatchers.IO) { source.queryLibrary() }
+                val rows = when (val result = withContext(Dispatchers.IO) { source.queryLibrary() }) {
+                    is LocalLibraryResult.Failure -> {
+                        // 查询失败 ≠ 空库：内存与磁盘快照都原样保留（spec「播放与失效」：不放空列表假装没歌），
+                        // 静默刷新无声跳过；重扫与下方 catch 同口径轻提示失败
+                        Log.w(TAG, "库查询失败，保留上一次快照", result.cause)
+                        if (notify && _songs.value.isNotEmpty()) _notice.value = "刷新失败，请重试"
+                        return@launch
+                    }
+                    is LocalLibraryResult.Success -> result.rows
+                }
                 // 覆盖层在主线程先取一份快照：查询期间它可能正被元数据编辑改写。
                 // 顺序按合并后的标题（改过标题的歌在刷新后也不会跳回旧位置），
                 // 排序与专辑分组一样离开主线程
@@ -290,7 +317,8 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                     LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(merged, _excludedFolders.value.toList()))
                 }
                 if (notify) {
-                    val diff = merged.diffAgainst(previous)
+                    // 提示的是可见库的变化（spec 用户故事 17）：被排除文件夹里的增删列表看不见，不计入
+                    val diff = visibleLibraryDiff(merged, previous, _excludedFolders.value)
                     _notice.value = "新增 ${diff.added}、移除 ${diff.removed}"
                 }
                 Log.d(TAG, "库刷新完成：${merged.size} 首")
@@ -302,6 +330,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 if (notify && _songs.value.isNotEmpty()) _notice.value = "刷新失败，请重试"
             } finally {
                 refreshJob = null
+                _refreshing.value = false
                 if (rescanRequested) {
                     rescanRequested = false
                     refresh(notify = true)
