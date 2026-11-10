@@ -17,10 +17,9 @@ data class LocalAlbum(
     val songs: List<LocalSong>,
 ) {
     /**
-     * 封面取样歌曲：文件夹封面取它所在目录，没有封面文件时取它的内嵌图。
+     * 封面取样歌曲：取它的内嵌图作为这张专辑的封面来源（票据 04 起改为系统预抽取的专辑图）。
      *
-     * 元数据编辑可以把不同文件夹的歌改到同一张专辑，所以「同一张专辑的歌曲同在一个目录」不再是必然：
-     * 取样的是这张专辑里排在最前那首所在的目录，文件夹封面只代表那一个来源（ADR 0020：封面归专辑，不归单曲）。
+     * 元数据编辑可以把不同文件改到同一张专辑，取样的是这张专辑里排在最前的那首（ADR 0020：封面归专辑，不归单曲）。
      */
     val coverSong: LocalSong get() = songs.first()
 }
@@ -69,17 +68,17 @@ fun List<LocalSong>.groupIntoAlbums(): List<LocalAlbum> {
  * 专辑分组键的取值口径（[groupIntoAlbums] 用它归并歌曲）。
  *
  * - 有专辑名：专辑名 + 专辑艺术家
- * - 无专辑名：文件夹名 + 文件夹路径（文件夹路径带上所属树 URI）——只靠文件夹名会让
+ * - 无专辑名：文件夹名 + 文件夹路径（带所属卷名）——只靠文件夹名会让
  *   `Music/Live` 与 `SD/Live` 两个目录被合并成一张专辑
  *
- * 元数据编辑（票据 09）也读它：改了专辑名 / 专辑艺术家，同一首歌的新旧键会落进两张不同的
+ * 元数据编辑也读它：改了专辑名 / 专辑艺术家，同一首歌的新旧键会落进两张不同的
  * 专辑，封面缓存要按这两个键分别作废重取。
  */
 fun LocalSong.albumKey(): String {
     val album = displayAlbum()
     if (album.isNotBlank()) return "album\u0001$album\u0001${displayAlbumArtist()}"
-    val folderPath = relativePath.substringBeforeLast('/', "")
-    return "folder\u0001$treeUri\u0001$folderPath\u0001$folderName"
+    val folderPath = path.substringBeforeLast('/', "").trimEnd('/')
+    return "folder\u0001$volume\u0001$folderPath\u0001$folderName"
 }
 
 /** 专辑内顺序：音轨号升序，音轨号为空的一律排在后面并按标题；同一音轨号按标题 */
