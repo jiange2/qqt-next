@@ -8,6 +8,12 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.FileDataSource
 import androidx.media3.datasource.TransferListener
 
+/** 本地直读播放 URI：`file://`（已下载）与 `content://`（本地歌曲）都不进被动缓存、不经过网络栈 */
+fun Uri.isLocalDirectReadUri(): Boolean = scheme == "file" || scheme == "content"
+
+/** 本地歌曲的直读 URI：SAF 目录内的 `content://` 文档（与已下载的 `file://` 区分） */
+fun Uri.isLocalSongUri(): Boolean = scheme == "content"
+
 /**
  * 按 URI scheme 分流的播放数据源（ADR 0003）：
  * - `file://`（已下载歌曲离线播放）→ FileDataSource 直读本地文件，绕过缓存
@@ -31,9 +37,9 @@ class SchemeRoutingDataSource(
     }
 
     override fun open(dataSpec: DataSpec): Long {
-        val delegate = when (dataSpec.uri.scheme) {
-            "file" -> localFile
-            "content" -> localContent
+        val delegate = when {
+            dataSpec.uri.isLocalSongUri() -> localContent
+            dataSpec.uri.scheme == "file" -> localFile
             else -> cachedHttp
         }
         active = delegate

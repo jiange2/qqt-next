@@ -44,6 +44,11 @@ class MediaBitmapLoader : BitmapLoader {
                 )
             return Futures.immediateFuture(bitmap)
         }
+        // 只有 http(s) 才走网络：本地歌曲的封面是本地封面缓存（file://），无封面时可能为空地址，
+        // 落到 OkHttp 会产生无意义请求（空地址还会直接抛 IllegalArgumentException）
+        if (uri.scheme != "http" && uri.scheme != "https") {
+            return Futures.immediateFailedFuture(IOException("unsupported artwork uri: $uri"))
+        }
         val future = SettableFuture.create<Bitmap>()
         mediaImageClient.newCall(
             Request.Builder().url(uri.toString()).header("Referer", MEDIA_REFERER).build()

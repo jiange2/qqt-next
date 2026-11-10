@@ -206,14 +206,15 @@ UI → `PlayerViewModel.startSleepTimer()` 协程计时（250ms tick），到点
 - 驱逐策略：LRU（最近最少使用）
 - 集成：MusicPlayerService 构建 CacheDataSource 时使用；DownloadManager 也以它为下载上游（缓存升格，ADR 0003）
 
-### 本地直读播放（已下载歌曲与本地音乐）
+### 本地直读播放（已下载歌曲与本地歌曲）
 
-已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）、本地音乐以内容提供者 `content://` URI 构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，`file` 走 FileDataSource 直读本地文件、`content` 走 ContentDataSource 经 SAF 持久化授权直读，两者都离线可播、不写被动缓存；http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成。
+已下载歌曲以 `file://` URI（`filesDir/downloads/{id}.mp3`）、本地歌曲以内容提供者 `content://` URI 构建 MediaItem：MusicPlayerService 通过 `SchemeRoutingDataSourceFactory` 按 scheme 分流，`file` 走 FileDataSource 直读本地文件、`content` 走 ContentDataSource 经 SAF 持久化授权直读，两者都离线可播、不写被动缓存；http(s) 走被动缓存 + 网络回源。URI 替换在 `PlayerViewModel.resolveUri()` 统一完成，scheme 判定收敛在 `SchemeRoutingDataSource.kt` 的 `isLocalDirectReadUri()` / `isLocalSongUri()`。
 
 本地直读（`content://`）的字节不经过网络栈，打开失败即播放失败，不回退到网络分支：
 
 - 不进被动缓存，进度条缓存染色按「整曲本地可得」显示
-- 不上报访问事实与时长写回；车机歌词同步不为它拉歌词（本地音乐无服务端歌时）
+- 不上报访问事实与时长写回；MediaItem 不带 `EXTRA_SONG_ID`，车机歌词同步因此不拉歌词
+- 通知/媒体卡片封面只有 `file://`（本地封面缓存）与 `http(s)` 两种加载路径，其余 scheme 直接失败，不落到 OkHttp
 - 错误自愈（ADR 0011）只作用于媒体 host，`content://` 不触发缓存清理与重取
 
 ### LastPlayedStore - 进度持久化

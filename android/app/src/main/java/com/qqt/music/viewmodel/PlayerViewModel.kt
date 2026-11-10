@@ -24,6 +24,8 @@ import com.qqt.music.player.LastPlayedStore
 import com.qqt.music.player.MediaControllerManager
 import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.player.QueueSource
+import com.qqt.music.player.isLocalDirectReadUri
+import com.qqt.music.player.isLocalSongUri
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +50,9 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
 
     companion object {
         private const val TAG = "PlayerViewModel"
+
+        /** 本地歌曲 ID 命名空间（spec：`local:<指纹十六进制>`），与服务端数字 ID 天然隔离 */
+        private const val LOCAL_SONG_ID_PREFIX = "local:"
     }
 
     // ========== 播放状态 ==========
@@ -152,8 +157,8 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 }
                 Log.d(TAG, "📻 now playing: ${song?.title} (idx=$idx)")
                 // 访问事实：每次装载播放一条，含恢复装载（ADR 0008）；
-                // 本地音乐直读文件不是在线内容，不上报（否则会为本地播放产生网络请求）
-                song?.takeUnless { isLocalMusicPlayback(it) }
+                // 本地歌曲不是在线内容，不上报（否则会为本地播放产生网络请求）
+                song?.takeUnless { isLocalSongPlayback(it) }
                     ?.let { AccessFactReporter.reportFact(application, it, resolveUri(it)) }
                 // 缓存可视化切曲即刷（装载时刻判定），此后随轮询生长（ADR 0013）
                 refreshCacheVisual()
@@ -174,10 +179,10 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 }
                 Log.d(TAG, "🎵 playback state: $state")
                 // 时长写回：READY 后真实时长与服务器现值比对，不一致才上报（ADR 0008）；
-                // 本地音乐没有服务端歌时，跳过
+                // 本地歌曲没有服务端歌时，跳过
                 if (playbackState == Player.STATE_READY) {
                     selfHealUri = null
-                    _currentSong.value?.takeUnless { isLocalMusicPlayback(it) }?.let { song ->
+                    _currentSong.value?.takeUnless { isLocalSongPlayback(it) }?.let { song ->
                         AccessFactReporter.reportDurationIfChanged(song, mediaController?.duration ?: 0L)
                     }
                 }
@@ -233,7 +238,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     // ========== 缓存可视化（ADR 0013）==========
 
     /**
-     * 刷新缓存染色状态：已下载歌曲（file:// 直读）与本地音乐（content:// 直读）直接整曲本地可得；
+     * 刷新缓存染色状态：已下载歌曲（file:// 直读）与本地歌曲（content:// 直读）直接整曲本地可得；
      * 流式播放按缓存 key（播放 URI 字符串，经 AudioCache.cacheKey 版本化，与 CacheDataSource 键同口径）
      * 查命中与前缀。
      */
@@ -245,7 +250,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         }
         val uri = resolveUri(song)
         // 本地直读的两种 scheme 都不写被动缓存，按整曲本地可得染色
-        if (uri.scheme == "file" || uri.scheme == "content") {
+        if (uri.isLocalDirectReadUri()) {
             _cacheVisual.value = CacheVisual.FULLY_AVAILABLE
         } else {
             _cacheVisual.value = AudioCache.cacheVisual(uri.toString())
@@ -380,13 +385,15 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
         DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
 
     /**
-     * 本地音乐直读文件（content://）：不是已下载内容、也没有服务端歌时，
-     * 访问事实与时长写回均跳过，避免为本地播放产生网络请求。
+     * 本地歌曲判定：ID 走 `local:` 命名空间（spec 契约），也认 content:// 直读 URI（与在线歌、已下载歌区分）。
+     * 本地歌曲没有服务端歌与歌词，播放期间不为它发起任何后端请求。
      */
-    private fun isLocalMusicPlayback(track: Song): Boolean = resolveUri(track).scheme == "content"
+    private fun isLocalSongPlayback(track: Song): Boolean =
+        track.id.startsWith(LOCAL_SONG_ID_PREFIX) || resolveUri(track).isLocalSongUri()
 
     /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
+        val isLocalSong = isLocalSongPlayback(track)
         MediaItem.Builder()
             .setUri(resolveUri(track))
             // 稳定媒体身份：mediaId 默认空串（所有条目同 id），切歌去重判据依赖它（ADR 0016）
@@ -396,8 +403,13 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                     .setTitle(track.title)
                     .setArtist(track.artist)
                     .setArtworkUri(Uri.parse(track.thumbnailBig))
-                    // 歌曲 ID 随元数据下发，Service 侧 CarLyricsSync 据此拉歌词（ADR 0016）
-                    .setExtras(Bundle().apply { putString(CarLyricsSync.EXTRA_SONG_ID, track.id) })
+                    .apply {
+                        // 歌曲 ID 随元数据下发，Service 侧 CarLyricsSync 据此拉歌词（ADR 0016）；
+                        // 本地歌曲没有服务端歌词，不下发，Service 侧也就不会发起歌词请求
+                        if (!isLocalSong) {
+                            setExtras(Bundle().apply { putString(CarLyricsSync.EXTRA_SONG_ID, track.id) })
+                        }
+                    }
                     .build()
             )
             .build()
