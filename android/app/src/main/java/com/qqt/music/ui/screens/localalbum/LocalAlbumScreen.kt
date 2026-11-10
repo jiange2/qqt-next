@@ -77,7 +77,7 @@ fun LocalAlbumScreen(
         album == null -> EmptyState(
             icon = Icons.Outlined.Album,
             title = "专辑已不存在",
-            subtitle = "重新扫描音乐文件夹后再试",
+            subtitle = "重新扫描后再试",
         )
 
         else -> Column(
