@@ -50,7 +50,8 @@ fun List<LocalSong>.distinctFolders(): List<LocalFolder> {
 }
 
 private fun compareWith(collator: Collator): Comparator<LocalFolder> =
-    compareBy(collator) { it.name }.thenBy { it.path }
+    Comparator { a: LocalFolder, b: LocalFolder -> collator.compare(a.name, b.name) }
+        .thenBy { it.path }
 
 /** 匹配前归一：裁掉首尾空白与尾斜杠（落盘值与行路径都过一遍，口径一致） */
 private fun normalizeFolderPath(path: String): String = path.trim().trimEnd('/')

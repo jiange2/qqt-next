@@ -214,7 +214,7 @@ fun LocalMusicScreen(
 /** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
  *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行 */
 @Composable
-private fun LibraryArea(
+private fun ColumnScope.LibraryArea(
     showAlbums: Boolean,
     onSelectView: (Boolean) -> Unit,
     songs: List<LocalSong>,
