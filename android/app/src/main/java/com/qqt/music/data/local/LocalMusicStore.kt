@@ -128,8 +128,12 @@ object LocalMusicStore {
                     // rename 之前必须刷盘，否则可能把空文件换上去
                     out.fd.sync()
                 }
-                if (!temp.renameTo(target) && !(target.delete() && temp.renameTo(target))) {
-                    error("rename 失败：${temp.name} -> ${target.name}")
+                if (!temp.renameTo(target)) {
+                    // 兜底分支：极少数文件系统不允许覆盖式 rename，只能删旧重试。
+                    // 仍失败就把新内容留在 .tmp（下次写覆盖它，读取时清理），旧文件在该情况下已不可保留
+                    if (!(target.exists() && target.delete() && temp.renameTo(target))) {
+                        error("rename 失败：${temp.name} -> ${target.name}")
+                    }
                 }
             }.onFailure { e -> Log.w(TAG, "写入失败：${target.name}", e) }
         }

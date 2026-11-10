@@ -17,6 +17,7 @@ import com.qqt.music.data.local.withOverride
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,6 +100,8 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                         LocalMusicStore.IndexLoad.Absent -> RestoredLibrary(
                             overlay = savedOverlay,
                             roots = persistedRoots(),
+                            // 有授权但没索引（首次升级上来、索引被清掉）：等同首次进入，自动扫一次
+                            needsScan = true,
                         )
                     }
                 }
@@ -114,6 +117,8 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
             _songs.value = restored.songs
             _indexUnreadable.value = restored.indexUnreadable
             _loading.value = false
+            // 根目录已有但索引还没有：直接开扫，不必让用户先看到「目录里没有音乐」
+            if (restored.needsScan) startScan()
         }
     }
 
@@ -175,8 +180,11 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                 // 原子提交：整份索引构建完成才替换，此前列表一直是上一次的完整结果
                 _songs.value = merged
                 _indexUnreadable.value = false
-                // 索引落盘：下次冷启动直接出列表，不必再扫一遍
-                LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, merged))
+                // 索引落盘：下次冷启动直接出列表，不必再扫一遍。
+                // 写盘已不可取消：列表已经换了，此时点「取消」不该把成功的扫描标成取消、让磁盘停在旧索引
+                withContext(NonCancellable) {
+                    LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, merged))
+                }
                 Log.d(TAG, "扫描完成：${merged.size} 首")
             } catch (e: CancellationException) {
                 Log.d(TAG, "扫描已取消，保留上一次结果")
@@ -234,6 +242,7 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
         val roots: List<LocalMusicRoot> = emptyList(),
         val songs: List<LocalSong> = emptyList(),
         val indexUnreadable: Boolean = false,
+        val needsScan: Boolean = false,
     )
 
     private companion object {
