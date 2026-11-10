@@ -184,22 +184,15 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun removeRoot(treeUri: Uri) {
         val root = _roots.value.firstOrNull { it.treeUri == treeUri } ?: return
-        val remainingRoots = _roots.value - root
-        val remainingSongs = _songs.value.filterNot { it.treeUri == treeUri.toString() }
-        _roots.value = remainingRoots
-        _songs.value = remainingSongs
-        // 扫描在跑时它的结果里还会有这个目录：取消并按新目录重跑，索引也交给那次扫描落盘，
-        // 免得这里写下的快照把重扫刚发现的新歌盖掉
-        val scanning = scanJob != null
-        if (scanning) startScan()
-        if (!scanning) {
-            viewModelScope.launch {
-                LocalMusicStore.saveIndex(
-                    application,
-                    LocalMusicStore.Snapshot(remainingRoots, remainingSongs),
-                )
-            }
-        }
+        _roots.value = _roots.value - root
+        _songs.value = _songs.value.filterNot { it.treeUri == treeUri.toString() }
+        // 落盘不交给重扫：根目录被清空、用户取消、扫描失败都走不到写盘那一步，
+        // 磁盘会停在含该目录的旧快照，重启就把它连歌一起捡回来。
+        // 根目录与歌曲在同一次主线程执行里取出，建出的快照必然是同一时刻的状态
+        val snapshot = LocalMusicStore.Snapshot(_roots.value, _songs.value)
+        viewModelScope.launch { LocalMusicStore.saveIndex(application, snapshot) }
+        // 扫描在跑时它的遍历范围里还有这个目录：取消并按新目录重跑
+        if (scanJob != null) startScan()
     }
 
     /**
@@ -236,15 +229,22 @@ class LocalMusicViewModel(application: Application) : AndroidViewModel(applicati
                         )
                     }
                 }
+                // 扫描期间根目录可能被移除（removeRoot）：只提交仍属于当前根目录的歌曲。
+                // 遍历范围是扫描开始时捕获的 roots，内存里的根目录表才是当下的事实
+                val liveTreeUris = _roots.value.mapTo(HashSet()) { it.treeUri.toString() }
+                val scanned = result.songs.filter { it.treeUri in liveTreeUris }
                 // 展示值统一走「覆盖层优先、缺失取标签」的合并结果（ADR 0020）
-                val merged = result.songs.map { it.withOverride(overlay[it.fingerprint]) }
+                val merged = scanned.map { it.withOverride(overlay[it.fingerprint]) }
                 // 原子提交：整份索引构建完成才替换，此前列表一直是上一次的完整结果
                 _songs.value = merged
                 _indexUnreadable.value = false
                 // 索引落盘：下次冷启动直接出列表，不必再扫一遍。
-                // 写盘已不可取消：列表已经换了，此时点「取消」不该把成功的扫描标成取消、让磁盘停在旧索引
+                // 写盘已不可取消：列表已经换了，此时点「取消」不该把成功的扫描标成取消、让磁盘停在旧索引。
+                // 快照取写盘那一刻的内存状态，而不是扫描开始时捕获的目录 + 这份结果：
+                // 两者必须同源，否则会把已移除目录的歌跟一份不含该目录的根目录表一起写进索引
                 withContext(NonCancellable) {
-                    LocalMusicStore.saveIndex(application, LocalMusicStore.Snapshot(_roots.value, merged))
+                    val snapshot = LocalMusicStore.Snapshot(_roots.value, _songs.value)
+                    LocalMusicStore.saveIndex(application, snapshot)
                 }
                 // 扫描完成轻提示本次的增量结果（spec「扫描与索引」）
                 _notice.value = "新增 ${result.added} 首、移除 ${result.removed} 首"
