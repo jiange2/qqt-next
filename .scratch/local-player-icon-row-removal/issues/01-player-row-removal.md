@@ -20,3 +20,4 @@
 ## Comments
 
 - 2026-11-14 立票：grilling 四决策全部确认（见 spec.md Further Notes），spec 发布即立本票。勾选项为设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 完成。实现提交 53c5669（合并 22a33c4），7 文件 +51/−115：PlayerScreen.kt（整行 if (!isLocalSong) 条件化、本地居中分支与行内守卫收敛、更多菜单删编辑项与评分兜底守卫、拆 editingSong/页内面板/localMusicViewModel 参数/localSongs/localSong 快照、删 3 个 unused import、页头与行内注释更新）、AppNavigation.kt（去传参+445/162 注释）、PlayerIcons.kt（删 Edit，全仓代码引用核实归零）、LocalMetadataEditSheet.kt:49 与 LocalMusicScreen/LocalSongRow/LocalAlbumScreen 三处 KDoc 仅注释同步（编排层裁定：spec「列表长按零改动」指行为，过时播放器从句随拆除更新）。在线五图标行/定时角标/布局常量/保存后刷新链路零改动。无新测试（spec Testing Decisions：纯 UI 移除无接缝）；未编译未跑 gradlew（仓规约），勾选项待人工编译后真机逐项确认。Status 留待评审后归档。
