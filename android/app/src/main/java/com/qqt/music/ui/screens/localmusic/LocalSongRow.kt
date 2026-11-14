@@ -41,8 +41,8 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 文件不可用的行整体灰显、不可点，右侧以「不可用」代替时长（spec「权限与失效」）。
  * [swipe] 非空时该行可左滑露出操作按钮（见 [SwipeRevealRow]，本地两页传「删除」）；
  * 灰显只关行内点击，不影响外层左滑——文件不可用的行照样可删。
- * [editing] 为 true（编辑模式，仅歌曲视图）时序号位换成前置勾选框：点行 / 长按切换勾选
- * （由调用方接线），灰显行不可勾选；勾选框本身不接事件，避免与整行点击双重切换。
+ * [editing] 为 true（编辑模式，本地音乐页歌曲视图与本地专辑页）时序号位换成前置勾选框：
+ * 点行 / 长按切换勾选（由调用方接线），灰显行不可勾选；勾选框本身不接事件，避免与整行点击双重切换。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

@@ -169,3 +169,34 @@ fun batchAlbumCommit(
     }
     return BatchAlbumCommit(updated, rows.sortedByDisplayTitle())
 }
+
+/**
+ * 专辑页批量提交后的去向推算（票据04，JVM 可测接缝）：返回选中行提交后落到的新专辑键集合。
+ * 在提交前按当前展示值同步推算——albums 派生异步重算，提交后读它会拿到旧值
+ * （与 [com.qqt.music.ui.screens.localmusic.LocalDeleteSuccess] 同一理由）。
+ * 提交后展示值口径与 [batchAlbumOverride] 一致：trim 后非空的输入即新展示值
+ * （与标签同值清覆盖不改变展示值），留空保留原展示值。
+ *
+ * - 空集 = 留在原页：未全选（未选中行——含不可勾选的灰显行——保留旧键，原专辑仍在），
+ *   或全选但键不变（输入与当前展示值相同 / 文件夹兜底专辑只改专辑艺术家）
+ * - 单元素 = 全选且整张专辑搬进唯一新专辑，调用方跟随新专辑
+ * - 多元素 = 全选但拆成多张新专辑（文件夹兜底专辑只填专辑名、成员专辑艺术家不同），
+ *   无唯一去向，调用方返回本地音乐页
+ */
+internal fun batchAlbumNewKeys(
+    albumSongs: List<LocalSong>,
+    selected: Set<String>,
+    albumInput: String,
+    albumArtistInput: String,
+): Set<String> {
+    if (albumSongs.isEmpty() || !albumSongs.all { it.id in selected }) return emptySet()
+    val album = albumInput.trim()
+    val artist = albumArtistInput.trim()
+    val newKeys = albumSongs.mapTo(mutableSetOf()) { song ->
+        song.albumKeyOf(
+            album.ifBlank { song.displayAlbum() },
+            artist.ifBlank { song.displayAlbumArtist() },
+        )
+    }
+    return if (newKeys == setOf(albumSongs.first().albumKey())) emptySet() else newKeys
+}

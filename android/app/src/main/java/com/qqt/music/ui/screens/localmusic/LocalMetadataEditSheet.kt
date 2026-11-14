@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
+import com.qqt.music.data.local.albumArtistSuggestions
+import com.qqt.music.data.local.albumSuggestions
+import com.qqt.music.data.local.artistSuggestions
 import com.qqt.music.data.local.metadataDraft
 import com.qqt.music.data.local.trackNoInput
 import com.qqt.music.data.local.yearInput
@@ -45,6 +49,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
 
 /**
  * 本地歌曲的元数据编辑面板（spec「元数据编辑」，ADR 0020）：底部弹层，六个字段 + 「恢复默认」。
+ * 艺术家 / 专辑 / 专辑艺术家带本地库编辑候选（spec「编辑候选」，[MetadataSuggestionField]）。
  *
  * 入口仅列表长按：歌曲视图 / 本地专辑页长按歌曲行共用这一个面板。
  * 只写覆盖层——音频文件的标签一个字节都不改；保存后歌曲列表、专辑分组与专辑封面立即刷新
@@ -68,6 +73,11 @@ fun LocalMetadataEditSheet(
     val canSave = trackNoError == null && yearError == null
     // 没有覆盖项的歌本来就在用文件标签值：恢复默认无事可做，入口置灰
     val canRestore = song.overlay != null
+    // 编辑候选（spec「编辑候选」）：本地库当前展示值派生，保存 / 恢复默认后随 songs 流即时更新
+    val songs by viewModel.songs.collectAsState()
+    val albumCandidates = remember(songs) { songs.albumSuggestions() }
+    val artistCandidates = remember(songs) { songs.artistSuggestions() }
+    val albumArtistCandidates = remember(songs) { songs.albumArtistSuggestions() }
 
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Color.White) {
         Column(
@@ -90,20 +100,25 @@ fun LocalMetadataEditSheet(
                     value = draft.title,
                     onValueChange = { draft = draft.copy(title = it) },
                 )
-                MetadataField(
+                MetadataSuggestionField(
                     label = "艺术家",
                     value = draft.artist,
                     onValueChange = { draft = draft.copy(artist = it) },
+                    suggestions = artistCandidates,
                 )
-                MetadataField(
+                MetadataSuggestionField(
                     label = "专辑",
                     value = draft.album,
                     onValueChange = { draft = draft.copy(album = it) },
+                    suggestions = albumCandidates,
+                    // 点选专辑候选连带回填专辑艺术家（spec「专辑候选联动」）：两框一起填才并进同一张
+                    onSuggestionClick = { draft = draft.copy(album = it.value, albumArtist = it.supporting.orEmpty()) },
                 )
-                MetadataField(
+                MetadataSuggestionField(
                     label = "专辑艺术家",
                     value = draft.albumArtist,
                     onValueChange = { draft = draft.copy(albumArtist = it) },
+                    suggestions = albumArtistCandidates,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     MetadataField(

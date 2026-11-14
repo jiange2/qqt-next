@@ -79,9 +79,15 @@ fun List<LocalSong>.groupIntoAlbums(): List<LocalAlbum> {
  * 元数据编辑也读它：改了专辑名 / 专辑艺术家，同一首歌的新旧键会落进两张不同的
  * 专辑，封面缓存要按这两个键分别作废重取。
  */
-fun LocalSong.albumKey(): String {
-    val album = displayAlbum()
-    if (album.isNotBlank()) return "album\u0001$album\u0001${displayAlbumArtist()}"
+fun LocalSong.albumKey(): String = albumKeyOf(displayAlbum(), displayAlbumArtist())
+
+/**
+ * 指定专辑名 / 专辑艺术家展示值时的分组键（[albumKey] 即取当前展示值的特例）：
+ * 批量提交后的去向推算（票据04 [batchAlbumNewKeys]）用提交后的展示值算新键。
+ * 专辑名为空同样回退文件夹键——文件夹兜底专辑只改专辑艺术家不改键。
+ */
+internal fun LocalSong.albumKeyOf(album: String, albumArtist: String): String {
+    if (album.isNotBlank()) return "album\u0001$album\u0001$albumArtist"
     val folderPath = path.substringBeforeLast('/', "").trimEnd('/')
     return "folder\u0001$volume\u0001$folderPath\u0001$folderName"
 }

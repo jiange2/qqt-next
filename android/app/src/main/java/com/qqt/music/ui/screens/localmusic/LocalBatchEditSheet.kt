@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqt.music.data.local.LocalMetadataDraft
+import com.qqt.music.data.local.MetadataSuggestion
 import com.qqt.music.data.local.batchPanelCanSave
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.InkFaint
@@ -35,8 +36,9 @@ import com.qqt.music.ui.theme.InkSecondary
 /**
  * 批量管理面板（票据02，spec「批量面板」）：编辑模式勾选 ≥1 首后从底栏「编辑信息」打开。
  * 与单首面板 [LocalMetadataEditSheet] 同款 ModalBottomSheet，但只有专辑 / 专辑艺术家两个
- * 自由文本字段，初始为空、不预填、无「恢复默认」；「留空 = 不改」（与单首面板
- * 「留空 = 恢复文件原值」相反）。两字段 trim 皆空时保存禁用（[batchPanelCanSave]）。
+ * 字段（自由输入 + 本地库编辑候选，spec「编辑候选」），初始为空、不预填、无「恢复默认」；
+ * 「留空 = 不改」（与单首面板「留空 = 恢复文件原值」相反）。两字段 trim 皆空时保存禁用
+ * （[batchPanelCanSave]）。候选列表由导航层从可见歌曲列表派生传入，面板保持无 ViewModel。
  * 保存接 [LocalMusicViewModel.saveBatchMetadata]（票据01 一次提交链路）：成功关面板 +
  * 退出编辑模式 + 清空勾选由导航层接线，Toast「已修改 n 首」走既有 notice 链路，这里不另弹；
  * 批量只改专辑字段，播放器只显示标题 + 艺术家，无需播放器同步。
@@ -45,6 +47,8 @@ import com.qqt.music.ui.theme.InkSecondary
 @Composable
 fun LocalBatchEditSheet(
     selectedCount: Int,
+    albumSuggestions: List<MetadataSuggestion>,
+    albumArtistSuggestions: List<MetadataSuggestion>,
     onSave: (albumInput: String, albumArtistInput: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -73,15 +77,20 @@ fun LocalBatchEditSheet(
             Spacer(Modifier.height(12.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                MetadataField(
+                MetadataSuggestionField(
                     label = "专辑",
                     value = draft.album,
                     onValueChange = { draft = draft.copy(album = it) },
+                    suggestions = albumSuggestions,
+                    // 点选专辑候选连带回填专辑艺术家（spec「专辑候选联动」）：两框一起填，
+                    // 选中行才按同一「专辑名 + 专辑艺术家」并进一张；清空本框 = 不改（既有语义）
+                    onSuggestionClick = { draft = draft.copy(album = it.value, albumArtist = it.supporting.orEmpty()) },
                 )
-                MetadataField(
+                MetadataSuggestionField(
                     label = "专辑艺术家",
                     value = draft.albumArtist,
                     onValueChange = { draft = draft.copy(albumArtist = it) },
+                    suggestions = albumArtistSuggestions,
                 )
                 Text(
                     text = "留空的字段保持原样",

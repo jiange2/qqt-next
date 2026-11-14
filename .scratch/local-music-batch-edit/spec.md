@@ -32,7 +32,7 @@ Status: resolved
 
 ### 入口与菜单
 
-- ⋮ 菜单顺序：视图切换 / 批量管理 / 重新扫描 / 排除的文件夹。「批量管理」仅歌曲视图（`!showAlbums`）显示；专辑视图不显示（编辑模式只做歌曲列表，专辑卡片墙与本地专辑页不做）。
+- ⋮ 菜单顺序：视图切换 / 批量管理 / 重新扫描 / 排除的文件夹。「批量管理」仅歌曲视图（`!showAlbums`）显示；专辑视图不显示（专辑卡片墙不做整张勾选）。本地专辑页有独立的「批量管理」入口与编辑模式（票据 04 扩展，两页选择态互不相通）。
 - 权限门槛沿用「重新扫描」的 `rescanEnabled` 范式：`permissionGranted = false` 时禁用。空库不额外禁用（进入后无行可选，全选为 no-op）。
 - 点击进入编辑模式并收起菜单、收起左滑展开态。
 - 基线：视图切换特性已归档合入 main（822234d），菜单第一项已是视图切换；本特性直接在其后插入，无跨 spec 票据依赖。
@@ -80,14 +80,14 @@ Status: resolved
 
 ## Testing Decisions
 
-- 纯函数 JVM 测试：批量覆盖生成（留空保留原覆盖、填值写入、与标签同值清覆盖、其余四字段保留、全空覆盖删键、trim）与批量提交后的列表 / 覆盖表形态（`LocalBatchMetadataTest`，15 例）；编辑模式选择态纯规则（可勾选行过滤、全选切换、已全选判据、批量面板保存门槛）同样落 JVM 测试（`LocalMusicEditRulesTest`，13 例）。本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
+- 纯函数 JVM 测试：批量覆盖生成（留空保留原覆盖、填值写入、与标签同值清覆盖、其余四字段保留、全空覆盖删键、trim）与批量提交后的列表 / 覆盖表形态（`LocalBatchMetadataTest`，15 例）；编辑模式选择态纯规则（可勾选行过滤、全选切换、已全选判据、批量面板保存门槛）同样落 JVM 测试（`LocalMusicEditRulesTest`，13 例）；票据 04 的专辑页跟随判定（`LocalBatchFollowTest`，13 例：部分勾选留在原页、灰显行阻断全选、留空不改键、改名/改艺术家跟随单键、文件夹专辑拆组返回多键、同值提交不动）。本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
 - 设备级验收清单（各票未勾选项）：菜单入口与权限禁用、勾选 / 全选 / 计数、面板留空语义、保存换组与封面、Toast 与退出、返回 / 切页 / 权限收回、重扫后保留、左滑收起、飞行模式可用（纯本地）。
 
 ## Out of Scope
 
 - 批量删除、删除整张专辑 / 文件夹（delete spec 边界不变）。
 - 批量改标题 / 艺术家 / 音轨号 / 年份等其他字段。
-- 专辑卡片墙整张专辑勾选、本地专辑详情页编辑模式（其顶栏带返回键、现有 TopBar 不渲染 actions；且页内改专辑会让当前专辑键消失，需导航联动，本次不做）。
+- 专辑卡片墙整张专辑勾选（编辑模式只做歌曲列表）。~~本地专辑详情页编辑模式~~ 已由票据 04 收回此边界：专辑页 ⋮ 菜单加「批量管理」（TopBar 带返回键时页面自带 actions 即渲染），编辑态选择/顶底栏/面板与本页同构，全选改名整张搬走时页面跟随新专辑。
 - 写回文件标签（ADR 0020 不变，其他播放器看到的仍是文件原标签）。
 - 批量「恢复默认」（打回文件原值仍走单首面板）。
 - 自定义专辑封面（封面仍取成员行系统预抽取图）。
@@ -108,3 +108,5 @@ Status: resolved
 - 2026-11-14 grilling 定稿：Q1–Q7 全部同意——术语「专辑艺术家」（弃用「专辑作者」）、沿覆盖层不动文件、仅专辑 / 专辑艺术家两字段（不带删除与其他字段）、仅歌曲视图进编辑模式、面板留空 = 不改、菜单按视图切换落地后设计、只填专辑名按各自艺术家落组。机制委托项（勾选交互、全选口径、退出路径、Toast 口径、editLock 一次提交）随答复一并确认。CONTEXT.md 三条词条已写入。基线核实：视图切换已合入 main（822234d）。spec 与票据 01–03 入库，Status ready-for-agent，待 implement-spec 编排实现（本仓规约：AI 不编译、不跑 gradlew）。
 - 2026-11-14 实现完成：票据 01（24926f0、9833c8b、4512c68，合并 cb6d378）与票据 02（6a97b9a、a177510，合并 c159c86）已合入集成分支 `feat/local-music-batch-edit`（tip c159c86）；票据 03 的文档同步与本 spec 文字对齐随票据分支 `ticket/lmb-03-docs-sync` 提交入库（待编排层合入）。落地内容：数据层——`LocalMetadataEdit.kt` 新增 `batchAlbumOverride`（留空保留原覆盖、与标签同值清覆盖、其余四字段原样、trim）与 `batchAlbumCommit` / `BatchAlbumCommit`（整表变换：只换选中行、空壳删键、未选中键保留、`available` 取快照本值、标题排序、不在快照的选中行跳过）；`LocalMusicViewModel.saveBatchMetadata` 一次 `editLock.withLock`（与单首共用）整表提交 → 一次 `saveOverlay` 原子落盘 → notice「已修改 n 首」（n = 提交数），覆盖表更新在锁内（单首在锁外先行），快照不动 / 不重查 / 不碰文件 / 不做播放器同步。UI 层——`LocalMusicEditRules.kt` 纯规则（`selectableSongIds` / `toggleSelectAll` / `isAllSelected` / `batchPanelCanSave`）；菜单「批量管理」（仅歌曲视图、未授权禁用、空库不额外禁用）；编辑态 / 勾选集合 / 面板开关提升 `AppNavigation`（`remember(localMusicEntry)` 与视图状态同键）；歌行序号位换勾选框（只展示、点行 / 长按切换）、`swipe = null`；topBar lambda 整条换 `LocalMusicEditTopBar`（取消 / 已选 n 首 / 全选·取消全选）、`LocalMusicBatchBar`（编辑信息、0 选禁用、Scaffold 内容区底部）；`LocalBatchEditSheet`（双空字段、留空 = 不改、两空保存禁用、无恢复默认，`MetadataField` private→internal 共用）；退出路径：取消 / 系统返回（面板先收再退编辑）/ 切页（结构保证）/ 点保存 / 权限收回。测试 `LocalBatchMetadataTest` 15 例 + `LocalMusicEditRulesTest` 13 例已写待人工执行。**spec 文字对齐代码事实（7 处）**：① Solution「歌行前出现勾选框」→ 序号位换成勾选框，顶栏元素顺序对齐实际布局（取消 / 已选 n 首 / 全选·取消全选）；②「MusicTopBar 的本地音乐分支按编辑态切换」→ AppNavigation topBar lambda 整条换用 LocalMusicEditTopBar（MusicTopBar 标题纯字符串、无内部本地分支），底栏补落点（Scaffold 内容区底部、NavHost 之下）；③ 提升状态补批量面板开关 localMusicBatchPanelOpen（同 remember 键）；④ 系统返回补面板开着先收面板、再按一次才退编辑（BackHandler 不退出页面）；⑤ 批量提交语义补纯函数接缝 batchAlbumOverride / batchAlbumCommit 与「覆盖表更新在锁内（单首在锁外先行）」；⑥「保存成功即退出」→ 点保存即退出（提交锁内异步、退出不以成功为门槛、Toast 随后经 notice）；⑦ Testing Decisions 补测试文件名与例数（15 + 13，含选择态纯规则）。其余文字经逐条核对与代码一致，未改（菜单顺序与权限门槛、全选口径、留空 = 不改、空壳删键、归并键不变、notice 口径、权限收回退出、Out of Scope、Further Notes）。**不新增 ADR 的判定经交付代码核对成立**：批量覆盖写是可逆的数据层扩展（延续 ADR 0020 / 0022、无推翻），「留空 = 不改」已写入 CONTEXT.md「批量管理」词条，身份 / 权限 / 快照模型不动；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。CONTEXT.md「专辑艺术家 / 编辑模式 / 批量管理」三条词条（含「专辑作者」弃用词）经与最终实现逐条核对一致，**未改动**。文档同步明细见票据 03 Comments。Status 推进与归档留待评审修复后由编排层统一执行（照 local-music-delete / view-switch 先例），故 spec 仍 `ready-for-agent`、三张票据仍 `open`，全部 `- [ ]` 保持未勾——它们是设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
 - 2026-11-14 归档：resolved。集成分支 `feat/local-music-batch-edit`（基于 main 822234d）。提交链：入库 f1cdba6 → 票据01 实现 24926f0 / 9833c8b / 4512c68（合并 cb6d378）→ 票据02 实现 6a97b9a / a177510（合并 c159c86）→ 票据03 文档同步 52c2666（合并 32c2eff）→ 评审修复 74875c2 / 69e90f6（合并 4ac0a4c）→ 本次归档。双轴评审结论：Spec 轴零发现——批量语义（留空保留 / 同标签清除 / 四字段原样 / 空壳删键）、一次锁内整表提交（n = 提交数）、选择态导航层归属、菜单位置与权限门槛、行交互（点 / 长按勾选、左滑收起）、顶底栏、面板双空字段与保存门槛、五条退出路径、Out of Scope 未动全部核对成立，票据03 的 7 处文字对齐复核成立；2 条 minor notes 经裁定保留（提交过滤不复查 available——沿 spec 最后写入胜出竞态口径、覆盖层写无害；toggleSelectAll 零可用行清残留勾选——代码已注明、UI 不可达）。Standards 轴 1 处硬违规（注释弃用词「批量编辑」）与面板标题 / spec 序言术语 judgement call 已修（74875c2 / 69e90f6：注释与标题改「批量管理」、spec 序言改规范词；其中 spec 一处由编排层代补——子代理沙箱拦截 .scratch 写入）；3 处 smell judgement call 两处已修（toggleSelectAll 委托 isAllSelected 去重、saveBatchMetadata 参数更名 selectedSongs），两处经裁定保留（双字符串参数对——票据建议签名，新类型属 Speculative Generality；batchAlbumCommit 命名）。不新增 ADR 判定经评审复核成立。勾选项全部保持未勾（照 local-music-rescan / delete / view-switch 先例：resolved 票据的设备级验收清单不勾），待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 扩展（票据 04）：grill-with-docs 定稿——Q1 专辑页顶栏 ⋮ 菜单只含「批量管理」（与本地音乐页同入口形态，解除 MusicTopBar「带返回键不渲染 actions」限制，唯一调用点核实无他页影响，未授权禁用）、Q2 与本地音乐页完全同构（点行/长按勾选、编辑顶栏、底栏、同一 LocalBatchEditSheet、留空 = 不改、保存 Toast + 即退）、Q3 全选改名整张搬走时页面跟随新专辑（部分勾选搬出则留在原页、列表自然变短），用户「完全同意」。硬边界不变：专辑卡片墙不做整张勾选、仍只写覆盖层（ADR 0020）、两页选择态独立、离开页面即退出。落地：`albumKeyOf` 纯函数 + `batchAlbumNewKeys` 跟随判定（提交前同步算目标键，空集=留在原页 / 单键=跟随 / 多键=拆组返回），`LocalBatchFollowTest` 13 例；TopBar actions 带返回键也渲染（页面自带菜单时接管）；专辑页编辑态提升 `AppNavigation`（`remember(localAlbumEntry)`，与本地音乐页各自独立）；跟随导航等 albums 派生就绪（`first{...}` + 1000ms 超时兜底 pop + 条目身份守卫）后 `popUpTo(inclusive)` 替换路由，避免闪「专辑已不存在」。CONTEXT.md「编辑模式」词条、doc/ui.md、本 spec 入口/边界/Testing 段随实现同步。spec Status 维持 resolved（已归档特性 + 追加票据），票据 04 照先例 open 待评审归档；勾选项为设备级验收清单，待人工编译真机确认（本仓规约：AI 不编译、不跑 gradlew）。不新增 ADR：可逆扩展，沿 ADR 0020 / 0022，三条门槛均不成立。
+- 2026-11-15 票据04 归档：resolved。实现 c0fda81 随编辑候选集成分支 `feat/local-music-edit-suggestions` 入库（两特性工作树交织，经用户确认一起提交、按特性分提交），双轴评审通过（文件夹兜底专辑输入文件夹名属真实换组、按键基判据跟随的裁定见票据04 Comments），评审修复合并 835126c。勾选项照先例保持未勾，待人工编译真机确认（本仓规约：AI 不编译、不跑 gradlew）。

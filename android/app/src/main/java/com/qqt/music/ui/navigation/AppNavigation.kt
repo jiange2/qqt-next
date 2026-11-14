@@ -34,6 +34,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.local.LocalDeleteAction
+import com.qqt.music.data.local.albumArtistSuggestions
+import com.qqt.music.data.local.albumSuggestions
+import com.qqt.music.data.local.batchAlbumNewKeys
 import com.qqt.music.data.local.decodeLocalAlbumKey
 import com.qqt.music.data.local.encodeLocalAlbumKey
 import com.qqt.music.data.local.isAllSelected
@@ -56,6 +59,7 @@ import com.qqt.music.ui.screens.favorites.FavoritesScreen
 import com.qqt.music.ui.screens.home.HomeScreen
 import com.qqt.music.ui.screens.latest.LatestScreen
 import com.qqt.music.ui.screens.localalbum.LocalAlbumScreen
+import com.qqt.music.ui.screens.localalbum.LocalAlbumTopBarMenu
 import com.qqt.music.ui.screens.localmusic.LocalBatchEditSheet
 import com.qqt.music.ui.screens.localmusic.LocalMusicBatchBar
 import com.qqt.music.ui.screens.localmusic.LocalMusicEditTopBar
@@ -69,7 +73,9 @@ import com.qqt.music.ui.screens.search.ArtistSongsScreen
 import com.qqt.music.ui.screens.search.SearchScreen
 import com.qqt.music.ui.screens.search.SearchSongsScreen
 import com.qqt.music.viewmodel.PlayerViewModel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun AppNavigation(playerViewModel: PlayerViewModel) {
@@ -172,9 +178,31 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         localMusicSelection = emptySet()
         localMusicBatchPanelOpen = false
     }
-    // 编辑中权限被收回：退出编辑模式，整库灰显沿用页面既有口径（spec 用户故事 11）
+    // 本地专辑页编辑模式（票据04）：与本地音乐页同构——状态以 local_album 返回栈条目为键，
+    // 离开本页（返回 / 跟随改名后的新专辑替换条目）键置空、状态重建，两页选择态互不相通；
+    // 不放 LocalMusicViewModel 的理由与本地音乐页相同：导航层单例跨页共用，放进去会跨页泄漏
+    val localAlbumEntry = if (isLocalAlbum) backStackEntry else null
+    val localAlbumKey = localAlbumEntry?.arguments?.getString("lid")?.let(::decodeLocalAlbumKey)
+    val localMusicAlbums by localMusicViewModel.albums.collectAsState()
+    val localAlbum = localMusicAlbums.firstOrNull { it.key == localAlbumKey }
+    // 本专辑歌曲列表：全选候选集与批量保存的提交集都用它（已按排除清单过滤、权限收回时灰显）
+    val localAlbumSongs = localAlbum?.songs ?: emptyList()
+    var localAlbumEditing by remember(localAlbumEntry) { mutableStateOf(false) }
+    var localAlbumSelection by remember(localAlbumEntry) { mutableStateOf(emptySet<String>()) }
+    var localAlbumBatchPanelOpen by remember(localAlbumEntry) { mutableStateOf(false) }
+
+    // 退出专辑页编辑模式：清空勾选、关批量面板（与本地音乐页同一组退出路径）
+    fun exitLocalAlbumEditMode() {
+        localAlbumEditing = false
+        localAlbumSelection = emptySet()
+        localAlbumBatchPanelOpen = false
+    }
+    // 编辑中权限被收回：两页都退出编辑模式，整库灰显沿用页面既有口径（spec 用户故事 11）
     LaunchedEffect(localMusicPermissionGranted) {
-        if (!localMusicPermissionGranted) exitLocalMusicEditMode()
+        if (!localMusicPermissionGranted) {
+            exitLocalMusicEditMode()
+            exitLocalAlbumEditMode()
+        }
     }
     // 系统返回只退出编辑模式、不退出页面；面板打开时先收面板（未保存输入丢弃），再按一次才退出
     BackHandler(enabled = isLocalMusic && localMusicEditing) {
@@ -182,6 +210,14 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             localMusicBatchPanelOpen = false
         } else {
             exitLocalMusicEditMode()
+        }
+    }
+    // 专辑页系统返回同口径（票据04）：先收面板、再退编辑模式，不退出页面
+    BackHandler(enabled = isLocalAlbum && localAlbumEditing) {
+        if (localAlbumBatchPanelOpen) {
+            localAlbumBatchPanelOpen = false
+        } else {
+            exitLocalAlbumEditMode()
         }
     }
     // 本地音乐域（歌曲/专辑视图与本地专辑页）不发任何请求：断网/服务不可达横幅对它没有意义（spec 用户故事 38）
@@ -219,6 +255,16 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                     localMusicSelection = toggleSelectAll(localMusicSongs, localMusicSelection)
                                 },
                             )
+                        } else if (isLocalAlbum && localAlbumEditing) {
+                            // 专辑页编辑态顶栏（票据04）：复用同一栏；全选 = 本专辑全部可用行
+                            LocalMusicEditTopBar(
+                                selectedCount = localAlbumSelection.size,
+                                allSelected = isAllSelected(localAlbumSongs, localAlbumSelection),
+                                onCancel = { exitLocalAlbumEditMode() },
+                                onToggleSelectAll = {
+                                    localAlbumSelection = toggleSelectAll(localAlbumSongs, localAlbumSelection)
+                                },
+                            )
                         } else {
                             MusicTopBar(
                                 title = Screen.titleOf(currentRoute),
@@ -226,7 +272,8 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                 onSearchClick = { navController.navigate(Screen.Search.route) },
                                 showBackButton = showBackButton,
                                 onBackClick = { navController.popBackStack() },
-                                // 本地音乐不兼搜索：右侧换成该页自己的菜单（切换视图 / 批量管理 / 重新扫描 / 排除的文件夹）
+                                // 本地音乐不兼搜索：右侧换成该页自己的菜单（切换视图 / 批量管理 / 重新扫描 / 排除的文件夹）；
+                                // 本地专辑页同样接管（只有批量管理，票据04），带返回键也渲染
                                 actions = if (isLocalMusic) {
                                     {
                                         LocalMusicTopBarMenu(
@@ -237,6 +284,13 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                             onEnterEdit = { localMusicEditing = true },
                                             rescanEnabled = localMusicPermissionGranted,
                                             onRescan = { localMusicViewModel.rescan() },
+                                        )
+                                    }
+                                } else if (isLocalAlbum) {
+                                    {
+                                        LocalAlbumTopBarMenu(
+                                            editEnabled = localMusicPermissionGranted,
+                                            onEnterEdit = { localAlbumEditing = true },
                                         )
                                     }
                                 } else null,
@@ -322,6 +376,16 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                     albumKey = albumKey,
                                     viewModel = localMusicViewModel,
                                     playerViewModel = playerViewModel,
+                                    editing = localAlbumEditing,
+                                    selection = localAlbumSelection,
+                                    // 点行 / 长按切换勾选：灰显行已被行内 enabled 挡住，这里只动集合
+                                    onToggleSelect = { song ->
+                                        localAlbumSelection = if (song.id in localAlbumSelection) {
+                                            localAlbumSelection - song.id
+                                        } else {
+                                            localAlbumSelection + song.id
+                                        }
+                                    },
                                 )
                             }
                             composable(Screen.Download.route) {
@@ -419,12 +483,14 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                 )
                         }
                     }
-                    // 编辑模式底栏（票据02）：只在编辑态渲染，位于 Scaffold 内容区底部——
+                    // 编辑模式底栏（票据02 / 票据04）：只在编辑态渲染，位于 Scaffold 内容区底部——
                     // 底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠
-                    if (isLocalMusic && localMusicEditing) {
+                    if ((isLocalMusic && localMusicEditing) || (isLocalAlbum && localAlbumEditing)) {
                         LocalMusicBatchBar(
-                            selectedCount = localMusicSelection.size,
-                            onEditInfo = { localMusicBatchPanelOpen = true },
+                            selectedCount = if (isLocalAlbum) localAlbumSelection.size else localMusicSelection.size,
+                            onEditInfo = {
+                                if (isLocalAlbum) localAlbumBatchPanelOpen = true else localMusicBatchPanelOpen = true
+                            },
                         )
                     }
                 }
@@ -450,18 +516,75 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             )
         }
 
+        // 批量面板编辑候选（spec「编辑候选」）：两处批量面板共用，取整库可见歌曲——
+        // 专辑页批量也是把歌归并进库里任何一张已有专辑，候选不限于当前专辑
+        val batchAlbumSuggestions = remember(localMusicSongs) { localMusicSongs.albumSuggestions() }
+        val batchAlbumArtistSuggestions = remember(localMusicSongs) { localMusicSongs.albumArtistSuggestions() }
+
         // 批量管理面板（票据02，spec「批量面板」）：编辑模式底栏「编辑信息」打开。
         // 保存接票据01 的一次提交入口（整表一次原子落盘），成功即关面板 + 退出编辑模式 + 清空勾选；
         // Toast「已修改 n 首」走上方既有 notice 链路自动弹出，这里不另弹、不做播放器同步
         if (localMusicEditing && localMusicBatchPanelOpen) {
             LocalBatchEditSheet(
                 selectedCount = localMusicSelection.size,
+                albumSuggestions = batchAlbumSuggestions,
+                albumArtistSuggestions = batchAlbumArtistSuggestions,
                 onSave = { albumInput, albumArtistInput ->
                     val selected = localMusicSongs.filter { it.id in localMusicSelection }
                     localMusicViewModel.saveBatchMetadata(selected, albumInput, albumArtistInput)
                     exitLocalMusicEditMode()
                 },
                 onDismiss = { localMusicBatchPanelOpen = false },
+            )
+        }
+
+        // 专辑页批量管理面板（票据04）：同一面板、同一提交入口。保存后去向由 batchAlbumNewKeys
+        // 在提交前同步推算：留在原页 / 跟随唯一新专辑 / 拆成多张时返回本地音乐页。
+        // 跟随要等 albums 派生追上提交再替换条目——新页按键取专辑，早跳会闪「专辑已不存在」
+        if (localAlbumEditing && localAlbumBatchPanelOpen) {
+            LocalBatchEditSheet(
+                selectedCount = localAlbumSelection.size,
+                albumSuggestions = batchAlbumSuggestions,
+                albumArtistSuggestions = batchAlbumArtistSuggestions,
+                onSave = { albumInput, albumArtistInput ->
+                    val album = localAlbum
+                    val selected = localAlbumSongs.filter { it.id in localAlbumSelection }
+                    val newKeys = batchAlbumNewKeys(localAlbumSongs, localAlbumSelection, albumInput, albumArtistInput)
+                    localMusicViewModel.saveBatchMetadata(selected, albumInput, albumArtistInput)
+                    exitLocalAlbumEditMode()
+                    when {
+                        newKeys.isEmpty() -> Unit
+                        newKeys.size == 1 -> {
+                            val newKey = newKeys.single()
+                            val newName = albumInput.trim().ifBlank { album?.name.orEmpty() }
+                            val selectedIds = selected.mapTo(mutableSetOf()) { it.id }
+                            val entry = localAlbumEntry
+                            scope.launch {
+                                val ready = withTimeoutOrNull(1000) {
+                                    localMusicViewModel.albums.first { albums ->
+                                        albums.firstOrNull { it.key == newKey }
+                                            ?.songs?.any { it.id in selectedIds } == true
+                                    }
+                                }
+                                // 等待期间用户可能已离开本页（返回 / 切页）：仍在原专辑页才替换条目
+                                if (navController.currentBackStackEntry !== entry) return@launch
+                                if (ready == null) {
+                                    // 超时兜底：选中行可能已被并发删除、新专辑永不出现——返回本地音乐页，
+                                    // 不留在键已消失的页面
+                                    navController.popBackStack()
+                                } else {
+                                    LocalAlbumNav.albumName = newName
+                                    navController.navigate("local_album/${encodeLocalAlbumKey(newKey)}") {
+                                        popUpTo(Screen.LocalAlbum.route) { inclusive = true }
+                                    }
+                                }
+                            }
+                        }
+                        // 全选但拆成多张新专辑（文件夹兜底专辑只填专辑名、成员艺术家不同）：无唯一去向
+                        else -> navController.popBackStack()
+                    }
+                },
+                onDismiss = { localAlbumBatchPanelOpen = false },
             )
         }
 
