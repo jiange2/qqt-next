@@ -33,6 +33,8 @@ import java.io.File
  * 成功 → 提示「已导入到本地音乐」+ 整库刷新把新歌带进列表；失败 → 提示「导入失败」、列表不动；
  * 无音频权限 → 导入照样提示成功、刷新在权限门槛静默跳过不崩。只测外部行为、不断言内部调用顺序
  * （spec「Testing Decisions」）；文案字面量是 spec 钉死的独立事实源，不与实现同源。
+ * 导入 fake 拆成功 / 失败两个无分支 fake（mocking.md「mock 内无分支」）：成功 fake 把新歌行放进
+ * 来源模拟落库，失败 fake 不动来源。
  *
  * 基础设施（spec 缺口、票据02 裁定）：fake 接缝经 internal 构造器注入；Dispatchers.setMain 换成
  * StandardTestDispatcher 驱动 viewModelScope；testOptions.unitTests.isReturnDefaultValues=true
@@ -77,7 +79,7 @@ class LocalMusicViewModelImportTest {
             app,
             source,
             UnusedDeleter(),
-            FakeImporter(source, LocalImportResult.Success, importedRows = listOf(importedSong())),
+            FakeSuccessImporter(source, listOf(importedSong())),
         )
         vm.onPageEntered()
         // 等冷启动快照读回与进页面首次刷新落定：导入前列表为空
@@ -107,7 +109,7 @@ class LocalMusicViewModelImportTest {
             app,
             source,
             UnusedDeleter(),
-            FakeImporter(source, LocalImportResult.Failure(IllegalStateException("来源不可读"))),
+            FakeFailureImporter(LocalImportResult.Failure(IllegalStateException("来源不可读"))),
         )
         vm.onPageEntered()
         // 首次刷新把既有库带进列表，作为「不动」的基线
@@ -131,7 +133,7 @@ class LocalMusicViewModelImportTest {
             app,
             source,
             UnusedDeleter(),
-            FakeImporter(source, LocalImportResult.Success, importedRows = listOf(importedSong())),
+            FakeSuccessImporter(source, listOf(importedSong())),
         )
         vm.onPageEntered()
 
@@ -156,16 +158,22 @@ class LocalMusicViewModelImportTest {
         override suspend fun queryLibrary(): LocalLibraryResult = LocalLibraryResult.Success(rows)
     }
 
-    /** 伪造导入接缝：成功时把新歌行放进来源（模拟「文件已落库」），失败不动；返回预置结果 */
-    private class FakeImporter(
+    /** 伪造导入接缝（成功）：把新歌行放进来源（模拟「文件已落库」）并返回 Success——无分支（mocking.md） */
+    private class FakeSuccessImporter(
         private val source: FakeLibrarySource,
-        private val result: LocalImportResult,
-        private val importedRows: List<LocalSong> = emptyList(),
+        private val importedRows: List<LocalSong>,
     ) : LocalMusicImporter {
         override suspend fun importAudio(sourceUri: Uri): LocalImportResult {
-            if (result is LocalImportResult.Success) source.rows = importedRows
-            return result
+            source.rows = importedRows
+            return LocalImportResult.Success
         }
+    }
+
+    /** 伪造导入接缝（失败）：不动来源（库保持原样），返回预置失败——无分支（mocking.md） */
+    private class FakeFailureImporter(
+        private val failure: LocalImportResult.Failure,
+    ) : LocalMusicImporter {
+        override suspend fun importAudio(sourceUri: Uri): LocalImportResult = failure
     }
 
     /** 删除接缝与导入无关：被调到即响亮失败（编排不越界的信号） */
