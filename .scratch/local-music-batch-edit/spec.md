@@ -10,7 +10,7 @@ Status: ready-for-agent
 
 ## Solution
 
-本地音乐页歌曲视图新增编辑模式：顶栏 ⋮ 菜单加「批量管理」项（仅歌曲视图显示、无音频权限禁用）；进入后歌行前出现勾选框，点行 / 长按 = 勾选（不跳播、不弹单首面板、左滑删除收起），顶栏变「取消 / 全选 / 已选 n 首」，底栏出现「编辑信息」按钮；点开批量面板（ModalBottomSheet，仅专辑、专辑艺术家两个自由文本字段，初始为空）；填了的字段才改、留空保持原样；保存一次原子提交写覆盖层（整表一次落盘），Toast「已修改 n 首」并自动退出编辑模式。改动只影响本 App 展示（ADR 0020），不动音频文件；专辑归并键不变（专辑名 + 专辑艺术家），批量改完歌曲按新值换组。
+本地音乐页歌曲视图新增编辑模式：顶栏 ⋮ 菜单加「批量管理」项（仅歌曲视图显示、无音频权限禁用）；进入后歌行序号位换成勾选框，点行 / 长按 = 勾选（不跳播、不弹单首面板、左滑删除收起），顶栏变「取消 / 已选 n 首 / 全选·取消全选」，底栏出现「编辑信息」按钮；点开批量面板（ModalBottomSheet，仅专辑、专辑艺术家两个自由文本字段，初始为空）；填了的字段才改、留空保持原样；保存一次原子提交写覆盖层（整表一次落盘），Toast「已修改 n 首」并自动退出编辑模式。改动只影响本 App 展示（ADR 0020），不动音频文件；专辑归并键不变（专辑名 + 专辑艺术家），批量改完歌曲按新值换组。
 
 ## User Stories
 
@@ -39,16 +39,16 @@ Status: ready-for-agent
 
 ### 编辑模式状态与选择态
 
-- 编辑模式开关与勾选集合（`Set<LocalSong.id>`，即 `local:<卷名:行ID>` 身份键）提升到导航层 `AppNavigation`，`remember` 以 `local_music` 返回栈条目为键（与视图状态同构）：离开本页键置空、状态重建，「离开即退出、勾选不保留」由结构保证。不放 `LocalMusicViewModel`——它是导航层单例、与专辑页 / 播放器共用，放进去会跨页泄漏。
+- 编辑模式开关、勾选集合（`Set<LocalSong.id>`，即 `local:<卷名:行ID>` 身份键）与批量面板开关提升到导航层 `AppNavigation`，`remember` 以 `local_music` 返回栈条目为键（与视图状态同构）：离开本页键置空、状态重建，「离开即退出、勾选不保留」由结构保证。不放 `LocalMusicViewModel`——它是导航层单例、与专辑页 / 播放器共用，放进去会跨页泄漏。
 - 点行与长按都切换勾选；编辑模式下歌行左滑删除收起（`swipe = null`）、长按不再弹单首面板。
 - 不可用行（`available = false`）不可勾选、全选跳过。
 - 全选 = 当前歌曲列表全部可勾选行（排除文件夹后的可见列表）；已全选时再点 = 清空勾选。
-- 系统返回 = 退出编辑模式（`BackHandler`），不退出页面。
+- 系统返回（`BackHandler`）不退出页面：批量面板开着时先收面板（未保存输入丢弃），再按一次才退出编辑模式。
 
 ### 顶栏与底栏
 
-- 编辑模式下本地音乐页顶栏替换为「取消 / 全选·取消全选 / 已选 n 首」（`MusicTopBar` 的本地音乐分支按编辑态切换）；⋮ 菜单在编辑模式下隐藏。
-- 底栏批量操作栏只有一个「编辑信息」按钮，已选 0 首禁用；只在编辑模式渲染；与 MiniPlayer / 底部导航的避让沿用现有 Scaffold 结构。
+- 编辑模式下本地音乐页顶栏整条替换为 `LocalMusicEditTopBar`——左「取消」、标题「已选 n 首」、右「全选 / 取消全选」（`AppNavigation` 的 topBar lambda 按编辑态整条换栏：`MusicTopBar` 标题是纯字符串、左侧固定菜单/返回键，无内部本地音乐分支，表达不了编辑态）；⋮ 菜单在编辑模式下隐藏。
+- 底栏批量操作栏只有一个「编辑信息」按钮，已选 0 首禁用；只在编辑模式渲染；放 Scaffold 内容区底部（NavHost 之下）——底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，沿用现有结构即不与本栏重叠。
 
 ### 批量面板
 
@@ -58,16 +58,16 @@ Status: ready-for-agent
 
 ### 批量提交语义（数据层）
 
-- 新纯函数（`LocalMetadataEdit.kt`）：按「填了的字段才改」生成每首歌的新覆盖——输入 trim 后留空 → 保留原覆盖该字段；非空且与文件标签值相同 → 该字段覆盖置 null（不制造冻结标签的假覆盖，沿用 `overrideIfCustom` 口径）；其余 → 存裁剪值。标题 / 艺术家 / 音轨号 / 年份四个字段原样保留。
+- 新纯函数（`LocalMetadataEdit.kt`，`batchAlbumOverride`）：按「填了的字段才改」生成每首歌的新覆盖——输入 trim 后留空 → 保留原覆盖该字段；非空且与文件标签值相同 → 该字段覆盖置 null（不制造冻结标签的假覆盖，沿用 `overrideIfCustom` 口径）；其余 → 存裁剪值。标题 / 艺术家 / 音轨号 / 年份四个字段原样保留。
 - 生成的覆盖 `isEmpty` → 从覆盖表删该键（沿用单首「空壳不落盘」口径）。
-- ViewModel 新批量保存入口：一次 `editLock.withLock` 内整表更新覆盖 Map → 替换 `_songs` 选中条目（`available` 取快照本值，沿用单首范式）→ `sortedByDisplayTitle`（改专辑不改标题，行序实际不变）→ `LocalMusicStore.saveOverlay` 一次原子落盘。不走 N 次 `applyOverride`（避免 N 次落盘与 N 次重排）。
+- ViewModel 新批量保存入口 `saveBatchMetadata`：一次 `editLock.withLock` 内整表更新覆盖 Map → 替换 `_songs` 选中条目（`available` 取快照本值，沿用单首范式）→ `sortedByDisplayTitle`（改专辑不改标题，行序实际不变）→ `LocalMusicStore.saveOverlay` 一次原子落盘。整表变换抽为纯函数 `batchAlbumCommit`（同 `LocalMetadataEdit.kt`，JVM 可测），ViewModel 只做锁内编排与落盘；与单首编辑不同，覆盖表更新在锁内（单首的表更新在锁外先行）。不走 N 次 `applyOverride`（避免 N 次落盘与 N 次重排）。
 - 快照不动、不重查、不碰文件；专辑分组 / 计数从 `_songs` 派生自动重算，换组后新旧专辑按成员行 `albumArtUri` 重新取图（现有机制，封面不可自定义）。
 - 播放器 / MiniPlayer / 队列只显示标题 + 艺术家，批量改专辑 / 专辑艺术家不影响播放器文案，无需播放器同步。
 
 ### 反馈与退出
 
 - 成功 Toast「已修改 n 首」（n = 勾选提交数，不按实际值变化数），经现有 `notice` StateFlow → 导航层 collector 弹出（两页共用口径）。
-- 保存成功即退出编辑模式、清空勾选、关闭面板。
+- 点保存即退出编辑模式、清空勾选、关闭面板（提交在锁内异步完成，退出不以成功为门槛；Toast 随后经 notice 弹出，落盘失败只记日志、不影响退出）。
 - 覆盖层落盘失败只记日志（`LocalMusicStore.writeAtomically` 现有口径），内存态已更新。
 - 编辑中途 `permissionGranted` 变 false：退出编辑模式，沿用整库灰显。
 
@@ -80,7 +80,7 @@ Status: ready-for-agent
 
 ## Testing Decisions
 
-- 纯函数 JVM 测试：批量覆盖生成（留空保留原覆盖、填值写入、与标签同值清覆盖、其余四字段保留、全空覆盖删键、trim）与批量提交后的列表 / 覆盖表形态。本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
+- 纯函数 JVM 测试：批量覆盖生成（留空保留原覆盖、填值写入、与标签同值清覆盖、其余四字段保留、全空覆盖删键、trim）与批量提交后的列表 / 覆盖表形态（`LocalBatchMetadataTest`，15 例）；编辑模式选择态纯规则（可勾选行过滤、全选切换、已全选判据、批量面板保存门槛）同样落 JVM 测试（`LocalMusicEditRulesTest`，13 例）。本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
 - 设备级验收清单（各票未勾选项）：菜单入口与权限禁用、勾选 / 全选 / 计数、面板留空语义、保存换组与封面、Toast 与退出、返回 / 切页 / 权限收回、重扫后保留、左滑收起、飞行模式可用（纯本地）。
 
 ## Out of Scope
@@ -106,3 +106,4 @@ Status: ready-for-agent
 ## Comments
 
 - 2026-11-14 grilling 定稿：Q1–Q7 全部同意——术语「专辑艺术家」（弃用「专辑作者」）、沿覆盖层不动文件、仅专辑 / 专辑艺术家两字段（不带删除与其他字段）、仅歌曲视图进编辑模式、面板留空 = 不改、菜单按视图切换落地后设计、只填专辑名按各自艺术家落组。机制委托项（勾选交互、全选口径、退出路径、Toast 口径、editLock 一次提交）随答复一并确认。CONTEXT.md 三条词条已写入。基线核实：视图切换已合入 main（822234d）。spec 与票据 01–03 入库，Status ready-for-agent，待 implement-spec 编排实现（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 实现完成：票据 01（24926f0、9833c8b、4512c68，合并 cb6d378）与票据 02（6a97b9a、a177510，合并 c159c86）已合入集成分支 `feat/local-music-batch-edit`（tip c159c86）；票据 03 的文档同步与本 spec 文字对齐随票据分支 `ticket/lmb-03-docs-sync` 提交入库（待编排层合入）。落地内容：数据层——`LocalMetadataEdit.kt` 新增 `batchAlbumOverride`（留空保留原覆盖、与标签同值清覆盖、其余四字段原样、trim）与 `batchAlbumCommit` / `BatchAlbumCommit`（整表变换：只换选中行、空壳删键、未选中键保留、`available` 取快照本值、标题排序、不在快照的选中行跳过）；`LocalMusicViewModel.saveBatchMetadata` 一次 `editLock.withLock`（与单首共用）整表提交 → 一次 `saveOverlay` 原子落盘 → notice「已修改 n 首」（n = 提交数），覆盖表更新在锁内（单首在锁外先行），快照不动 / 不重查 / 不碰文件 / 不做播放器同步。UI 层——`LocalMusicEditRules.kt` 纯规则（`selectableSongIds` / `toggleSelectAll` / `isAllSelected` / `batchPanelCanSave`）；菜单「批量管理」（仅歌曲视图、未授权禁用、空库不额外禁用）；编辑态 / 勾选集合 / 面板开关提升 `AppNavigation`（`remember(localMusicEntry)` 与视图状态同键）；歌行序号位换勾选框（只展示、点行 / 长按切换）、`swipe = null`；topBar lambda 整条换 `LocalMusicEditTopBar`（取消 / 已选 n 首 / 全选·取消全选）、`LocalMusicBatchBar`（编辑信息、0 选禁用、Scaffold 内容区底部）；`LocalBatchEditSheet`（双空字段、留空 = 不改、两空保存禁用、无恢复默认，`MetadataField` private→internal 共用）；退出路径：取消 / 系统返回（面板先收再退编辑）/ 切页（结构保证）/ 点保存 / 权限收回。测试 `LocalBatchMetadataTest` 15 例 + `LocalMusicEditRulesTest` 13 例已写待人工执行。**spec 文字对齐代码事实（7 处）**：① Solution「歌行前出现勾选框」→ 序号位换成勾选框，顶栏元素顺序对齐实际布局（取消 / 已选 n 首 / 全选·取消全选）；②「MusicTopBar 的本地音乐分支按编辑态切换」→ AppNavigation topBar lambda 整条换用 LocalMusicEditTopBar（MusicTopBar 标题纯字符串、无内部本地分支），底栏补落点（Scaffold 内容区底部、NavHost 之下）；③ 提升状态补批量面板开关 localMusicBatchPanelOpen（同 remember 键）；④ 系统返回补面板开着先收面板、再按一次才退编辑（BackHandler 不退出页面）；⑤ 批量提交语义补纯函数接缝 batchAlbumOverride / batchAlbumCommit 与「覆盖表更新在锁内（单首在锁外先行）」；⑥「保存成功即退出」→ 点保存即退出（提交锁内异步、退出不以成功为门槛、Toast 随后经 notice）；⑦ Testing Decisions 补测试文件名与例数（15 + 13，含选择态纯规则）。其余文字经逐条核对与代码一致，未改（菜单顺序与权限门槛、全选口径、留空 = 不改、空壳删键、归并键不变、notice 口径、权限收回退出、Out of Scope、Further Notes）。**不新增 ADR 的判定经交付代码核对成立**：批量覆盖写是可逆的数据层扩展（延续 ADR 0020 / 0022、无推翻），「留空 = 不改」已写入 CONTEXT.md「批量管理」词条，身份 / 权限 / 快照模型不动；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。CONTEXT.md「专辑艺术家 / 编辑模式 / 批量管理」三条词条（含「专辑作者」弃用词）经与最终实现逐条核对一致，**未改动**。文档同步明细见票据 03 Comments。Status 推进与归档留待评审修复后由编排层统一执行（照 local-music-delete / view-switch 先例），故 spec 仍 `ready-for-agent`、三张票据仍 `open`，全部 `- [ ]` 保持未勾——它们是设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
