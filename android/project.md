@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除、歌行左滑删除）。
+Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除、批量管理编辑模式、歌行左滑删除）。
 
 ## 技术栈
 
@@ -41,6 +41,7 @@ app/src/main/java/com/qqt/music/
       LocalFolderExclusion.kt # 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数）
       LocalMusicDeleter.kt  # 本地歌曲删除接缝：分版本路由（30+ 系统删除框 / 29 RSE 授权 / ≤28 写入权限直接删）与结果归一
       LocalDeleteRules.kt   # 删除纯规则：结果 → 整库列表整形、是否需要 App 确认框（仅 ≤28）
+      LocalMusicEditRules.kt # 编辑模式纯规则：可勾选行过滤 / 全选切换 / 已全选判据 / 批量面板保存门槛
       LocalSong.kt / LocalAlbum.kt / LocalMetadataEdit.kt
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
@@ -64,7 +65,7 @@ app/src/main/java/com/qqt/music/
     screens/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
-      localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑、歌行左滑删除）
+      localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑、批量管理编辑模式、歌行左滑删除）
       localalbum/           # 本地专辑页（整张专辑播放、歌行左滑删除）
       download/             # 已下载（DownloadManager 实时列表）
       category/             # 分类 2列网格，无限分页

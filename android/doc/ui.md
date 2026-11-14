@@ -16,7 +16,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘）、`LocalSongRow`、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet` |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换与批量管理在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除、编辑模式勾选歌行与 `LocalMusicEditTopBar` / `LocalMusicBatchBar`）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘、批量保存一次提交）、`LocalSongRow`（编辑态序号位换勾选框）、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet`、`LocalBatchEditSheet` |
 | `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列；歌行左滑删除（与本地音乐页同一条接缝），删空这张专辑时由导航层自动返回 |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
@@ -92,13 +92,15 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 本地音乐相关接线：
 
 - `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与排除面板共用同一实例
-- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：视图切换（第一项，文案随视图翻转）/ 重新扫描（完成后提示「新增 x、移除 y」）/「排除的文件夹」
+- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：视图切换（第一项，文案随视图翻转）/ 批量管理（第二项，仅歌曲视图显示、未授权音频权限禁用）/ 重新扫描（完成后提示「新增 x、移除 y」）/「排除的文件夹」；编辑模式下整条顶栏被替换，此菜单隐藏
 - 本地音乐视图状态（默认专辑）提升在 `AppNavigation`：`remember` 以 `local_music` 返回栈条目为键（初值 true = 专辑，离开本页键置空），页面与顶栏菜单共用。离开本页（含进本地专辑页，条目虽在栈上但已不是当前条目）键即置空、状态重建，返回必回专辑视图，「不记忆上次选择」由结构保证；播放器覆盖层不切 NavHost，条目不变、视图状态保留。视图变化即收起左滑展开态（页内 `LaunchedEffect(showAlbums)`）
+- 本地音乐编辑模式状态提升在 `AppNavigation`：开关 `localMusicEditing`、勾选集合 `localMusicSelection`（`Set<LocalSong.id>`）与批量面板开关 `localMusicBatchPanelOpen`，都 `remember` 以 `local_music` 返回栈条目为键（与视图状态同键）。离开本页（含切底部 Tab / 进本地专辑页）键即置空、状态重建，「离开即退出、勾选不跨页保留」由结构保证；播放器覆盖层不切 NavHost，条目不变、编辑态保留。不放 `LocalMusicViewModel`——它是导航层单例、与专辑页 / 播放器共用，放进去会跨页泄漏。退出路径共用 `exitLocalMusicEditMode()`（清空勾选、关面板）：顶栏取消、系统返回、点保存、权限被收回（`LaunchedEffect(permissionGranted)`）；面板开着时系统返回先收面板、再按一次才退出编辑模式（`BackHandler` 不退出页面）
+- 编辑态 `AppNavigation` 的 topBar lambda 把 `MusicTopBar` 整条换成 `LocalMusicEditTopBar`（左「取消」、标题「已选 n 首」、右「全选 / 取消全选」；`MusicTopBar` 标题是纯字符串、左侧固定菜单/返回键，无内部本地音乐分支，表达不了编辑态），⋮ 菜单隐藏；全选 / 已全选判据与批量保存门槛是纯规则（`data/local/LocalMusicEditRules.kt`）。批量底栏 `LocalMusicBatchBar` 只在编辑态渲染，放 Scaffold 内容区底部（NavHost 之下）——底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠；批量面板 `LocalBatchEditSheet` 在导航层渲染，保存按可见列表过滤勾选行调 `saveBatchMetadata` 后即退出编辑模式
 - 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
 - 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
 - 本地歌曲删除的两个 launcher 同样注册在导航层：`StartIntentSenderForResult` 拉系统框（API 30+ 删除确认框 / API 29 `RecoverableSecurityException` 授权框，同一个契约），`RequestPermission` 拉 ≤28 的 `WRITE_EXTERNAL_STORAGE`。`LocalMusicViewModel` 产出「下一步动作」（`pendingDeleteAction`），导航层拉起后清空（与 `notice` 同范式）。**放常驻宿主而不是页面**：本地音乐页导航到专辑页时离开组合，页面级 `rememberLauncherForActivityResult` 随之注销，从专辑页发起删除、系统框返回时回调就丢了；导航层不随路由离开组合，两页共用一份。IntentSender 发送自身失败时契约回 `RESULT_CANCELED` + `EXTRA_SEND_INTENT_EXCEPTION`，launcher 检查该 extra 并标成拉起失败，ViewModel 据此弹「删除失败」——不会被当成用户取消而静默吞掉
 - ≤28 的 App 内删除确认框也只在导航层渲染一份（`pendingDeleteConfirm` 非空即弹，两页共用）；API 29/30+ 系统框即唯一确认，此框永不出现
-- 本地音乐域的一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败）在导航层统一 Toast：专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页不再自己消费，避免双弹）
+- 本地音乐域的一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败 / 批量保存「已修改 n 首」）在导航层统一 Toast：专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页不再自己消费，避免双弹）
 - 删除成功且删空的是当前专辑 → 自动 `popBackStack()` 回本地音乐页：绑定在删除成功事件上（`deleteSucceeded` 带专辑键与删后剩余可见行数，剩余数在删除提交时同步算好——`albums` 派生异步重算，消费时读它会拿到旧值），并校验当前路由的专辑键一致；不做「专辑消失就 pop」的通用观察，进程被杀恢复到本就不存在的专辑时仍显示既有空态
 - 音频权限统一走 `ActivityResultContracts.RequestPermission()`，权限名按系统版本取用（`audioReadPermission()`：Android 13+ `READ_MEDIA_AUDIO`、12 及以下 `READ_EXTERNAL_STORAGE`）；授权成功自动静默刷新，拒绝过的入口升级为「重试 + 去系统设置」
 
@@ -112,7 +114,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - **收起**：列表滚动即收起（页面 `rememberLazyListState()` + `LaunchedEffect(listState.isScrollInProgress)`）；点露出的按钮先收起再执行操作；展开态下点行内其它区域只收起、不触发点歌
 - **行内容须不透明**：白底由组件加在内容 Box 上，行自身不要再画背景（否则露出的按钮会从下方透出）；`swipe = null` 时内容原样渲染、左滑无反应
 - **启用范围**（有移除语义的列表）：下载页已完成行「删除」（App 确认框）、下载中行「取消」（直接执行）、歌单详情行「移出歌单」（直接执行）、本地音乐页与本地专辑页歌行「删除」（分版本确认，见各页小节）；其余列表不传 `swipe`
-- 本地两页的歌行还带长按（元数据编辑）：`LocalSongRow` 的 `combinedClickable` 与外层左滑共存，灰显只关行内点击、不影响左滑
+- 本地两页的歌行还带长按（元数据编辑）：`LocalSongRow` 的 `combinedClickable` 与外层左滑共存，灰显只关行内点击、不影响左滑；本地音乐页编辑模式下左滑收起（`swipe = null`）、长按改为切换勾选（见 LocalMusicScreen 小节）
 
 ## 各页面说明
 
@@ -130,7 +132,12 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - **进入与授权**：首次进入未授权 → 说明空态 + 「授权音乐访问」（系统标准音频权限弹窗）；拒绝过 → 「重试 + 去系统设置」双入口（勾了不再询问后系统不再弹窗，去设置是兜底）；授权成功立即（毫秒级整库查询）出全库。进页面与回前台（`ON_RESUME`）各核对一次权限；进页面授予时静默刷新一次库，回前台仅在授权状态有变化时动作（重新开启 → 静默刷新恢复灰显的行，又被关闭 → 灰显与横幅立即出现），无变化不刷新（ADR 0022：进入页面与授权成功后各静默刷新一次）
 - **歌曲视图**：按合并展示标题升序（`Collator(Locale.CHINA)`）列出 `LocalSongRow`（序号 / 标题 / 艺术家 / 时长）；点击以当前完整歌曲列表为播放队列，来源记为 `QueueSource.LOCAL`
 - **专辑视图**：两列卡片墙（系统专辑图 + 专辑名 + 艺术家 · 歌曲数）；点击进入本地专辑页
-- **顶栏菜单**：视图切换 / 重新扫描 / 排除的文件夹（视图切换始终可点；重新扫描在未授权音频权限时禁用）
+- **顶栏菜单**：视图切换 / 批量管理 / 重新扫描 / 排除的文件夹（视图切换始终可点；批量管理仅歌曲视图显示、未授权音频权限时禁用、空库不额外禁用；重新扫描在未授权音频权限时禁用）
+- **编辑模式（批量管理）**：仅歌曲视图，从顶栏 ⋮ 菜单「批量管理」进入（点击进入并收起菜单与左滑展开态）；开关、勾选集合与面板开关都在导航层（见 AppNavigation 接线），离开本页即退出、勾选不记忆
+  - **勾选交互**：歌行序号位换成前置勾选框（勾选框只展示不接事件，切换统一走整行点击 / 长按，避免点框与点行双重切换）；点行 / 长按 = 切换勾选，不跳播、不弹单首面板；左滑删除收起（`swipe = null`）；灰显行（`available = false`）不可勾选
+  - **顶栏 / 底栏**：顶栏整条换成 `LocalMusicEditTopBar`——左「取消」、标题「已选 n 首」、右「全选 / 取消全选」（已全选时文案翻转、再点清空勾选），⋮ 菜单隐藏；全选 = 可见列表（排除过滤后）全部可用行，灰显行跳过；底栏 `LocalMusicBatchBar` 只有一个「编辑信息」按钮，0 选禁用，放 Scaffold 内容区底部（NavHost 之下），不与底部导航 / MiniPlayer 重叠
+  - **批量面板**：「编辑信息」打开 `LocalBatchEditSheet`——仅专辑 / 专辑艺术家两个自由文本字段，初始为空、不预填、无「恢复默认」，留空 = 不改（与单首面板相反），两字段 trim 皆空时保存禁用（详见 LocalMetadataEditSheet 小节）
+  - **保存与退出**：保存调 `LocalMusicViewModel.saveBatchMetadata` 一次提交（覆盖层整表一次原子写，见 [storage.md](storage.md)），点保存即退出编辑模式、清空勾选、关闭面板，提交完成后 Toast「已修改 n 首」（n = 勾选提交数）经 `notice` 弹出；专辑分组 / 计数 / 封面随列表重算，歌曲按新专辑 / 专辑艺术家换组；取消、系统返回（面板开着先收面板、再按一次退出）、切页 / 进其他页面、编辑中权限被收回都退出并清空勾选，未保存输入随面板离组合丢弃；全程纯本地、零网络
 - **刷新**：一次整库查询，无进度条、无取消；静默刷新不提示，顶栏「重新扫描」完成后提示「新增 x、移除 y」（数量按排除过滤后的可见库统计——被排除文件夹里的增删列表看不见，不计入）；刷新期间旧列表照常可用、播放不打断；查询失败（卷不可用等）保留旧快照不动，不放空列表假装没歌
 - **空态与失效**：
   - 权限拒绝 → 解释空态：「重试」（再拉系统弹窗）/「去系统设置」（到本 App 的设置页手动开启）
@@ -138,7 +145,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
   - 权限被系统关闭（进页面或回前台复查发现）→ 旧列表整体灰显（含专辑卡片）+ 重新授权横幅（重试 / 去系统设置），不放空列表假装没歌；此时歌行不露左滑删除（整库灰显是权限问题，不是文件失效）；重新授权后自动刷新，灰显的行恢复可播
   - 播放中文件被删 → 该行灰显并轻提示「文件不可用」，下次刷新后自然消失（媒体库里已无此行）
 - **排除文件夹**：顶栏「排除的文件夹」打开底部面板（`LocalExcludedFoldersSheet`），自动列出库中含音乐的文件夹并带开关；排除含其全部子文件夹，切换即时生效（纯内存过滤）、不需要重扫，状态随快照落盘、重启保留
-- **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）
+- **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）；编辑模式下长按改为切换勾选，不弹此面板
 - **删除（左滑）**：歌行左滑露出红色「删除」按钮，点按钮才执行（见「行内左滑操作」；展开态在列表滚动与歌曲/专辑视图切换时收起）。删的是设备存储里的音频文件本身，删后其他应用也不再可见，与「排除文件夹」（仅本 App 不展示、文件保留）是两回事。删除经 `data/local/LocalMusicDeleter` 分版本接缝，UI 与 ViewModel 不直接碰 MediaStore 删除 API；全程纯本地、零网络请求，飞行模式可用
 - **删除确认按系统版本分档**：Android 11+（API 30+）`createDeleteRequest` 的系统删除框即唯一确认，允许后由系统执行删除；Android 10（API 29）`resolver.delete` 捕获 `RecoverableSecurityException` → 系统授权框 → 授权后重试删除（App 自有文件可能直接删成功、不弹框）；Android 9 及以下（≤28）没有系统框，先弹导航层的 App 确认框（标题 `删除本地歌曲`，正文 `「歌名」将从设备存储删除，其他应用也不再可见。`——歌名取覆盖后的展示标题，按钮 `删除` / `取消`，两个 Text 走 M3 默认色），确认后进接缝，API 23+ 且未授予写入权限时再弹 `WRITE_EXTERNAL_STORAGE` 权限框（API 21–22 安装即授予、无权限框；已授予则不再弹）
 - **删除结果**：成功 → 该行即时从列表消失、专辑分组与卡片计数随之重算（纯派生）、整库快照原子落盘，不等下次扫描；失败 → 一律轻提示「删除失败」，仅当确认媒体库行已不在（delete 返回 0 行——文件已被外部删除 / URI 失效）才把该行标为不可用（灰显并落盘）；拒绝写入权限、provider 异常、异常框结果码、IntentSender 发送失败都保持该行可播（它们不证明文件不可播，真不可播的文件走既有「文件不可用」链路、下次刷新自然消失）；取消 → 一行不动、无提示。灰显（文件不可用）的行照样可左滑删除；删除正在播放的歌不做特殊处理（不主动停止、不跳歌），真播不了时走既有「文件不可用」链路
@@ -158,6 +165,8 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 入口两个：本地音乐页 / 本地专辑页长按歌曲行；全屏播放器「更多菜单 → 编辑信息」（仅当前歌曲为本地歌曲且快照里找得到该记录时出现）
 - 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与媒体库标签相同不算「改过」
 - 保存只写覆盖层，不回写音频文件；保存后歌曲列表、专辑分组与封面立即刷新，并同步播放器上的标题 / 艺术家展示值（不打断播放）
+- **批量变体 `LocalBatchEditSheet`**：本地音乐页编辑模式底栏「编辑信息」打开（已选 ≥1 首），与单首面板同款 ModalBottomSheet，但仅专辑 / 专辑艺术家两个自由文本字段，初始为空、不预填、无「恢复默认」按钮；**留空 = 不改**（与单首面板「留空 = 恢复文件原值」相反），两字段 trim 皆空时保存禁用；标题「批量管理」，副标题显示已选数与「只改 App 里的显示，不会修改音频文件本身」；字段标签用规范词「专辑」「专辑艺术家」（CONTEXT.md，弃用「专辑作者」）
+- 批量保存走 `LocalMusicViewModel.saveBatchMetadata` 一次提交（与单首共用 `editLock`、覆盖层整表一次原子写，见 [storage.md](storage.md)）；点保存即关面板 + 退出编辑模式 + 清空勾选，Toast「已修改 n 首」（n = 提交数）经导航层 `notice` 弹出；批量只改专辑字段，播放器只显示标题 + 艺术家，不做播放器同步
 
 ### DownloadScreen（无 ViewModel）
 - 直接从 `DownloadManager.downloadedSongs` / `activeDownloads` 收集下载完成与进行中的列表（实时响应）

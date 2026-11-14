@@ -20,6 +20,7 @@ import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreDeleter
 import com.qqt.music.data.local.MediaStoreLibrarySource
 import com.qqt.music.data.local.albumKey
+import com.qqt.music.data.local.batchAlbumCommit
 import com.qqt.music.data.local.distinctFolders
 import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
@@ -550,6 +551,34 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
      * 返回合并后的歌曲，供调用方同步播放器上的展示值。
      */
     fun restoreDefaultMetadata(song: LocalSong): LocalSong = applyOverride(song, null)
+
+    /**
+     * 批量保存（spec「批量提交语义」）：[selectedSongs] 是编辑模式已勾选的选中行（调用方按可见
+     * 列表预过滤，不是整库），只改专辑 / 专辑艺术家两字段，留空保留原覆盖、
+     * 与文件标签同值清覆盖（纯规则 [batchAlbumCommit] / [LocalSong.batchAlbumOverride]）。
+     * 不走 N 次 [applyOverride]：一次 [editLock] 内整表更新覆盖 → 替换选中行 → 一次原子落盘 →
+     * 提示「已修改 n 首」（n = 提交数，不按实际值变化数）。与单首编辑不同，覆盖表更新在锁内
+     * （单首的表更新在锁外先行）；快照不动、不重查、不碰文件、不做播放器同步（播放器只显示标题 + 艺术家）。
+     */
+    fun saveBatchMetadata(selectedSongs: List<LocalSong>, albumInput: String, albumArtistInput: String) {
+        if (selectedSongs.isEmpty()) return
+        val selectedIds = selectedSongs.mapTo(mutableSetOf()) { it.id }
+        viewModelScope.launch {
+            // 整条链排在与单首编辑共用的锁里：两次编辑不交错，落盘只按调用顺序走
+            editLock.withLock {
+                val current = overlay
+                // 整表变换与排序不占主线程（沿用 applyOverride 范式）
+                val commit = withContext(Dispatchers.Default) {
+                    batchAlbumCommit(_songs.value, current, selectedIds, albumInput, albumArtistInput)
+                }
+                overlay = commit.overlay
+                _songs.value = commit.songs
+                // 覆盖层是独立文件，整表一次原子落盘（空条目由 saveOverlay 过滤）
+                LocalMusicStore.saveOverlay(application, commit.overlay)
+                _notice.value = "已修改 ${selectedSongs.size} 首"
+            }
+        }
+    }
 
     /**
      * 覆盖层落位并刷新展示：只替换这一条记录——快照不动、不重查、不碰文件，
