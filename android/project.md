@@ -67,7 +67,7 @@ app/src/main/java/com/qqt/music/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
       localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑、批量管理编辑模式、歌行左滑删除）
-      localalbum/           # 本地专辑页（整张专辑播放、歌行左滑删除）
+      localalbum/           # 本地专辑页（整张专辑播放、歌行左滑删除、批量管理编辑模式）
       download/             # 已下载（DownloadManager 实时列表）
       category/             # 分类 2列网格，无限分页
       artist/               # 艺术家 2列网格，分页
@@ -84,7 +84,7 @@ app/src/main/java/com/qqt/music/
       MiniPlayer.kt         # 底部迷你播放器：实时显示歌曲名、进度、播放控制
       SongListItem.kt       # 在线歌曲列表行（序号+标题+歌手与播放/下载计数+行尾封面，可选左滑操作按钮）
       RowSwipeReveal.kt     # 行内左滑露出操作按钮（ADR 0018）：88dp 红底白字按钮、同页互斥展开
-      TopBar.kt             # 顶部导航栏（菜单/返回 + 标题 + 搜索按钮）
+      TopBar.kt             # 顶部导航栏（菜单/返回 + 标题 + 搜索按钮或页面自带菜单）
     theme/                  # Material3 主题（OrangePrimary=#E8441C，固定橙色不跟随系统Dynamic Color）
 ```
 

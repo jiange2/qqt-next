@@ -52,14 +52,13 @@ fun MusicTopBar(
             }
         },
         actions = {
-            if (!showBackButton) {
-                // 页面自带菜单时（本地音乐）接管右侧操作区，否则维持全局搜索入口
-                if (actions != null) {
-                    actions()
-                } else {
-                    IconButton(onClick = onSearchClick) {
-                        Icon(Icons.Default.Search, contentDescription = "Search", tint = BrandOrange)
-                    }
+            // 页面自带菜单时（本地音乐 / 本地专辑）接管右侧操作区，带返回键也渲染（票据04）；
+            // 否则无返回键的页面维持全局搜索入口
+            if (actions != null) {
+                actions()
+            } else if (!showBackButton) {
+                IconButton(onClick = onSearchClick) {
+                    Icon(Icons.Default.Search, contentDescription = "Search", tint = BrandOrange)
                 }
             }
         },

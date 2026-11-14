@@ -16,8 +16,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -60,6 +65,9 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 点歌以整张专辑为播放队列，来源仍是本地音乐（与本地音乐页共用同一份来源记忆）。
  * 长按歌曲行同样可以打开元数据编辑面板（与歌曲视图同一个面板）。
  * 歌行左滑删除与本地音乐页同一条接缝；删空这张专辑时由导航层自动返回本地音乐页。
+ * 编辑模式（[editing]，开关与勾选集合在导航层，票据04）：顶栏 ⋮ 菜单「批量管理」进入，
+ * 点行 / 长按切换勾选（不跳播、不弹单首面板）、左滑删除收起；顶栏 / 底栏 / 批量面板由导航层接线，
+ * 全选改名让整张专辑换键时页面跟随新专辑（去向推算 [com.qqt.music.data.local.batchAlbumNewKeys]）。
  * 数据全部来自扫描索引，页面不发起任何网络请求。
  */
 @Composable
@@ -67,6 +75,9 @@ fun LocalAlbumScreen(
     albumKey: String?,
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
+    editing: Boolean,
+    selection: Set<String>,
+    onToggleSelect: (LocalSong) -> Unit,
 ) {
     val albums by viewModel.albums.collectAsState()
     val loading by viewModel.loading.collectAsState()
@@ -80,6 +91,8 @@ fun LocalAlbumScreen(
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) swipeState.close()
     }
+    // 进入 / 退出编辑模式同样收起：编辑态左滑删除收起（swipe = null），退出时不残留展开位
+    LaunchedEffect(editing) { swipeState.close() }
 
     // 进专辑页核对音频权限（不刷新）：进程被杀后直接恢复到专辑页不走本地音乐页的 onPageEntered，
     // 不核对则 permissionGranted 停在初值 false，正常已授权的库被误判成权限被关（左滑删除露不出）
@@ -121,21 +134,42 @@ fun LocalAlbumScreen(
                 contentPadding = PaddingValues(bottom = 6.dp),
             ) {
                 itemsIndexed(album.songs, key = { _, song -> song.id }) { index, song ->
-                    LocalSongRow(
-                        index = index + 1,
-                        song = song,
-                        playerViewModel = playerViewModel,
+                    // 显式声明类型：if 分支里直接写 lambda 字面量会掉进可空函数类型的推断坑
+                    // （onLongClick 可空，见 LocalMusicScreen 同款注释）
+                    val rowClick: () -> Unit = if (editing) {
+                        // 编辑模式：点行 = 切换勾选（不跳播）
+                        { onToggleSelect(song) }
+                    } else {
                         // 点歌以整张专辑为队列（spec：点击本地专辑以整张专辑顺序聆听）
-                        onClick = {
+                        {
                             playerViewModel.playSong(
                                 song = song.toSong(),
                                 queue = queue,
                                 sourceDescriptor = QueueSource.LOCAL,
                             )
+                        }
+                    }
+                    val rowLongClick: () -> Unit = if (editing) {
+                        // 编辑模式：长按同样切换勾选，不弹单首面板；灰显行由行内 enabled 挡住
+                        { onToggleSelect(song) }
+                    } else {
+                        { editingSong = song }
+                    }
+                    LocalSongRow(
+                        index = index + 1,
+                        song = song,
+                        playerViewModel = playerViewModel,
+                        onClick = rowClick,
+                        onLongClick = rowLongClick,
+                        // 权限被关时不露左滑删除（整库灰显是权限问题，不是文件失效）；文件真不可用的行照常可删；
+                        // 编辑模式收起左滑删除：勾选交互不与行内手势打架
+                        swipe = if (!editing && permissionGranted) {
+                            RowSwipeAction(swipeState, "删除") { viewModel.requestDelete(song) }
+                        } else {
+                            null
                         },
-                        onLongClick = { editingSong = song },
-                        // 权限被关时不露左滑删除（整库灰显是权限问题，不是文件失效）；文件真不可用的行照常可删
-                        swipe = if (permissionGranted) RowSwipeAction(swipeState, "删除") { viewModel.requestDelete(song) } else null,
+                        editing = editing,
+                        selected = song.id in selection,
                     )
                 }
             }
@@ -188,6 +222,32 @@ private fun LocalAlbumHeader(album: LocalAlbum) {
             )
             Spacer(Modifier.height(2.dp))
             Text(text = "${album.songs.size} 首", fontSize = 12.sp, color = InkFaint)
+        }
+    }
+}
+
+/**
+ * 本地专辑页的顶栏菜单（票据04）：只有「批量管理」一项，点击进入本页编辑模式并收起菜单。
+ * 未授权音频权限时禁用（沿用本地音乐页「批量管理」的门槛范式）；专辑不存在 / 加载中不额外禁用
+ * （进入后无行可选，全选为 no-op，与本地音乐页空库口径一致）。
+ */
+@Composable
+fun LocalAlbumTopBarMenu(editEnabled: Boolean, onEnterEdit: () -> Unit) {
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    Box {
+        IconButton(onClick = { menuExpanded = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "本地专辑菜单", tint = InkPrimary)
+        }
+        DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text("批量管理") },
+                enabled = editEnabled,
+                onClick = {
+                    menuExpanded = false
+                    onEnterEdit()
+                },
+            )
         }
     }
 }
