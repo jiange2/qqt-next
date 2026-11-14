@@ -4,7 +4,7 @@ import java.text.Collator
 import java.util.Locale
 
 /**
- * 编辑候选（spec「编辑候选」）：单首 / 批量编辑面板里专辑、艺术家、专辑艺术家字段的下拉候选。
+ * 编辑候选（spec「编辑候选」）：单首 / 批量管理面板里专辑、艺术家、专辑艺术家字段的下拉候选。
  * 全部从本地库当前展示值派生（覆盖层优先，ADR 0020），不新增查询、不碰在线实体。
  *
  * [value] 点选后填入本框的值；[supporting] 候选行次文本——专辑候选放专辑艺术家
@@ -31,27 +31,21 @@ fun List<LocalSong>.albumSuggestions(): List<MetadataSuggestion> =
         .distinct()
 
 /** 艺术家候选：歌曲艺术家展示值非空去重，中文序（与专辑视图同一份排序规则） */
-fun List<LocalSong>.artistSuggestions(): List<MetadataSuggestion> {
-    val collator = Collator.getInstance(Locale.CHINA)
-    return map { it.displayArtist() }
-        .filter { it.isNotBlank() }
-        .distinct()
-        .sortedWith(collator)
-        .map { MetadataSuggestion(it) }
-}
+fun List<LocalSong>.artistSuggestions(): List<MetadataSuggestion> =
+    sortedDistinctSuggestions(map { it.displayArtist() })
 
 /**
  * 专辑艺术家候选：专辑艺术家与艺术家展示值的并集非空去重，中文序。
  * 专辑艺术家列 API 30+ 才有值、标签常缺失，卡片展示本就回退艺术家（[groupIntoAlbums]），
  * 候选池同口径——否则低版本设备上这个框永远没有候选。
  */
-fun List<LocalSong>.albumArtistSuggestions(): List<MetadataSuggestion> {
+fun List<LocalSong>.albumArtistSuggestions(): List<MetadataSuggestion> =
+    sortedDistinctSuggestions(map { it.displayAlbumArtist() } + map { it.displayArtist() })
+
+/** 非空去重 + 中文序：Collator 每次调用新建，与 [groupIntoAlbums] 同范式 */
+private fun sortedDistinctSuggestions(values: List<String>): List<MetadataSuggestion> {
     val collator = Collator.getInstance(Locale.CHINA)
-    return (map { it.displayAlbumArtist() } + map { it.displayArtist() })
-        .filter { it.isNotBlank() }
-        .distinct()
-        .sortedWith(collator)
-        .map { MetadataSuggestion(it) }
+    return values.filter { it.isNotBlank() }.distinct().sortedWith(collator).map { MetadataSuggestion(it) }
 }
 
 /** 打字过滤：query trim 后为空 → 全量；否则主文本或次文本包含（忽略大小写）即命中 */
