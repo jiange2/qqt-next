@@ -235,7 +235,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 本地歌曲差异（`Song.isLocalSong()`，ID 走 `local:` 命名空间或 URL 是 `content://`）：
   - 功能图标行整行不出现（纯播放形态）：收藏 / 下载 / 加入歌单对本地歌曲无意义或必然失败，播放设置与更多也一并收起
   - 页签只剩「歌曲」，没有歌词页与刷新入口，播放期间不发 `song_info` 请求；切回在线歌曲后全部恢复
-  - 没有「更多」菜单与播放设置入口：元数据编辑只走列表长按入口（本地音乐页歌曲视图 / 本地专辑页）；已设定时本地播放期间仍全局生效，不可见、不可取消，切回在线歌曲恢复可见可操作
+  - 元数据编辑只走列表长按入口（本地音乐页歌曲视图 / 本地专辑页）；已设定时本地播放期间仍全局生效，不可见、不可取消，切回在线歌曲恢复可见可操作
   - 队列来源为 `QueueSource.LOCAL`，播放模式按该来源单独记忆
 - 进度条：藏青 4dp 细轨道 + 16dp 小圆点滑钮（20dp slot 容器内居中，规避 M3 slot 贴左上问题）；M3 Slider 轨道两端各内缩半个 slot 宽（10dp），Slider 容器 padding 18dp（= 28 − 10）补偿，使轨道两端落在 28dp 内容线上（改滑钮/slot 尺寸需同步调整）；下方时间标签行左右 28dp
 - 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（打开队列浮层，点选为队列内跳播），含 navigationBarsPadding 手势区避让
