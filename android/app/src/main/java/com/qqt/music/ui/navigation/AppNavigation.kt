@@ -418,14 +418,14 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                     },
                                 )
                         }
-                        // 编辑模式底栏（票据02）：只在编辑态渲染，位于 Scaffold 内容区底部——
-                        // 底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠
-                        if (isLocalMusic && localMusicEditing) {
-                            LocalMusicBatchBar(
-                                selectedCount = localMusicSelection.size,
-                                onEditInfo = { localMusicBatchPanelOpen = true },
-                            )
-                        }
+                    }
+                    // 编辑模式底栏（票据02）：只在编辑态渲染，位于 Scaffold 内容区底部——
+                    // 底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠
+                    if (isLocalMusic && localMusicEditing) {
+                        LocalMusicBatchBar(
+                            selectedCount = localMusicSelection.size,
+                            onEditInfo = { localMusicBatchPanelOpen = true },
+                        )
                     }
                 }
             }
