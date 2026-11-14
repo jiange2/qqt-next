@@ -1,0 +1,70 @@
+# 本地音乐视图切换优化（默认专辑视图 + 切换进顶栏菜单）
+
+Status: resolved
+
+> 延续 ADR 0022（MediaStore 系统媒体库），只改默认视图与切换入口，不推翻任何 ADR。专辑分组、排除文件夹、元数据编辑、播放接入与在途的本地音乐删除特性均不受影响。
+
+## Problem Statement
+
+本地音乐页现在默认歌曲视图，两视图切换靠内容区顶部的全宽胶囊分段控件。用户以专辑为主要方式浏览本地音乐，每次进页面都要先手动切一下；胶囊还占掉内容区一行高度。希望进页面直接看到专辑卡片墙，把低频的切换动作收进右上角菜单。
+
+## Solution
+
+默认视图改为专辑，延续不记忆上次选择（每次进页面都是专辑视图）；内容区移除胶囊分段控件；右上角 ⋮ 菜单第一项新增视图切换，文案随当前视图翻转（专辑视图时「切换到歌曲视图」，歌曲视图时「切换到专辑视图」），点一下立即切换并收起菜单。切换项始终显示、始终可点（含空库、未授权、加载中）。不新增设置页、不换图标、不落盘。
+
+## User Stories
+
+1. 作为本地音乐听众，我希望进入本地音乐页直接看到专辑卡片墙，以便按专辑浏览而不用先切换。
+2. 作为本地音乐听众，我希望内容区不再有「歌曲 / 专辑」胶囊，以便卡片墙或歌曲列表直接从顶栏下方开始，多出一行展示空间。
+3. 作为本地音乐听众，我希望在右上角 ⋮ 菜单里完成视图切换，以便切换动作不占内容区。
+4. 作为本地音乐听众，我希望菜单项文案告诉我要切去哪个视图，以便点之前就知道会发生什么。
+5. 作为本地音乐听众，我希望每次进页面都是专辑视图（含从本地专辑页返回、进程被杀后重启），以便行为可预期、不记住临时切换。
+6. 作为本地音乐听众，我希望没歌或未授权音频权限时菜单里仍有切换项，以便菜单稳定不变。
+7. 作为本地音乐听众，我希望「重新扫描」「排除的文件夹」行为照旧，以便既有管理功能不受影响。
+
+## Implementation Decisions
+
+### 默认视图与状态归属
+
+- 默认专辑视图；延续「不记忆上次选择」：每次进入本地音乐页（含从本地专辑页返回）都是专辑视图。不落盘（不加 PrefsManager 键）、不放 LocalMusicViewModel——它是导航层单例、与本地专辑页/播放器共用，放进去会变成跨进入记忆。
+- 视图状态从 LocalMusicScreen 页内 remember 提升到 AppNavigation，remember 以 local_music 目的地的 NavBackStackEntry 为键（初值 true = 专辑，离开本页键置空）：离开本页（含进本地专辑页，条目虽在栈上但已不是当前条目）键即置空、状态重建，返回必回专辑视图，「不记忆」由结构保证——底部导航 `navigateSingle` 带 `restoreState = true`，返回时还原的是同一 entry，重建靠键置空而非「每次都是新 entry」；播放器覆盖层不切 NavHost，entry 不变，视图状态保留。
+- 状态分别传给 LocalMusicScreen（替换页内 remember）与 LocalMusicTopBarMenu（新增 showAlbums / onToggleView 参数）。
+
+### 分段控件移除
+
+- 整体删除 `LibraryViewSwitch` 与 `ViewSwitchSegment`；`LibraryArea` 去掉切换行与 onSelectView 参数，保留 showAlbums。专辑卡片墙 / 歌曲列表直接从顶栏下方开始。
+- 空态 / 加载中 / 未授权分支不动（本来就不渲染胶囊）；空态分支不区分视图，空库时切换无可见效果，出歌后按所选视图展示。
+
+### 顶栏菜单切换项
+
+- `LocalMusicTopBarMenu` 第一项新增 DropdownMenuItem：文案 `if (showAlbums) "切换到歌曲视图" else "切换到专辑视图"`；onClick 翻转状态并收起菜单。
+- 始终 enabled：不依赖音频权限与库内容（区别于「重新扫描」的 rescanEnabled）。
+- 菜单顺序：视图切换 / 重新扫描 / 排除的文件夹。图标保持 MoreVert，不新增设置页、不换齿轮。
+
+### 文档
+
+- CONTEXT.md「本地音乐」词条已同步（默认专辑视图、切换在顶栏菜单、不记忆）；android/doc/ui.md 的 LocalMusicScreen 节由票据 02 随实现更新（沿用删除功能的文档节奏）。
+- 不新增 ADR：可逆的 UI 调整，无架构推翻。旧 spec（.scratch/local-music/spec.md「导航与页面」）的「默认歌曲视图、分段控件」口径由本 spec 取代；历史 spec 归档不改写。
+
+## Testing Decisions
+
+- 纯 UI 状态调整，无新数据接缝；本仓维持手工验收（AI 不编译）。清单：进页面默认专辑卡片墙；菜单第一项文案随视图翻转、点击立即切换并收起；从专辑页返回、进程被杀重启均默认专辑视图；空库/未授权时切换项可点；重新扫描（含未授权禁用）与排除的文件夹行为不变；内容区顶部无胶囊残留；视图状态不落盘（切到歌曲视图后离开再进回专辑）。
+
+## Out of Scope
+
+- 记忆上次视图 / 持久化视图偏好。
+- 新增设置页、齿轮图标，或把「重新扫描」「排除的文件夹」挪进新面板。
+- 专辑卡片样式、歌曲行样式、排序、分组规则的任何改动。
+- 文件夹浏览视图、库内搜索、排序菜单（延续 MediaStore 重做 spec 的排除项）。
+- 本地专辑页的任何改动。
+
+## Further Notes
+
+- 删除特性（.scratch/local-music-delete/，1.8 必含）正在同一分支实现，其票据 02 同样改 LocalMusicScreen.kt / LocalSongRow：本特性实现时以届时分支最新状态为基线。两者正交——左滑删除是行级交互，本特性是页面级视图状态。
+- 切换纯本地、零网络请求。
+- 旋转后组合重建，视图状态回到默认专辑视图，与「每次进入默认」一致（旧实现旋转后同样回默认歌曲视图）。
+
+## Comments
+
+- 2026-11-14 实现完成：票据 01（7372fb8，合并 fad377d）已合入集成分支 `feat/local-music-view-switch`（tip fad377d）；票据 02 的文档同步与本 spec 文字对齐随票据分支提交入库（待编排层合入）。落地内容（两文件：`AppNavigation.kt`、`LocalMusicScreen.kt`）：默认专辑视图；整体删除 `LibraryViewSwitch` / `ViewSwitchSegment` 胶囊分段控件，`LibraryArea` 去掉切换行与 `onSelectView` 参数；视图切换收进顶栏 ⋮ 菜单第一项（`LocalMusicTopBarMenu` 新增 `showAlbums` / `onToggleView`，文案随视图翻转「切换到歌曲视图 / 切换到专辑视图」，点击翻转并收起菜单，始终可点）；视图状态提升到 `AppNavigation`（`remember` 以 `local_music` 返回栈条目为键，初值 true = 专辑，离开本页键置空重建），替换页内 remember 并分别传给页面与顶栏菜单；视图变化收起左滑展开态（`LaunchedEffect(showAlbums)`）；页头与菜单注释更新。状态不入 ViewModel、不落盘。**spec 文字对齐代码事实（1 处）**：「默认视图与状态归属」原「每次进入该目的地都是新 entry，状态天然重建」改为实际机制——底部导航 `navigateSingle` 带 `restoreState = true`，返回还原同一 entry，「不记忆」靠离开本页键置空、返回时重建；其余文字经逐条核对与代码一致，未改。**不新增 ADR 的判定经交付代码核对成立**：可逆 UI 调整（默认视图 + 切换入口位置），无架构推翻，延续 ADR 0022；身份/权限/快照模型不动，三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。CONTEXT.md「本地音乐」词条经逐条核对与最终实现一致（默认专辑视图、切换在顶栏菜单、不记忆上次选择），未改动。文档同步明细见票据 02 Comments。Status 推进与归档留待评审修复后由编排层统一执行（照 `local-music-delete` 先例），故 spec 仍 `ready-for-agent`、两票仍 `open`，全部 `- [ ]` 保持未勾——它们是设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 归档：resolved。集成分支 `feat/local-music-view-switch`（基于 feat/local-music-delete 尖端 632f97f，含删除特性与 1.8 版本号）。提交链：入库 7e87850 → 票据01 实现 7372fb8（合并 fad377d）→ 票据02 文档同步 169c7dc（合并 5fc0915）→ 评审修复 0b505d3（合并 160037b）→ 本次归档。双轴评审结论：Spec 轴零发现（默认专辑与三路径不记忆、覆盖层保留状态、胶囊整删、菜单文案翻转/恒可点/三项顺序、重扫与排除及左滑删除不受影响、状态不入 ViewModel 不落盘、Out of Scope 未动、文档一致、旋转回默认，9 项全成立）；Standards 轴零硬违规，2 处轻微 judgement call——CONTEXT.md「顶栏菜单」歧义已修（0b505d3），Boolean 视图状态经评审建议保持（spec 明示选择）。spec 文字对齐 1 处（票据02）：「每次进入都是新 entry」改为实际机制（navigateSingle 带 restoreState 还原同一 entry，不记忆靠离开本页键置空重建）。不新增 ADR 判定经评审复核成立。勾选项全部保持未勾（照 local-music-rescan / local-music-delete 先例：resolved 票据的设备级验收清单不勾），待人工编译后真机逐项确认。
