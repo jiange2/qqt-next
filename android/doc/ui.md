@@ -16,7 +16,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、权限空态与灰显横幅、排除面板与顶栏菜单、歌行左滑删除）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘）、`LocalSongRow`、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet` |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘）、`LocalSongRow`、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet` |
 | `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列；歌行左滑删除（与本地音乐页同一条接缝），删空这张专辑时由导航层自动返回 |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
@@ -92,7 +92,8 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 本地音乐相关接线：
 
 - `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与排除面板共用同一实例
-- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：重新扫描（完成后提示「新增 x、移除 y」）与「排除的文件夹」
+- 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：视图切换（第一项，文案随视图翻转）/ 重新扫描（完成后提示「新增 x、移除 y」）/「排除的文件夹」
+- 本地音乐视图状态（默认专辑）提升在 `AppNavigation`：`remember` 以 `local_music` 返回栈条目为键（初值 true = 专辑，离开本页键置空），页面与顶栏菜单共用。离开本页（含进本地专辑页，条目虽在栈上但已不是当前条目）键即置空、状态重建，返回必回专辑视图，「不记忆上次选择」由结构保证；播放器覆盖层不切 NavHost，条目不变、视图状态保留。视图变化即收起左滑展开态（页内 `LaunchedEffect(showAlbums)`）
 - 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
 - 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
 - 本地歌曲删除的两个 launcher 同样注册在导航层：`StartIntentSenderForResult` 拉系统框（API 30+ 删除确认框 / API 29 `RecoverableSecurityException` 授权框，同一个契约），`RequestPermission` 拉 ≤28 的 `WRITE_EXTERNAL_STORAGE`。`LocalMusicViewModel` 产出「下一步动作」（`pendingDeleteAction`），导航层拉起后清空（与 `notice` 同范式）。**放常驻宿主而不是页面**：本地音乐页导航到专辑页时离开组合，页面级 `rememberLauncherForActivityResult` 随之注销，从专辑页发起删除、系统框返回时回调就丢了；导航层不随路由离开组合，两页共用一份。IntentSender 发送自身失败时契约回 `RESULT_CANCELED` + `EXTRA_SEND_INTENT_EXCEPTION`，launcher 检查该 extra 并标成拉起失败，ViewModel 据此弹「删除失败」——不会被当成用户取消而静默吞掉
@@ -125,11 +126,11 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - `HomeUiState`：`isLoading`, `banners`, `trendingSongs`, `error`
 
 ### LocalMusicScreen / LocalMusicViewModel（本地音乐）
-- 页面由「歌曲 / 专辑」分段控件组成，进入默认歌曲视图，不记忆上次选择；两视图都完全来自本机库快照与系统媒体库刷新，不发起任何网络请求
+- 页面有「歌曲 / 专辑」两视图，进入默认专辑视图，不记忆上次选择；视图切换在顶栏 ⋮ 菜单第一项，文案随当前视图翻转（专辑视图时「切换到歌曲视图」，歌曲视图时「切换到专辑视图」），点击立即切换并收起菜单，始终显示、始终可点（含空库、未授权、加载中）；两视图都完全来自本机库快照与系统媒体库刷新，不发起任何网络请求
 - **进入与授权**：首次进入未授权 → 说明空态 + 「授权音乐访问」（系统标准音频权限弹窗）；拒绝过 → 「重试 + 去系统设置」双入口（勾了不再询问后系统不再弹窗，去设置是兜底）；授权成功立即（毫秒级整库查询）出全库。进页面与回前台（`ON_RESUME`）各核对一次权限；进页面授予时静默刷新一次库，回前台仅在授权状态有变化时动作（重新开启 → 静默刷新恢复灰显的行，又被关闭 → 灰显与横幅立即出现），无变化不刷新（ADR 0022：进入页面与授权成功后各静默刷新一次）
 - **歌曲视图**：按合并展示标题升序（`Collator(Locale.CHINA)`）列出 `LocalSongRow`（序号 / 标题 / 艺术家 / 时长）；点击以当前完整歌曲列表为播放队列，来源记为 `QueueSource.LOCAL`
 - **专辑视图**：两列卡片墙（系统专辑图 + 专辑名 + 艺术家 · 歌曲数）；点击进入本地专辑页
-- **顶栏菜单**：重新扫描 / 排除的文件夹
+- **顶栏菜单**：视图切换 / 重新扫描 / 排除的文件夹（视图切换始终可点；重新扫描在未授权音频权限时禁用）
 - **刷新**：一次整库查询，无进度条、无取消；静默刷新不提示，顶栏「重新扫描」完成后提示「新增 x、移除 y」（数量按排除过滤后的可见库统计——被排除文件夹里的增删列表看不见，不计入）；刷新期间旧列表照常可用、播放不打断；查询失败（卷不可用等）保留旧快照不动，不放空列表假装没歌
 - **空态与失效**：
   - 权限拒绝 → 解释空态：「重试」（再拉系统弹窗）/「去系统设置」（到本 App 的设置页手动开启）
