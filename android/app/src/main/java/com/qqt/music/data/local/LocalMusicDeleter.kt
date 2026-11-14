@@ -59,8 +59,18 @@ sealed interface LocalDeleteResult {
     /** 文件已从设备存储真正删除（其他应用也不再可见） */
     data object Success : LocalDeleteResult
 
-    /** 删除失败：[cause] 为 provider 异常，或 null（已删 / URI 失效 / 拒绝写入权限） */
-    data class Failure(val cause: Throwable? = null) : LocalDeleteResult
+    /**
+     * 删除失败：[cause] 为 provider 异常，或 null（已删 / URI 失效 / 拒绝写入权限）。
+     * [fileUnavailable] 仅在「确认媒体库行已不在」时为 true（`resolver.delete` 返回非正行数——
+     * 文件已被外部删除 / URI 失效）；其余一切失败（provider 异常、拒绝写入权限、非 OK/非 CANCELED
+     * 的异常框结果码）都保持 false——它们不证明文件不可播。灰显是落盘且阻断播放的状态，
+     * 必须要求正面证据才置位；真不可播的文件仍会被既有播放失败链路（unavailableLocalSongId）
+     * 捕获灰显，并在下次刷新时自然消失。
+     */
+    data class Failure(
+        val cause: Throwable? = null,
+        val fileUnavailable: Boolean = false,
+    ) : LocalDeleteResult
 
     /** 用户取消（系统框 / 权限框拒绝）：不删、行保持原样 */
     data object Cancelled : LocalDeleteResult
@@ -119,9 +129,11 @@ internal fun systemDialogOutcome(resultCode: Int): SystemDialogOutcome = when (r
 /**
  * 直接删除行数 → 归一结果（纯函数，JVM 可测）：`resolver.delete` 返回删除行数，>0 即成功；
  * 0（文件已被外部删除 / URI 失效）或负值 → 失败（不带异常），不崩溃。
+ * 非正行数是唯一「确认媒体库行已不在」的失败证据 → [LocalDeleteResult.Failure.fileUnavailable]
+ * 置位供 UI 灰显该行；其余失败构造一律保持默认 false（见 [LocalDeleteResult.Failure]）。
  */
 internal fun normalizeDeleteRows(rowsDeleted: Int): LocalDeleteResult =
-    if (rowsDeleted > 0) LocalDeleteResult.Success else LocalDeleteResult.Failure()
+    if (rowsDeleted > 0) LocalDeleteResult.Success else LocalDeleteResult.Failure(fileUnavailable = true)
 
 /**
  * 30+ 系统删除框结果码 → 归一结果（纯函数，JVM 可测）：允许即系统已删（成功），取消即用户取消，

@@ -2,7 +2,6 @@ package com.qqt.music.data.local
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,10 +54,11 @@ class LocalDeleteRulesTest {
         val songs = listOf(row(1L, "Alpha"), row(2L, "Bravo"))
         val targetId = songs[0].id
 
-        // 失败（含带异常与不带异常两种）与取消：原列表原样返回，一行不删
-        assertSame(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Failure()))
-        assertSame(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Failure(IllegalStateException("provider 出错"))))
-        assertSame(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Cancelled))
+        // 失败（含带异常与不带异常两种）与取消：一行不删。契约是内容级「一行不动」，
+        // 不绑定返回实例——返回等价副本也算对，故按内容断言
+        assertEquals(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Failure()))
+        assertEquals(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Failure(IllegalStateException("provider 出错"))))
+        assertEquals(songs, songsAfterDelete(songs, targetId, LocalDeleteResult.Cancelled))
     }
 
     @Test
@@ -116,19 +116,43 @@ class LocalDeleteRulesTest {
         assertEquals(listOf("Z"), updated.groupIntoAlbums().map { it.name })
     }
 
+    // ========== 专辑剩余可见行数（删空自动返回判据） ==========
+
     @Test
-    fun `专辑剩余可见行数按分组键清点排除文件夹不计入`() {
-        // 专辑页「删空自动返回」的判据：删后该专辑剩余可见行数（被排除文件夹的行不进专辑视图）
+    fun `专辑剩余可见行数只数同专辑的可见行`() {
+        val visible1 = row(1L, "Alpha", album = "X")
+        val visible2 = row(2L, "Bravo", album = "X")
+        val hidden = row(3L, "Charlie", album = "X", path = "Excluded/")
+        val otherAlbum = row(4L, "Delta", album = "Z")
+        val excludedFolders = setOf("Excluded")
+        val songs = listOf(visible1, visible2, hidden, otherAlbum)
+
+        // 同专辑 2 可见 + 1 被排除 → 2：被排除文件夹的行不计入
+        assertEquals(2, remainingVisibleInAlbum(songs, visible1.albumKey(), excludedFolders))
+        // 别的专辑的行不掺进来：Z 只有自己的 1 行
+        assertEquals(1, remainingVisibleInAlbum(songs, otherAlbum.albumKey(), excludedFolders))
+        // 整张专辑的行都在被排除文件夹 → 0（可见口径与专辑视图一致）
+        assertEquals(0, remainingVisibleInAlbum(listOf(hidden), visible1.albumKey(), excludedFolders))
+        // 空列表 → 0
+        assertEquals(0, remainingVisibleInAlbum(emptyList(), visible1.albumKey(), excludedFolders))
+        // 删掉专辑最后一首可见行 → 0：这正是「删空自动返回」的触发判据（被排除的行不算剩余）
+        val soloVisible = row(5L, "Echo", album = "Solo")
+        val soloHidden = row(6L, "Foxtrot", album = "Solo", path = "Excluded/")
+        val afterLast = songsAfterDelete(listOf(soloVisible, soloHidden), soloVisible.id, LocalDeleteResult.Success)
+        assertEquals(0, remainingVisibleInAlbum(afterLast, soloVisible.albumKey(), excludedFolders))
+    }
+
+    @Test
+    fun `删除后专辑剩余可见行数与重新分组同口径`() {
         val visible1 = row(1L, "Alpha", album = "X")
         val visible2 = row(2L, "Bravo", album = "X")
         val hidden = row(3L, "Charlie", album = "X", path = "Excluded/")
         val excludedFolders = setOf("Excluded")
 
         val updated = songsAfterDelete(listOf(visible1, visible2, hidden), visible1.id, LocalDeleteResult.Success)
-        val visible = updated.excludingFolders(excludedFolders)
 
-        assertEquals(1, visible.count { it.albumKey() == visible1.albumKey() })
-        // 与专辑视图同口径：重新分组后 X 也只剩 1 首
-        assertEquals(1, visible.groupIntoAlbums().first { it.name == "X" }.songs.size)
+        // 端到端：删除整形 → 剩余可见行数 1；与专辑视图重新分组后的计数一致（各自对字面量断言）
+        assertEquals(1, remainingVisibleInAlbum(updated, visible1.albumKey(), excludedFolders))
+        assertEquals(1, updated.excludingFolders(excludedFolders).groupIntoAlbums().first { it.name == "X" }.songs.size)
     }
 }

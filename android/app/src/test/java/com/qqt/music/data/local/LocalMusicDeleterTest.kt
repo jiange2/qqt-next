@@ -12,6 +12,8 @@ import org.junit.Test
  *
  * 这些口径守住的是分版本链路的边界：30+ 走系统删除框、29 走 RecoverableSecurityException 授权、
  * ≤28 申请 WRITE_EXTERNAL_STORAGE 直接删；运行时权限框只在 23–28 出现（<23 安装即授予、29+ 不申请）。
+ * 失败结果还带「文件是否确认已不在」的判定：只有 delete 返回非正行数才置位（灰显是持久化且阻断播放的
+ * 状态，要正面证据），其余失败一律保持可播。
  * 系统框 / ContentResolver / MediaStore 的真实交互依赖框架，留真机手工验收（本仓不跑 Gradle）。
  * 断言用独立字面量（结果码 -1/0/1 即 RESULT_OK / RESULT_CANCELED / RESULT_FIRST_USER），不与实现同源。
  */
@@ -71,10 +73,11 @@ class LocalMusicDeleterTest {
     }
 
     @Test
-    fun `删除行数为零或负归一为失败且不带异常`() {
-        // 0 行 = 文件已被外部删除或 URI 失效：失败结果而非崩溃
-        assertEquals(LocalDeleteResult.Failure(), normalizeDeleteRows(0))
-        assertEquals(LocalDeleteResult.Failure(), normalizeDeleteRows(-1))
+    fun `删除行数为零或负归一为失败并确认文件已不在`() {
+        // 0 行 = 文件已被外部删除或 URI 失效：失败结果而非崩溃；
+        // 这是唯一「确认媒体库行已不在」的失败证据 → fileUnavailable 置位，UI 据此灰显该行
+        assertEquals(LocalDeleteResult.Failure(fileUnavailable = true), normalizeDeleteRows(0))
+        assertEquals(LocalDeleteResult.Failure(fileUnavailable = true), normalizeDeleteRows(-1))
         assertNull((normalizeDeleteRows(0) as LocalDeleteResult.Failure).cause)
     }
 
@@ -93,8 +96,19 @@ class LocalMusicDeleterTest {
     @Test
     fun `系统删除框其它结果码归一为失败`() {
         // 1 = Activity.RESULT_FIRST_USER（非 OK 非 CANCELED）
-        assertEquals(LocalDeleteResult.Failure(), normalizeSystemDeleteResult(1))
-        assertNull((normalizeSystemDeleteResult(1) as LocalDeleteResult.Failure).cause)
+        val failure = normalizeSystemDeleteResult(1) as LocalDeleteResult.Failure
+        assertEquals(LocalDeleteResult.Failure(), failure)
+        assertNull(failure.cause)
+        // 异常结果码不证明文件不可播：fileUnavailable 保持默认 false，行不灰显
+        assertFalse(failure.fileUnavailable)
+    }
+
+    @Test
+    fun `失败结果默认不判定文件不可用`() {
+        // 灰显是持久化且阻断播放的状态，只有「确认媒体库行已不在」才置位；
+        // 默认失败与 provider 异常都不证明文件不可播，必须保持可播
+        assertFalse(LocalDeleteResult.Failure().fileUnavailable)
+        assertFalse(LocalDeleteResult.Failure(IllegalStateException("provider 出错")).fileUnavailable)
     }
 
     @Test

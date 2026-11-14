@@ -20,3 +20,14 @@ internal fun songsAfterDelete(songs: List<LocalSong>, songId: String, result: Lo
  */
 internal fun needsAppDeleteConfirm(sdkInt: Int): Boolean =
     deleteRoute(sdkInt) == DeleteRoute.DirectWrite
+
+/**
+ * 专辑删空自动返回的判据（纯函数，JVM 可测）：删后该专辑剩余的可见行数——
+ * 只数可见行（被排除文件夹的行不计入），与专辑视图同口径（[excludingFolders] 后按 [albumKey] 清点）。
+ * 剩余 0 即专辑被删空，导航层据此把专辑页自动返回本地音乐页（决策 A2）。
+ */
+internal fun remainingVisibleInAlbum(
+    songs: List<LocalSong>,
+    albumKey: String,
+    excludedFolders: Collection<String>,
+): Int = songs.excludingFolders(excludedFolders).count { it.albumKey() == albumKey }

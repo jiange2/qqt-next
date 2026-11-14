@@ -103,7 +103,16 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     // 从专辑页发起删除时本地音乐页已离开组合，页面级 launcher 会随之注销丢回调
     val systemDeleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
-    ) { result -> localMusicViewModel.onSystemDeleteDialogResult(result.resultCode) }
+    ) { result ->
+        // IntentSender 发送自身失败时契约回 RESULT_CANCELED + EXTRA_SEND_INTENT_EXCEPTION：
+        // 不区分就会被接缝当成用户取消而静默，这里显式标成拉起失败，让用户看到「删除失败」
+        localMusicViewModel.onSystemDeleteDialogResult(
+            resultCode = result.resultCode,
+            launchFailed = result.data?.hasExtra(
+                ActivityResultContracts.StartIntentSenderForResult.EXTRA_SEND_INTENT_EXCEPTION
+            ) == true,
+        )
+    }
     val writePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> localMusicViewModel.onWritePermissionResult(granted) }
