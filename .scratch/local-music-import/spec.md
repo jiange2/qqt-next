@@ -1,0 +1,125 @@
+# 本地音乐导入（接收微信/QQ 等 App 递出的音频）
+
+Status: ready-for-agent
+
+> 延续 ADR 0022（MediaStore 来源、行 ID 身份、全机音乐 + 排除文件夹）与 ADR 0020（元数据只写 App 内覆盖层、不回写文件标签），不推翻任何 ADR。导入是新增的写侧能力（接收外部音频 → 复制进媒体库），非架构变更。入口形态由系统边界决定：qqt 够不到来源 App 的私有目录（`Android/data/`），只能接收来源 App 经「用其他应用打开 / 分享」递出的文件，故 qqt 内不设导入按钮。
+
+## Problem Statement
+
+用户在微信/QQ 里收到的 mp3 等音频，被存在来源 App 自己的私有目录（`Android/data/com.tencent.mm/`、`Android/data/com.tencent.mobileqq/`）。Android 11+ 上系统媒体库不收录这些目录，本地音乐（来源为系统媒体库）扫不到，用户没法在 qqt 里听这些歌。手动用文件管理器挪文件也不顺手——文件管理器同样进不去来源 App 私有目录。用户需要一条把微信/QQ 收到的音频收进本地音乐库的路。
+
+## Solution
+
+入口在来源 App 一侧：用户在微信/QQ 里点音频 →「用其他应用打开」或「分享」→ 选 qqt。qqt 注册成音频的打开方式 / 分享目标，接住来源 App 递出的 `content://` URI，把文件复制进系统媒体库的公共音乐目录 `Music/导入/`，它就成为一首普通本地歌曲，自动进本地音乐库。导入只落库、不自动播放；qqt 界面内不设导入按钮（够不到来源 App 私有目录，按钮点下去也无文件可挑）。对任何 App 的音频打开/分享生效，不止微信/QQ。重复导入各自成行、不去重不覆盖（沿用 ADR 0022）。
+
+## User Stories
+
+1. 作为本地音乐听众，我在微信里点收到的 mp3 →「用其他应用打开」→ 选 qqt，以便把这首歌收进本地音乐。
+2. 作为本地音乐听众，我在微信里用「分享」把音频发给 qqt，以便分享出口也能导入。
+3. 作为本地音乐听众，我在 QQ 里同样「用其他应用打开 / 分享」选 qqt，以便 QQ 收到的歌也能进库。
+4. 作为本地音乐听众，我在任何 App（文件管理器、网盘、其他播放器）里打开/分享音频选 qqt 都能导入，以便不限于微信/QQ。
+5. 作为本地音乐听众，我导入成功后看到轻提示「已导入到本地音乐」，以便知道收进来了。
+6. 作为本地音乐听众，我导入的歌落在公共音乐目录的 `Music/导入/` 文件夹，以便和我自己的音乐分开、好认好管理。
+7. 作为本地音乐听众，我导入后回到本地音乐页就能看到这首歌（自动刷新），以便不用手动点重新扫描。
+8. 作为本地音乐听众，我导入只落库、不自动播放，以便不打断我当前正在听的歌、不重建播放队列。
+9. 作为本地音乐听众，我把同一首歌导两遍，库里各自成行出现两条，以便和现有「同一内容多副本各自成行」的库行为一致。
+10. 作为本地音乐听众，目标文件夹已有同名文件时导入自动加后缀，以便不覆盖旧文件、每次导入都各自成行。
+11. 作为本地音乐听众，导入失败时看到轻提示「导入失败」，以便知道没成功，且不留半截文件。
+12. 作为本地音乐听众，qqt 没在运行时从微信打开音频选 qqt，冷启动也能完成导入，以便不用先手动开 App。
+13. 作为本地音乐听众，qqt 已在运行时导入，走同一入口完成，以便不用重启 App。
+14. 作为本地音乐听众，我没给音频读取权限时导入照样落库成功，以便文件先收进来；进本地音乐页走现有权限引导、授权后就能看到。
+15. 作为本地音乐听众，我导入的歌成为一首普通本地歌曲，能播放、能编辑信息、能批量管理、能左滑删除，以便和库里其他歌一样对待。
+16. 作为本地音乐听众，我导入的歌按现有本地专辑归并规则分组（有专辑标签按「专辑名 + 专辑艺术家」，无标签按所在文件夹名兜底），以便归并行为可预期。
+17. 作为本地音乐听众，我在 qqt 界面里找不到「导入」按钮，以便不被误导以为 qqt 能扫微信——入口在来源 App 的打开方式菜单。
+18. 作为本地音乐听众，我分享非音频文件给 qqt 不会被接收，以便只收音频、不收杂物。
+19. 作为本地音乐听众，导入过程中当前播放不中断、播放队列不重建，以便听歌不受影响。
+20. 作为本地音乐听众，我导入的歌重启 App 后仍在（随库快照落盘），以便整理成果不丢。
+21. 作为本地音乐听众，我导入的歌文件被我在外部删除后，下次刷新自然消失（行 ID 身份），以便和现有失效口径一致。
+22. 作为本地音乐听众，我导入的歌可被「排除文件夹」移出展示（`Music/导入/` 也是库中含音乐的文件夹），以便不想看时能排除。
+23. 作为本地音乐听众，我导入的歌默认取系统媒体库预抽取的标签作展示值，并可被覆盖层编辑，以便和现有本地歌曲的元数据口径一致。
+
+## Implementation Decisions
+
+### 入口与接收
+
+- MainActivity 新增 intent-filter：`ACTION_VIEW` + `ACTION_SEND`，MIME 限 `audio/*`，`content` scheme（VIEW 取 `intent.data`，SEND 取 `EXTRA_STREAM`）。对任何 App 的音频打开/分享生效，不止微信/QQ。
+- 先只处理单文件；多文件分享（`ACTION_SEND_MULTIPLE`）本期不支持。
+- qqt 界面内不设导入按钮、不做 SAF 选择器掏来源 App 私有目录（系统边界，ADR 0022 已定不补充）。
+- 非音频 MIME 不接收（intent-filter 已限 `audio/*`，胶水层再校验一次）。
+
+### 意图胶水（UI 层）
+
+- MainActivity `onCreate`（冷启动）与 `onNewIntent`（在运行）解析意图：取音频 URI → 调 `LocalMusicViewModel.importAudio(uri)`。必要时调整 launchMode 保证在运行复用实例走 `onNewIntent`。
+- 胶水只做「解析 URI + 转交」，不含复制/命名/刷新逻辑（那些在接缝与 ViewModel）。
+
+### 唯一写侧接缝（数据层）
+
+- 新增 `LocalMusicImporter` 接口（镜像 `LocalMusicDeleter`）：`suspend fun importAudio(sourceUri: Uri): LocalImportResult`。UI 与 ViewModel 只调它，不直接碰 MediaStore 写入 API。
+- 结果归一 `LocalImportResult`（sealed，镜像 `LocalDeleteResult` / `LocalLibraryResult` 风格）：Success / Failure（带可空原因）。
+- 实现 `MediaStoreImporter(context, sdkInt)`（与 `MediaStoreLibrarySource` / `MediaStoreDeleter` 同口径注入 sdkInt）：
+  - Android 10+（API 29+）：`MediaStore.Audio.Media` 插入，`RELATIVE_PATH = "Music/导入/"`，`IS_PENDING = 1` 期间写入字节、写完置 0（失败不暴露半截文件）；App 拥有自己创建的行，**不需要新权限**。
+  - Android 9 及以下（≤28）：写公共 `Music/导入/` 目录 + `MediaScannerConnection` 触发扫描（`WRITE_EXTERNAL_STORAGE` 清单已有，maxSdkVersion 29）。
+- 框架 IO（ContentResolver 读写、MediaStore 插入、扫描）留真机手工验收。
+
+### 纯函数（JVM 可测）
+
+- `importRoute(sdkInt)`：版本路由（MediaStore 插入 / 直写 + 扫描），镜像 `deleteRoute`。
+- `resolveImportFileName(desired, existingNames)`：目标目录重名时加后缀、保留扩展名，保证「各自成行、不覆盖」。
+- 展示名推导：从来源 URI 尾段 / 文件名取展示名（接缝 impl 取原始名，纯函数做规范化）。
+
+### 重复与重名语义
+
+- 每次导入生成新文件、新媒体库行（各自成行，沿用 ADR 0022「同一内容多副本各自成行、不做内容级去重」）。
+- 目标目录已有同名文件 → 纯函数加后缀，不覆盖旧文件。
+
+### ViewModel 编排
+
+- 新增 `importAudio(uri)` 入口：调接缝 → Success 触发 `refresh(notify = false)`（复用现有整库刷新管线）+ `notice`「已导入到本地音乐」；Failure → `notice`「导入失败」。
+- 不自动播放、不重建播放队列、不动当前播放。
+- 注入沿用现有内部构造器（与 `source` / `deleter` 同口径），fake 接缝即可 JVM 测编排。
+- 提示经现有 `notice` StateFlow → 导航层 collector 弹 Toast（两页共用口径）。
+
+### 权限与身份
+
+- 复制落库本身不需音频读取权限：接住来源 App 授予的 URI 读权限 + 写自己创建的媒体库行。
+- 要在本地音乐页**看到**导入的歌仍需现有音频读取权限——没给就走现有权限引导（灰显 + 重新授权横幅），导入照样成功。
+- 导入的歌 = 普通本地歌曲，行 ID 身份（ADR 0022，Android 10+ 带卷名限定）；覆盖层编辑、批量管理、左滑删除、播放全复用现有机制。
+
+### 文档
+
+- CONTEXT.md 已新增「导入（本地音乐）」词条（grilling 期间落地），弃用「扫描微信/QQ」「导入按钮」。
+- `android/doc/ui.md`、`android/doc/storage.md` 补导入节（入口、接缝、落库目录、刷新与提示）——随实现票据同步。
+- 不新增 ADR：导入是可逆的新增能力（去掉 intent-filter 与接收逻辑即可），延续 ADR 0020 / 0022、无推翻；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）中「难以反转」不成立。「入口在来源 App 而非 qqt 按钮」的系统边界理由记入词条与本 spec。
+
+## Testing Decisions
+
+- 好测试只测外部行为、不测实现细节：纯函数测路由/命名/归一的输入输出，ViewModel 测「成功→刷新+提示 / 失败→提示 / 不播放」的可观察结果，不断言内部调用顺序。
+- 纯函数 JVM 测试：`importRoute` 版本路由、`resolveImportFileName`（重名加后缀、扩展名保留、无扩展名/空名等边界）、展示名推导（`LocalImportRulesTest`，照 `LocalMusicDeleterTest` 先例）。
+- ViewModel 编排 JVM 测试：fake `LocalMusicImporter` 经内部构造器注入，断言 Success 触发刷新与「已导入到本地音乐」、Failure 出「导入失败」、不自动播放（照 source / deleter 的 fake 注入范式）。
+- 接缝 MediaStore 实现 + 意图胶水：真机手工验收（设备级验收清单，各票未勾选项）——微信/QQ 打开方式与分享、冷启动/在运行、落 `Music/导入/`、重名加后缀、重复导入各自成行、失败提示、无权限落库成功、导入歌可播/可编辑/可删除、飞行模式可用（纯本地）。
+- 先例：`LocalMusicDeleterTest`、`MediaStoreProjectionTest`、`AudioReadPermissionTest`（纯函数 JVM）；ViewModel fake 注入照 `LocalMusicLibrarySource` / `LocalMusicDeleter`。
+- 本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
+
+## Out of Scope
+
+- qqt 内导入按钮 / SAF 掏微信/QQ 私有目录（系统边界，ADR 0022 不补充）。
+- 多文件分享（`ACTION_SEND_MULTIPLE`）——先单文件。
+- 内容去重、导入历史、来源标记徽章。
+- 导入后自动播放。
+- 自定义导入目录（固定 `Music/导入/`）。
+- 导入进度条（复制毫秒~秒级，Toast 即够；大文件进度本期不做）。
+- 写回文件标签 / 改动来源 App 的文件（只复制，不动来源）。
+- 非音频文件导入。
+- 本地音乐内搜索、排序菜单（沿用既有 Out of Scope）。
+
+## Further Notes
+
+- 「入口在来源 App 一侧、qqt 内无按钮」是系统边界决定的（qqt 够不到 `Android/data/` 私有目录，SAF 选择器同样被挡），不是产品取舍——未来读者疑惑「为何没有导入按钮」以此解释。
+- 无专辑标签的导入歌按文件夹名兜底，聚成一个「导入」专辑（grilling Q2 已接受的副作用）；有专辑标签的按「专辑名 + 专辑艺术家」正常归并。
+- 行 ID 身份：导入歌文件被外部删除后重导 = 新行 = 覆盖层编辑丢失（ADR 0022 已知取舍，导入不改变）。
+- 专辑艺术家列 API 30+ 才有值，低版本标签为空走兜底（与现有本地歌曲一致）。
+- 导入与在途刷新的竞态沿用既有已知取舍（最后写入胜出）：导入成功触发的刷新与用户手动重扫重叠时，各按提交时刻现值落盘，不额外缓解。
+
+## Comments
+
+- 2026-11-14 grilling 定稿：方向（做导入功能）与入口形态（来源 App「用其他应用打开 / 分享」+ qqt 接收器、qqt 内无按钮）确认；Q1 进库即止不自动播放、Q2 落 `Music/导入/`、Q3 各自成行不去重不覆盖，三项全部同意。机制委托项（VIEW+SEND audio/*、MediaStore 插入 IS_PENDING、重名加后缀、冷启动/在运行、复用刷新与 notice、无需新权限、单文件先行）随答复一并确认。接缝提案（唯一写侧接缝 `LocalMusicImporter` 镜像 `LocalMusicDeleter` + 纯函数 JVM 测 + ViewModel fake 注入 + 意图胶水真机验收）经用户确认。CONTEXT.md「导入（本地音乐）」词条已写入。spec 入库，Status ready-for-agent，票据留待 /to-tickets 编排（本仓规约：AI 不编译、不跑 gradlew）。
