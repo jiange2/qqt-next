@@ -33,7 +33,7 @@ import com.qqt.music.ui.theme.InkPrimary
 import com.qqt.music.ui.theme.InkSecondary
 
 /**
- * 批量编辑面板（票据02，spec「批量面板」）：编辑模式勾选 ≥1 首后从底栏「编辑信息」打开。
+ * 批量管理面板（票据02，spec「批量面板」）：编辑模式勾选 ≥1 首后从底栏「编辑信息」打开。
  * 与单首面板 [LocalMetadataEditSheet] 同款 ModalBottomSheet，但只有专辑 / 专辑艺术家两个
  * 自由文本字段，初始为空、不预填、无「恢复默认」；「留空 = 不改」（与单首面板
  * 「留空 = 恢复文件原值」相反）。两字段 trim 皆空时保存禁用（[batchPanelCanSave]）。
@@ -63,7 +63,7 @@ fun LocalBatchEditSheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 28.dp),
         ) {
-            Text("批量编辑信息", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = InkPrimary)
+            Text("批量管理", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = InkPrimary)
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "已选 $selectedCount 首 · 只改 App 里的显示，不会修改音频文件本身",

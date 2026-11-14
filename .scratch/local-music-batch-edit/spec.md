@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 
-> 延续 ADR 0020（元数据只写 App 内覆盖层、不回写文件标签）与 ADR 0022（MediaStore 来源、行 ID 身份），不推翻任何 ADR。批量编辑收回 v1 / rescan spec 的 Out of Scope 边界（当时明确不做），是新增能力而非架构变更。基线含已归档的视图切换特性（main 822234d：默认专辑视图、切换进顶栏 ⋮ 菜单）。
+> 延续 ADR 0020（元数据只写 App 内覆盖层、不回写文件标签）与 ADR 0022（MediaStore 来源、行 ID 身份），不推翻任何 ADR。批量管理收回 v1 / rescan spec 的 Out of Scope 边界（当时明确不做），是新增能力而非架构变更。基线含已归档的视图切换特性（main 822234d：默认专辑视图、切换进顶栏 ⋮ 菜单）。
 
 ## Problem Statement
 

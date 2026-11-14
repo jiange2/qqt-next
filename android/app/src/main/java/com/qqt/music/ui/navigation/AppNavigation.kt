@@ -451,7 +451,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             )
         }
 
-        // 批量编辑面板（票据02，spec「批量面板」）：编辑模式底栏「编辑信息」打开。
+        // 批量管理面板（票据02，spec「批量面板」）：编辑模式底栏「编辑信息」打开。
         // 保存接票据01 的一次提交入口（整表一次原子落盘），成功即关面板 + 退出编辑模式 + 清空勾选；
         // Toast「已修改 n 首」走上方既有 notice 链路自动弹出，这里不另弹、不做播放器同步
         if (localMusicEditing && localMusicBatchPanelOpen) {
