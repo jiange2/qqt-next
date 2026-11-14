@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: 导入接缝与纯函数（数据层）.
 
-**Status:** open
+**Status:** resolved
 
 - [ ] 微信音频「用其他应用打开」→ 选 qqt，导入成功
 - [ ] 微信「分享」音频 → 选 qqt，导入成功
@@ -27,3 +27,4 @@
 ## Comments
 
 - 2026-11-14 完成。提交 689e60f（合并 c701e4b），7 个文件。Manifest：MainActivity 加 `singleTask`（在运行复用走 onNewIntent 的必要条件，standard 会新建 Activity/ViewModel）+ 两个 filter——VIEW 带 `content` scheme + `audio/*`；**SEND 仅 `audio/*` 不带 scheme（与 spec 字面的偏差，已裁定）**：SEND 意图只带 MIME、无 data URI，`IntentFilter.matchData` 在 filter 声明 scheme 时对 SEND 的空 scheme 必 NO_MATCH_DATA（源码核实），带 scheme 会令分享入口失效；content scheme 改由胶水层对 EXTRA_STREAM 防御性校验，spec 意图（只收音频 content URI）不变。MainActivity：`localMusicViewModel by viewModels()` 与 AppNavigation 的 Compose `viewModel()` 命中同一实例（同 Activity ViewModelStore + 默认 factory + 默认 key，无 owner 覆写；PlayerViewModel 先例同机制），**AppNavigation 零改动**；onCreate 末尾 + 新增 onNewIntent（super + setIntent）共用 handleImportIntent：VIEW 取 data、SEND 取 `IntentCompat.getParcelableExtra(EXTRA_STREAM, Uri::class.java)`（core 1.13.1 javap 核实）；MIME = intent.type ?: resolver.getType(uri)，拿不到拒收、audio/* 前缀忽略大小写；非 content 拒收；SEND_MULTIPLE 静默忽略；胶水不弹 Toast（提示走 VM notice → 导航层既有 collector，StateFlow 保值冷启动不丢）。VM：importer 字段 + internal 构造器加参（原构造器零调用方、无破坏）；`importAudio` → Success：`refresh(notify = false)` + notice「已导入到本地音乐」/ Failure：notice「导入失败」；与播放器零耦合（不引 PlayerViewModel、不调 playSong/skip*），刷新竞态沿用最后写入胜出不加锁。**测试基础设施（spec 缺口，已裁定）**：新增 `testImplementation` kotlinx-coroutines-test **1.8.1**（POM 依赖链核实：coil 2.7.0 → coroutines-android 1.8.1；lifecycle 2.8.4 声明 1.7.3 冲突取高；缓存仅 descriptor 无 jar，**首次人工编译需联网**拉取）+ `testOptions.unitTests.isReturnDefaultValues = true`（现有纯函数测试不调 android 方法、不受影响）；不引 Robolectric/mockk。VM 编排测试 3 例（成功→提示+新歌经 songs 可见 / 失败→提示+列表不动 / 无权限→成功提示+刷新静默跳过）：fake source/importer 经 internal 构造器注入，UnusedDeleter 被调即响亮失败（编排不越界信号）；StandardTestDispatcher + setMain，VM 硬编码 IO/Default 跳线程由 runTest 实时等待、挂起 first{} 落定；mockable jar 清空 Uri 静态初始化（AGP 8.5.2 MockableJarGenerator 字节码核实）→ 测试 source set `android.net.TestUri` 替身（包私有构造器同包继承，除 toString 外全抛、意外框架调用响亮失败）；测试 Application 覆写 getFilesDir 到 TemporaryFolder（否则 filesDir=null 快照落 cwd 用例间串库）。JVM 测试 3 例已写、未执行（本仓规约：AI 不编译、不跑 gradlew）。勾选项为设备级验收清单，留待人工编译后真机逐项确认（含 singleTask 三态：冷启动 / 在运行 / 桌面图标回栈）。
+- 2026-11-14 归档：Status open → resolved。评审修复合入集成分支（9d698be，合并 c2f7d11）：FIX4 VM 测试 FakeImporter 拆 FakeSuccessImporter / FakeFailureImporter 两个无分支 fake（mocking.md「mock 内无分支」），三用例断言不变。集成分支 feat/local-music-import tip c2f7d11，随用户请求合并 main 并打包 release（本次编译为用户显式授权，禁编译规约的当次例外）。勾选项为设备级验收清单，保持未勾，待人工编译后真机逐项确认（含 singleTask 三态：冷启动 / 在运行 / 桌面图标回栈）。
