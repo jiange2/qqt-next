@@ -3,6 +3,8 @@ package com.qqt.music.ui.navigation
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -13,9 +15,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -27,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.qqt.music.data.local.LocalDeleteAction
 import com.qqt.music.data.local.decodeLocalAlbumKey
 import com.qqt.music.data.local.encodeLocalAlbumKey
 import com.qqt.music.ui.components.DrawerContent
@@ -92,6 +98,42 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         localMusicViewModel.markUnavailable(songId)
         Toast.makeText(context, "文件不可用", Toast.LENGTH_SHORT).show()
         playerViewModel.consumeUnavailableLocalSong()
+    }
+    // 本地歌曲删除（票据02）：系统删除/授权框与写入权限框的 launcher 都注册在导航层（宿主常驻）——
+    // 从专辑页发起删除时本地音乐页已离开组合，页面级 launcher 会随之注销丢回调
+    val systemDeleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result -> localMusicViewModel.onSystemDeleteDialogResult(result.resultCode) }
+    val writePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> localMusicViewModel.onWritePermissionResult(granted) }
+    // ViewModel 产出「下一步动作」（系统框 / 权限框），这里拉起后清空（与 notice 同范式）
+    val pendingDeleteAction by localMusicViewModel.pendingDeleteAction.collectAsState()
+    LaunchedEffect(pendingDeleteAction) {
+        when (val action = pendingDeleteAction) {
+            is LocalDeleteAction.LaunchSystemDialog -> systemDeleteLauncher.launch(action.request)
+            is LocalDeleteAction.RequestWritePermission -> writePermissionLauncher.launch(action.permission)
+            else -> return@LaunchedEffect
+        }
+        localMusicViewModel.consumePendingDeleteAction()
+    }
+    // 删除成功且删空的是当前专辑 → 自动返回本地音乐页：绑定在删除成功动作上，
+    // 不做「专辑消失就 pop」的通用观察——进程被杀恢复到本就不存在的专辑时仍显示既有空态
+    val deleteSucceeded by localMusicViewModel.deleteSucceeded.collectAsState()
+    LaunchedEffect(deleteSucceeded) {
+        val event = deleteSucceeded ?: return@LaunchedEffect
+        localMusicViewModel.consumeDeleteSucceeded()
+        if (!isLocalAlbum || event.remainingSongs != 0) return@LaunchedEffect
+        val currentAlbumKey = backStackEntry?.arguments?.getString("lid")?.let(::decodeLocalAlbumKey)
+        if (currentAlbumKey == event.albumKey) navController.popBackStack()
+    }
+    // 本地音乐域的一次性轻提示（重扫数量 / 刷新失败 / 删除失败）：导航层统一 Toast——
+    // 专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页原消费点已删，避免双弹）
+    val notice by localMusicViewModel.notice.collectAsState()
+    LaunchedEffect(notice) {
+        val text = notice ?: return@LaunchedEffect
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+        localMusicViewModel.consumeNotice()
     }
     val isLocalMusic = currentRoute == Screen.LocalMusic.route
     // 本地音乐域（歌曲/专辑视图与本地专辑页）不发任何请求：断网/服务不可达横幅对它没有意义（spec 用户故事 38）
@@ -322,6 +364,23 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                 playerViewModel = playerViewModel,
                 localMusicViewModel = localMusicViewModel,
                 onBackClick = { playerOverlay = false },
+            )
+        }
+
+        // ≤28 的 App 内删除确认框（票据02）：29/30+ 系统框即唯一确认，此框永不出现。
+        // 导航层渲染、两页共用；文案沿用下载页句式、语义改对本地歌曲（不设 color，走 M3 默认）
+        val pendingDeleteConfirm by localMusicViewModel.pendingDeleteConfirm.collectAsState()
+        pendingDeleteConfirm?.let { song ->
+            AlertDialog(
+                onDismissRequest = { localMusicViewModel.cancelDeleteConfirm() },
+                title = { Text("删除本地歌曲") },
+                text = { Text("「${song.displayTitle()}」将从设备存储删除，其他应用也不再可见。") },
+                confirmButton = {
+                    TextButton(onClick = { localMusicViewModel.confirmDelete() }) { Text("删除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { localMusicViewModel.cancelDeleteConfirm() }) { Text("取消") }
+                },
             )
         }
     }

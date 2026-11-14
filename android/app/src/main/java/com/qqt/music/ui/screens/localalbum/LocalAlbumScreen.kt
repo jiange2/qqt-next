@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,14 +30,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
+import com.qqt.music.ui.components.RowSwipeAction
+import com.qqt.music.ui.components.RowSwipeRevealState
 import com.qqt.music.ui.screens.localmusic.LocalAlbumCover
 import com.qqt.music.ui.screens.localmusic.LocalMetadataEditSheet
 import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
@@ -51,6 +59,7 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 歌曲按音轨号升序（音轨号为空按标题）——顺序在分组时就算好了（[com.qqt.music.data.local.groupIntoAlbums]）；
  * 点歌以整张专辑为播放队列，来源仍是本地音乐（与本地音乐页共用同一份来源记忆）。
  * 长按歌曲行同样可以打开元数据编辑面板（与歌曲视图、全屏播放器同一个面板）。
+ * 歌行左滑删除与本地音乐页同一条接缝；删空这张专辑时由导航层自动返回本地音乐页。
  * 数据全部来自扫描索引，页面不发起任何网络请求。
  */
 @Composable
@@ -61,9 +70,30 @@ fun LocalAlbumScreen(
 ) {
     val albums by viewModel.albums.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val permissionGranted by viewModel.permissionGranted.collectAsState()
     val album = albums.firstOrNull { it.key == albumKey }
     // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
     var editingSong by remember { mutableStateOf<LocalSong?>(null) }
+    val swipeState = remember { RowSwipeRevealState() }
+    val listState = rememberLazyListState()
+    // 列表滚动即收起左滑展开态，避免行停在半开位置
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) swipeState.close()
+    }
+
+    // 进专辑页核对音频权限（不刷新）：进程被杀后直接恢复到专辑页不走本地音乐页的 onPageEntered，
+    // 不核对则 permissionGranted 停在初值 false，正常已授权的库被误判成权限被关（左滑删除露不出）
+    LaunchedEffect(Unit) { viewModel.onAlbumPageEntered() }
+
+    // 回到前台重新核对权限（与本地音乐页同口径）：系统设置里被关掉时灰显与删除门槛立即生效
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onAppResumed()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     when {
         // 索引还没读回来：先别把「还没读出来」当成「专辑没有了」
@@ -87,6 +117,7 @@ fun LocalAlbumScreen(
             val queue = album.songs.map { it.toSong() }
             LazyColumn(
                 modifier = Modifier.weight(1f),
+                state = listState,
                 contentPadding = PaddingValues(bottom = 6.dp),
             ) {
                 itemsIndexed(album.songs, key = { _, song -> song.id }) { index, song ->
@@ -103,6 +134,8 @@ fun LocalAlbumScreen(
                             )
                         },
                         onLongClick = { editingSong = song },
+                        // 权限被关时不露左滑删除（整库灰显是权限问题，不是文件失效）；文件真不可用的行照常可删
+                        swipe = if (permissionGranted) RowSwipeAction(swipeState, "删除") { viewModel.requestDelete(song) } else null,
                     )
                 }
             }

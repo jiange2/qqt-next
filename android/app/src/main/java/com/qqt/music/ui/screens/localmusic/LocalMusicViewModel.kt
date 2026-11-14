@@ -1,23 +1,31 @@
 package com.qqt.music.ui.screens.localmusic
 
 import android.app.Application
+import android.os.Build
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.qqt.music.data.local.LocalAlbum
+import com.qqt.music.data.local.LocalDeleteAction
+import com.qqt.music.data.local.LocalDeleteResult
 import com.qqt.music.data.local.LocalFolder
 import com.qqt.music.data.local.LocalLibraryResult
 import com.qqt.music.data.local.LocalMetadataDraft
+import com.qqt.music.data.local.LocalMusicDeleter
 import com.qqt.music.data.local.LocalMusicLibrarySource
 import com.qqt.music.data.local.LocalMusicStore
 import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
+import com.qqt.music.data.local.MediaStoreDeleter
 import com.qqt.music.data.local.MediaStoreLibrarySource
+import com.qqt.music.data.local.albumKey
 import com.qqt.music.data.local.distinctFolders
 import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
+import com.qqt.music.data.local.needsAppDeleteConfirm
 import com.qqt.music.data.local.overrideFrom
+import com.qqt.music.data.local.songsAfterDelete
 import com.qqt.music.data.local.sortedByDisplayTitle
 import com.qqt.music.data.local.trackNoInput
 import com.qqt.music.data.local.valueOrNull
@@ -55,6 +63,13 @@ sealed interface LocalMetadataSaveResult {
 }
 
 /**
+ * 删除成功的一次性事件（导航层消费，消费后清空）：被删歌曲所属专辑的分组键与删后剩余可见行数——
+ * 剩余 0 即专辑被删空，专辑页据此自动返回本地音乐页。剩余数在删除提交时同步算好：
+ * [LocalMusicViewModel.albums] 派生经默认调度器异步重算，事件消费时读它会拿到删除前的旧值。
+ */
+data class LocalDeleteSuccess(val albumKey: String, val remainingSongs: Int)
+
+/**
  * 本地音乐页状态：音频读取权限、库列表与一次性提示。
  *
  * 来源是系统媒体库（[LocalMusicLibrarySource]）：授权后整库一次查询（毫秒级），没有扫描进度与取消。
@@ -70,14 +85,23 @@ sealed interface LocalMetadataSaveResult {
  * 直载系统预抽取的专辑图（[com.qqt.music.data.local.LocalAlbum.albumArtUri]），ViewModel 不经手封面。
  * 元数据编辑（[saveMetadata] / [restoreDefaultMetadata]）只改写覆盖层与展示值（按歌曲身份记键），
  * 不重查、不碰文件；重扫后改动仍然生效。
+ * 左滑删除（[requestDelete]）经分版本接缝 [LocalMusicDeleter]：成功即时移除行并落盘快照，
+ * 失败提示「删除失败」并标记不可用，≤28 先弹 App 确认框（29/30+ 系统框即唯一确认）。
  */
 class LocalMusicViewModel(private val application: Application) : AndroidViewModel(application) {
 
     private var source: LocalMusicLibrarySource = MediaStoreLibrarySource(application)
 
-    /** 测试注入点：伪造行列表即可驱动整条纯 Kotlin 管线（spec「Testing Decisions」） */
-    internal constructor(application: Application, source: LocalMusicLibrarySource) : this(application) {
+    private var deleter: LocalMusicDeleter = MediaStoreDeleter(application)
+
+    /** 测试注入点：伪造行列表即可驱动整条纯 Kotlin 管线（spec「Testing Decisions」）；删除接缝同口径注入 */
+    internal constructor(
+        application: Application,
+        source: LocalMusicLibrarySource,
+        deleter: LocalMusicDeleter,
+    ) : this(application) {
         this.source = source
+        this.deleter = deleter
     }
 
     private val _songs = MutableStateFlow<List<LocalSong>>(emptyList())
@@ -149,11 +173,26 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     /**
-     * 一次性轻提示（重扫完成的新增 / 移除数、刷新失败）：页面 Toast 后清空。
+     * 一次性轻提示（重扫完成的新增 / 移除数、刷新失败、删除失败）：导航层 Toast 后清空。
      * 用 StateFlow 而不是 SharedFlow，提示在页面尚未重组完成时也不会丢。
      */
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
+
+    /** ≤28 App 删除确认框的待确认歌曲：非空即弹框（导航层渲染，两页共用）；29/30+ 恒为 null */
+    private val _pendingDeleteConfirm = MutableStateFlow<LocalSong?>(null)
+    val pendingDeleteConfirm: StateFlow<LocalSong?> = _pendingDeleteConfirm.asStateFlow()
+
+    /** 待导航层拉起的删除动作（系统框 / 写入权限框）：拉起后清空（与 [notice] 同范式） */
+    private val _pendingDeleteAction = MutableStateFlow<LocalDeleteAction?>(null)
+    val pendingDeleteAction: StateFlow<LocalDeleteAction?> = _pendingDeleteAction.asStateFlow()
+
+    /** 删除成功的一次性事件：导航层据此把删空的专辑页自动返回（消费后清空） */
+    private val _deleteSucceeded = MutableStateFlow<LocalDeleteSuccess?>(null)
+    val deleteSucceeded: StateFlow<LocalDeleteSuccess?> = _deleteSucceeded.asStateFlow()
+
+    /** 系统框 / 权限框拉起后、回调返回前保管的待删歌曲（接缝无状态，同一首歌喂回回调） */
+    private var pendingDeleteSong: LocalSong? = null
 
     /** 覆盖层（ADR 0020）：歌曲身份 → 用户改过的字段；自己的文件，刷新只换快照不动它 */
     private var overlay: Map<String, LocalSongOverride> = emptyMap()
@@ -231,6 +270,15 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         if (granted == _permissionGranted.value) return
         _permissionGranted.value = granted
         if (granted) refresh(notify = false)
+    }
+
+    /**
+     * 进入本地专辑页：只核对音频权限、不刷新（专辑页沿用共享快照，刷新仍由本地音乐页入口触发）。
+     * 专辑页不走 [onPageEntered]，进程被杀后直接恢复到专辑页时 [permissionGranted] 还是初值 false——
+     * 不核对会把正常已授权的库误判成权限被关：整库灰显、左滑删除也露不出（票据02 权限门槛）。
+     */
+    fun onAlbumPageEntered() {
+        _permissionGranted.value = source.hasAudioPermission()
     }
 
     /**
@@ -354,6 +402,99 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         _songs.value = updated
         viewModelScope.launch {
             LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(updated, _excludedFolders.value.toList()))
+        }
+    }
+
+    /**
+     * 左滑「删除」的唯一入口（本地音乐页与专辑页共用）：≤28 先弹 App 确认框
+     * （[pendingDeleteConfirm]，导航层渲染），29/30+ 系统框即唯一确认、直接进删除接缝。
+     * 版本门槛是纯函数 [needsAppDeleteConfirm]（JVM 可测）。
+     */
+    fun requestDelete(song: LocalSong) {
+        if (needsAppDeleteConfirm(Build.VERSION.SDK_INT)) {
+            _pendingDeleteConfirm.value = song
+        } else {
+            startDelete(song)
+        }
+    }
+
+    /** App 确认框点「删除」：清空待确认并进删除接缝（仅 ≤28 链路会走到） */
+    fun confirmDelete() {
+        val song = _pendingDeleteConfirm.value ?: return
+        _pendingDeleteConfirm.value = null
+        startDelete(song)
+    }
+
+    /** App 确认框取消 / 关闭：不删、行保持原样 */
+    fun cancelDeleteConfirm() {
+        _pendingDeleteConfirm.value = null
+    }
+
+    /** 系统删除 / 授权框回调（导航层注册的 launcher）：把原始结果码喂回接缝 */
+    fun onSystemDeleteDialogResult(resultCode: Int) {
+        val song = pendingDeleteSong ?: return
+        pendingDeleteSong = null
+        viewModelScope.launch { driveDelete(song, deleter.onSystemDialogResult(song, resultCode)) }
+    }
+
+    /** 写入权限申请回调（仅 ≤28 链路）：授予即删，拒绝失败不删 */
+    fun onWritePermissionResult(granted: Boolean) {
+        val song = pendingDeleteSong ?: return
+        pendingDeleteSong = null
+        viewModelScope.launch { driveDelete(song, deleter.onWritePermissionResult(song, granted)) }
+    }
+
+    /** 导航层拉起系统框 / 权限框后清空待执行动作 */
+    fun consumePendingDeleteAction() {
+        _pendingDeleteAction.value = null
+    }
+
+    /** 导航层消费删除成功事件后清空 */
+    fun consumeDeleteSucceeded() {
+        _deleteSucceeded.value = null
+    }
+
+    private fun startDelete(song: LocalSong) {
+        viewModelScope.launch { driveDelete(song, deleter.startDelete(song)) }
+    }
+
+    /** 接缝「动作 → 回调」交接：终态就地处理；系统框 / 权限框动作记下待删歌曲后交导航层拉起 */
+    private fun driveDelete(song: LocalSong, action: LocalDeleteAction) {
+        when (action) {
+            is LocalDeleteAction.Finished -> applyDeleteResult(song, action.result)
+            is LocalDeleteAction.LaunchSystemDialog, is LocalDeleteAction.RequestWritePermission -> {
+                pendingDeleteSong = song
+                _pendingDeleteAction.value = action
+            }
+        }
+    }
+
+    /**
+     * 删除结果的列表联动（spec「列表联动与快照」）：成功即从整库移除该行并落盘快照
+     * （照 [markUnavailable] 范式，不新增锁），专辑分组与计数是纯派生、自动更新；
+     * 失败提示「删除失败」并把该行标记不可用；取消不动。
+     * 不清理派生数据（覆盖层、排除清单、播放队列快照——spec 明确的已知取舍）。
+     */
+    private fun applyDeleteResult(song: LocalSong, result: LocalDeleteResult) {
+        when (result) {
+            LocalDeleteResult.Success -> {
+                val current = _songs.value
+                val target = current.firstOrNull { it.id == song.id } ?: song
+                val updated = songsAfterDelete(current, song.id, result)
+                _songs.value = updated
+                viewModelScope.launch {
+                    LocalMusicStore.saveLibrary(application, LocalMusicStore.Snapshot(updated, _excludedFolders.value.toList()))
+                }
+                // 专辑剩余可见行数此刻同步算好放进事件：albums 派生是异步的，消费时读它会拿到旧值
+                val albumKey = target.albumKey()
+                val remaining = updated.excludingFolders(_excludedFolders.value).count { it.albumKey() == albumKey }
+                _deleteSucceeded.value = LocalDeleteSuccess(albumKey, remaining)
+            }
+            is LocalDeleteResult.Failure -> {
+                _notice.value = "删除失败"
+                markUnavailable(song.id)
+            }
+            LocalDeleteResult.Cancelled -> Unit
         }
     }
 
