@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除、批量管理编辑模式、歌行左滑删除）。
+Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除、批量管理编辑模式、歌行左滑删除、接收其他 App「用其他应用打开 / 分享」递出的音频导入进库）。
 
 ## 技术栈
 
@@ -23,7 +23,7 @@ Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后�
 ```
 app/src/main/java/com/qqt/music/
   AppConfig.kt              # 全局配置：BASE_URL、PACKAGE_NAME、SIGN_KEY
-  MainActivity.kt           # 应用入口：启动前台服务、初始化 PrefsManager、创建 PlayerViewModel
+  MainActivity.kt           # 应用入口：启动前台服务、初始化 PrefsManager、创建 PlayerViewModel；接收音频 VIEW/SEND 意图（singleTask，导入胶水只解析 URI + 转交 LocalMusicViewModel）
   data/
     api/
       ApiClient.kt          # Retrofit 单例 + buildData()（签名编码：json  urlencode  base64）
@@ -41,6 +41,7 @@ app/src/main/java/com/qqt/music/
       LocalFolderExclusion.kt # 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数）
       LocalMusicDeleter.kt  # 本地歌曲删除接缝：分版本路由（30+ 系统删除框 / 29 RSE 授权 / ≤28 写入权限直接删）与结果归一
       LocalDeleteRules.kt   # 删除纯规则：结果 → 整库列表整形、是否需要 App 确认框（仅 ≤28）
+      LocalMusicImporter.kt # 本地音乐导入接缝：分版本路由（29+ MediaStore 插入自有行 / ≤28 直写公共 Music/导入/ + 触发扫描）与结果归一
       LocalMusicEditRules.kt # 编辑模式纯规则：可勾选行过滤 / 全选切换 / 已全选判据 / 批量面板保存门槛
       LocalSong.kt / LocalAlbum.kt / LocalMetadataEdit.kt
     repository/
@@ -114,7 +115,7 @@ object AppConfig {
 
 - **依赖后端**：所有内容数据从 `AppConfig.BASE_URL` + `"api.php"` 获取；域名入口连接层失败时由 ApiClient 自动切换回退地址（仓库 docs/adr/0009）
 - **对外无暴露**：纯客户端 App，不对外提供接口
-- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 等；本地音乐申请音频读取权限 `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（12 及以下，清单标 `maxSdkVersion 32`）——来源是系统媒体库（ADR 0022）。本地歌曲删除另声明 `WRITE_EXTERNAL_STORAGE`（清单标 `maxSdkVersion="29"`），**运行时只在 Android 9 及以下（≤28）链路且 API 23+ 申请**：API 21–22 没有运行时权限框（清单声明即安装时授予），API 29 走 `RecoverableSecurityException` 系统授权（scoped storage 下 WRITE 不授予删除能力），API 30+ 走系统删除框、不申请也不持有
+- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 等；本地音乐申请音频读取权限 `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（12 及以下，清单标 `maxSdkVersion 32`）——来源是系统媒体库（ADR 0022）。本地歌曲删除另声明 `WRITE_EXTERNAL_STORAGE`（清单标 `maxSdkVersion="29"`），**运行时只在 Android 9 及以下（≤28）链路且 API 23+ 申请**：API 21–22 没有运行时权限框（清单声明即安装时授予），API 29 走 `RecoverableSecurityException` 系统授权（scoped storage 下 WRITE 不授予删除能力），API 30+ 走系统删除框、不申请也不持有。本地音乐导入**不新增权限**：29+ 写自己创建的媒体库行无需权限，≤28 复用上述 `WRITE_EXTERNAL_STORAGE`（API 23+ 未授予时直接失败、不弹申请框——单步接缝取舍，READ/WRITE 同属 STORAGE 权限组、授过读即有写）
 
 ## 开发指南
 

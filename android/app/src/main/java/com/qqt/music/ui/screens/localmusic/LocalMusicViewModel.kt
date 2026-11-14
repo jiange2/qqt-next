@@ -1,6 +1,7 @@
 package com.qqt.music.ui.screens.localmusic
 
 import android.app.Application
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -9,15 +10,18 @@ import com.qqt.music.data.local.LocalAlbum
 import com.qqt.music.data.local.LocalDeleteAction
 import com.qqt.music.data.local.LocalDeleteResult
 import com.qqt.music.data.local.LocalFolder
+import com.qqt.music.data.local.LocalImportResult
 import com.qqt.music.data.local.LocalLibraryResult
 import com.qqt.music.data.local.LocalMetadataDraft
 import com.qqt.music.data.local.LocalMusicDeleter
+import com.qqt.music.data.local.LocalMusicImporter
 import com.qqt.music.data.local.LocalMusicLibrarySource
 import com.qqt.music.data.local.LocalMusicStore
 import com.qqt.music.data.local.LocalNumberInput
 import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.LocalSongOverride
 import com.qqt.music.data.local.MediaStoreDeleter
+import com.qqt.music.data.local.MediaStoreImporter
 import com.qqt.music.data.local.MediaStoreLibrarySource
 import com.qqt.music.data.local.albumKey
 import com.qqt.music.data.local.batchAlbumCommit
@@ -89,6 +93,8 @@ data class LocalDeleteSuccess(val albumKey: String, val remainingSongs: Int)
  * 不重查、不碰文件；重扫后改动仍然生效。
  * 左滑删除（[requestDelete]）经分版本接缝 [LocalMusicDeleter]：成功即时移除行并落盘快照，
  * 失败提示「删除失败」、仅在确认文件已不在时标记不可用，≤28 先弹 App 确认框（29/30+ 系统框即唯一确认）。
+ * 导入（[importAudio]，票据02）经唯一写侧接缝 [LocalMusicImporter]：接收来源 App 递出的音频 URI，
+ * 复制落库 `Music/导入/` 后静默刷新 + 轻提示，只落库不播放；入口在来源 App 一侧，qqt 内不设导入按钮。
  */
 class LocalMusicViewModel(private val application: Application) : AndroidViewModel(application) {
 
@@ -96,14 +102,18 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
 
     private var deleter: LocalMusicDeleter = MediaStoreDeleter(application)
 
-    /** 测试注入点：伪造行列表即可驱动整条纯 Kotlin 管线（spec「Testing Decisions」）；删除接缝同口径注入 */
+    private var importer: LocalMusicImporter = MediaStoreImporter(application)
+
+    /** 测试注入点：伪造行列表即可驱动整条纯 Kotlin 管线（spec「Testing Decisions」）；删除 / 导入接缝同口径注入 */
     internal constructor(
         application: Application,
         source: LocalMusicLibrarySource,
         deleter: LocalMusicDeleter,
+        importer: LocalMusicImporter,
     ) : this(application) {
         this.source = source
         this.deleter = deleter
+        this.importer = importer
     }
 
     private val _songs = MutableStateFlow<List<LocalSong>>(emptyList())
@@ -309,6 +319,27 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /** 导航层 Toast 后清空一次性提示 */
     fun consumeNotice() {
         _notice.value = null
+    }
+
+    /**
+     * 导入编排（spec「ViewModel 编排」，票据02）：来源 App（微信/QQ 等）「用其他应用打开 / 分享」
+     * 递出的音频 URI（MainActivity 胶水解析后转交），经唯一写侧接缝 [LocalMusicImporter] 复制落库
+     * `Music/导入/`。成功即复用整库刷新管线静默刷新（新歌自动可见、随快照落盘）并提示「已导入到本地音乐」；
+     * 失败提示「导入失败」。提示经 [notice] → 导航层既有 collector 弹 Toast，胶水层不另弹。
+     * 只落库、不自动播放、不重建播放队列、不打断当前播放（本 VM 与播放器零耦合，保持隔离）；
+     * 无音频读取权限时导入照样落库成功，刷新在权限门槛静默跳过（授权后进页面刷新即可见，spec 用户故事 14）。
+     * 与在途刷新的竞态沿用既有「最后写入胜出」取舍，不另加锁。
+     */
+    fun importAudio(uri: Uri) {
+        viewModelScope.launch {
+            when (importer.importAudio(uri)) {
+                LocalImportResult.Success -> {
+                    refresh(notify = false)
+                    _notice.value = "已导入到本地音乐"
+                }
+                is LocalImportResult.Failure -> _notice.value = "导入失败"
+            }
+        }
     }
 
     /**

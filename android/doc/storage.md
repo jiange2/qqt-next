@@ -24,6 +24,7 @@
 | `data/local/LocalFolderExclusion.kt` | 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数） |
 | `data/local/LocalMusicDeleter.kt` | 本地歌曲删除接缝：按系统版本路由（30+ 系统删除框 / 29 RSE 授权 / ≤28 写入权限直接删）与结果归一（成功 / 失败 / 取消），不持有 Activity |
 | `data/local/LocalDeleteRules.kt` | 删除纯规则：删除结果 → 整库列表整形（成功移除目标行、失败与取消原样）、是否需要 App 确认框（仅 ≤28） |
+| `data/local/LocalMusicImporter.kt` | 本地音乐导入接缝：按系统版本路由（29+ MediaStore 插入自有行 / ≤28 直写公共 `Music/导入/` + 触发扫描）与结果归一（成功 / 失败，无取消态），重名加后缀不覆盖，不持有 Activity |
 | `download/DownloadManager.kt` | 主动缓存（下载）管理器：串行下载队列、下载列表状态、与磁盘对账 |
 | `player/LastPlayedStore.kt` | 队列快照：保存/加载上次播放的队列、索引、进度与来源 |
 | `MainActivity.kt` | `PrefsManager.init(applicationContext)` — 必须在使用前调用 |
@@ -67,6 +68,8 @@ override fun onCreate(savedInstanceState: Bundle?) {
 排除清单是一组文件夹路径，匹配语义为「该文件夹及其全部子文件夹」（目录段边界上的前缀命中，`Music` 不吃掉 `MusicX`）；被排除的行不进歌曲列表、不进专辑分组、不进播放队列候选。整库行（含被排除的）都在快照里——取消排除立即恢复，不需要重查媒体库。过滤在 `LocalFolderExclusion`，纯函数。
 
 本地歌曲删除成功后，该行从整库快照里移除、整份快照按下面同一条原子写路径重写（临时文件 + rename，写失败只记日志、内存列表照常可用）；元数据覆盖层、排除清单与播放队列快照刻意不做连带清理——覆盖层按行 ID 记键，文件删后重加即新行 ID（见「注意事项」的已知取舍）。删除本身经 `LocalMusicDeleter` 分版本链路（系统删除框 / 系统授权 / 写入权限直接删），落盘由 `LocalMusicViewModel` 按删除结果整形后触发（纯函数 `LocalDeleteRules`）。
+
+本地音乐导入（来源 App「用其他应用打开 / 分享」递出的音频，入口与意图胶水见 [ui.md](ui.md)）经唯一写侧接缝 `LocalMusicImporter` 复制落库到公共音乐目录 `Music/导入/`，UI 与 ViewModel 不直接碰 MediaStore 写入 API。分版本：Android 10+（API 29+）`MediaStore.Audio.Media` 插入自有行（`RELATIVE_PATH = "Music/导入/"`，`IS_PENDING = 1` 期间写入字节、写完置 0 发布；任何失败清理自有 pending 行、不留半截——整库查询的 `IS_PENDING = 0` 过滤也保证清理前半截不可见），App 拥有自己创建的行、不需要新权限；Android 9 及以下（≤28）直写公共 `Music/导入/`（临时文件 + rename，目标已存在则不覆盖，真并发竞态重列目录 + 重解析有限重试）后 `MediaScannerConnection.scanFile` 触发扫描（扫描触发是辅助步骤：失败只记日志仍算成功，系统周期扫描兜底收录）。≤28 在 API 23+ 未授予 `WRITE_EXTERNAL_STORAGE` 时直接失败、不弹运行时申请框——导入是单步 suspend 接缝、不镜像删除的两步动作机，且 ≤28 的 READ/WRITE 同属 STORAGE 权限组、授过读即有写（API 21–22 安装即授予），影响面极小。目标目录重名自动加后缀 `name (2).ext`（n 从 2 递增、保留扩展名）、不覆盖旧文件——29+ 按现有名精确匹配，≤28 外置存储文件系统大小写不敏感、重名解析也按大小写不敏感比较（`Song.mp3` 撞 `song.mp3` 同样加后缀而非失败）。来源展示名无扩展名（微信语音裸名等）时规范化补 `.mp3`——扩展名是入库提示（MediaStore 与扫描器按扩展名推 MIME、置 `IS_MUSIC`，缺了它导入「成功」却库里看不到），实际容器格式由播放器按字节嗅探，已有扩展名原样保留。每次导入生成新文件、新媒体库行，各自成行、不做内容级去重（ADR 0022）。导入成功触发静默刷新，整库重查自然带上导入歌、整份快照按下面同一条原子写路径重写（重启仍在）；元数据覆盖层与排除清单对导入歌零特殊处理——覆盖层仍按行 ID 记键（文件被外部删除后重导 = 新行 = 编辑丢失，与其他本地歌曲同一已知取舍），`Music/导入/` 照常出现在排除面板候选、可被排除。
 
 元数据编辑（单首与批量）只重写覆盖层、不动库快照。单首保存与批量保存共用 ViewModel 的同一把 `editLock`，「换列表 → 写覆盖层」整条链串行、两次编辑不交错：单首的覆盖表更新在锁外先行，锁内只替换 `_songs` 该行并 `saveOverlay`；批量（`saveBatchMetadata`）把覆盖表更新也放进锁内——读当前覆盖表 → 纯函数 `batchAlbumCommit` 整表变换（只替换勾选行；留空字段保留原覆盖、与文件标签同值清覆盖、空壳删键；`available` 取快照本值；按展示标题重排）→ 覆盖表与 `_songs` 一次落位 → `saveOverlay` 整表一次原子写 → 提示「已修改 n 首」（n = 提交数）。批量不走 N 次单首保存（避免 N 次落盘与 N 次重排）；空壳删键口径与单首一致，`saveOverlay` 落盘前也过滤空条目。落盘失败只记日志、内存态已更新（见下「原子写」）。
 

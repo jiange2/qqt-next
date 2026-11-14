@@ -30,14 +30,31 @@
         android:networkSecurityConfig="@xml/network_security_config">
 
         <!-- 锁定竖屏，不跟随系统自动旋转（决策见 docs/adr/0011-portrait-lock.md） -->
+        <!-- singleTask：在运行时复用实例走 onNewIntent 接住导入意图（standard 会新建 Activity/ViewModel） -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.QQTMusic">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- 本地音乐导入（spec「入口与接收」）：其他 App「用其他应用打开」音频 → 选 qqt。
+                 只收 content scheme 的 audio/*；胶水层再校验一次 MIME 与 scheme -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:mimeType="audio/*" />
+            </intent-filter>
+            <!-- 「分享」出口：SEND 意图只带 MIME、不带 data URI，filter 不能声明 scheme
+                 （IntentFilter.matchData：filter 有 scheme 时 SEND 的空 scheme 必不匹配，分享入口会失效）；
+                 content scheme 由胶水层对 EXTRA_STREAM 防御性校验。SEND_MULTIPLE 本期不支持 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="audio/*" />
             </intent-filter>
         </activity>
 
