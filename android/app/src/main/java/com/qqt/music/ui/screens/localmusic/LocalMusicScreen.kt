@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -15,6 +14,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +44,8 @@ import com.qqt.music.data.local.LocalSong
 import com.qqt.music.data.local.audioReadPermission
 import com.qqt.music.player.QueueSource
 import com.qqt.music.ui.components.EmptyState
+import com.qqt.music.ui.components.RowSwipeAction
+import com.qqt.music.ui.components.RowSwipeRevealState
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.BrandOrangeSoft
 import com.qqt.music.ui.theme.InkFaint
@@ -83,15 +85,11 @@ fun LocalMusicScreen(
     var showAlbums by remember { mutableStateOf(false) }
     // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
     var editingSong by remember { mutableStateOf<LocalSong?>(null) }
+    // 左滑展开互斥状态提升在页面级：LibraryArea 在 when 两个分支各调一次，放它里面会随分支切换重置
+    val swipeState = remember { RowSwipeRevealState() }
 
+    // 一次性轻提示（重扫数量 / 刷新失败 / 删除失败）的 Toast 消费在导航层：专辑页也要能收到
     val context = LocalContext.current
-    val notice by viewModel.notice.collectAsState()
-    // 重扫完成的一次性轻提示：与全 App 的 Toast 轻提示口径一致
-    LaunchedEffect(notice) {
-        val text = notice ?: return@LaunchedEffect
-        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
-        viewModel.consumeNotice()
-    }
 
     // 音频权限请求：权限名按系统版本取用（13+ 音乐粒度 READ_MEDIA_AUDIO / 12 及以下
     // READ_EXTERNAL_STORAGE，清单标 maxSdkVersion 32，spec「扫描来源与权限」）。
@@ -173,13 +171,19 @@ fun LocalMusicScreen(
             )
             LibraryArea(
                 showAlbums = showAlbums,
-                onSelectView = { showAlbums = it },
+                onSelectView = {
+                    showAlbums = it
+                    swipeState.close()
+                },
                 songs = songs,
                 albums = albums,
                 playerViewModel = playerViewModel,
                 onSongClick = { editingSong = it },
                 onAlbumClick = onAlbumClick,
+                swipeState = swipeState,
+                onDeleteSong = { viewModel.requestDelete(it) },
                 albumsEnabled = false,
+                deleteEnabled = false,
             )
         }
 
@@ -190,12 +194,17 @@ fun LocalMusicScreen(
         ) {
             LibraryArea(
                 showAlbums = showAlbums,
-                onSelectView = { showAlbums = it },
+                onSelectView = {
+                    showAlbums = it
+                    swipeState.close()
+                },
                 songs = songs,
                 albums = albums,
                 playerViewModel = playerViewModel,
                 onSongClick = { editingSong = it },
                 onAlbumClick = onAlbumClick,
+                swipeState = swipeState,
+                onDeleteSong = { viewModel.requestDelete(it) },
             )
         }
     }
@@ -212,7 +221,8 @@ fun LocalMusicScreen(
 }
 
 /** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
- *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行 */
+ *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行；
+ *  [deleteEnabled] 为 false（权限被关）时歌行不露左滑删除：整库灰显是权限问题，不是文件失效 */
 @Composable
 private fun ColumnScope.LibraryArea(
     showAlbums: Boolean,
@@ -222,8 +232,16 @@ private fun ColumnScope.LibraryArea(
     playerViewModel: PlayerViewModel,
     onSongClick: (LocalSong) -> Unit,
     onAlbumClick: (LocalAlbum) -> Unit,
+    swipeState: RowSwipeRevealState,
+    onDeleteSong: (LocalSong) -> Unit,
     albumsEnabled: Boolean = true,
+    deleteEnabled: Boolean = true,
 ) {
+    val listState = rememberLazyListState()
+    // 列表滚动即收起左滑展开态，避免行停在半开位置
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) swipeState.close()
+    }
     LibraryViewSwitch(albumSelected = showAlbums, onSelect = onSelectView)
     if (showAlbums) {
         AlbumGrid(
@@ -235,6 +253,7 @@ private fun ColumnScope.LibraryArea(
     } else {
         LazyColumn(
             modifier = Modifier.weight(1f),
+            state = listState,
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
             itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
@@ -251,6 +270,7 @@ private fun ColumnScope.LibraryArea(
                         )
                     },
                     onLongClick = { onSongClick(song) },
+                    swipe = if (deleteEnabled) RowSwipeAction(swipeState, "删除") { onDeleteSong(song) } else null,
                 )
             }
         }

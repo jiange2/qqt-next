@@ -14,6 +14,10 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- 本地音乐删除（spec：≤28 直接删需写入权限）：仅 ≤29 声明，30+ 不申请不持有；29 走 RSE 授权不用它 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
 
     <application
         android:name=".QqtApplication"

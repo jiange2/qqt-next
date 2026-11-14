@@ -21,6 +21,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqt.music.data.local.LocalSong
+import com.qqt.music.ui.components.RowSwipeAction
+import com.qqt.music.ui.components.SwipeRevealRow
 import com.qqt.music.ui.components.songIndexFontSize
 import com.qqt.music.ui.theme.BrandOrange
 import com.qqt.music.ui.theme.InkFaint
@@ -34,6 +36,8 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 那行的播放、下载计数对本地歌曲没有意义，所以本地另写一行）。
  * 长按打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
  * 文件不可用的行整体灰显、不可点，右侧以「不可用」代替时长（spec「权限与失效」）。
+ * [swipe] 非空时该行可左滑露出操作按钮（见 [SwipeRevealRow]，本地两页传「删除」）；
+ * 灰显只关行内点击，不影响外层左滑——文件不可用的行照样可删。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -43,55 +47,59 @@ internal fun LocalSongRow(
     playerViewModel: PlayerViewModel,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+    swipe: RowSwipeAction? = null,
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isCurrent = currentSong?.id == song.id
     // 不可用：文件被删 / 读不到（播放失败标记），或所在目录授权被系统回收
     val available = song.available
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(enabled = available, onClick = onClick, onLongClick = onLongClick)
-            // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
-            .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "$index",
-            fontSize = songIndexFontSize("$index".length),
-            fontWeight = if (isCurrent && available) FontWeight.SemiBold else FontWeight.Normal,
-            textAlign = TextAlign.Center,
-            color = if (isCurrent && available) BrandOrange else InkSecondary,
-            maxLines = 1,
-            softWrap = false,
-            modifier = Modifier.width(26.dp),
-        )
-        Spacer(Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
+    SwipeRevealRow(rowKey = song.id, swipe = swipe, modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(enabled = available, onClick = onClick, onLongClick = onLongClick)
+                // 左留白 8dp = 序号格与标题之间的间距，使序号在「行左缘 ↔ 标题」之间左右居中
+                .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = song.displayTitle(),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (!available) InkFaint else if (isCurrent) BrandOrange else InkPrimary,
+                text = "$index",
+                fontSize = songIndexFontSize("$index".length),
+                fontWeight = if (isCurrent && available) FontWeight.SemiBold else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                color = if (isCurrent && available) BrandOrange else InkSecondary,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
+                modifier = Modifier.width(26.dp),
             )
-            Spacer(Modifier.height(1.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.displayTitle(),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (!available) InkFaint else if (isCurrent) BrandOrange else InkPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(1.dp))
+                Text(
+                    text = song.displayArtist().ifBlank { "未知艺术家" },
+                    fontSize = 12.sp,
+                    color = if (available) InkSecondary else InkFaint,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
             Text(
-                text = song.displayArtist().ifBlank { "未知艺术家" },
+                text = if (available) formatDuration(song.durationMs) else "不可用",
                 fontSize = 12.sp,
-                color = if (available) InkSecondary else InkFaint,
+                color = InkFaint,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = if (available) formatDuration(song.durationMs) else "不可用",
-            fontSize = 12.sp,
-            color = InkFaint,
-            maxLines = 1,
-        )
     }
 }
 

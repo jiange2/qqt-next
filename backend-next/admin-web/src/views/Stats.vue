@@ -48,7 +48,7 @@
             <el-button circle text :icon="Refresh" :loading="devicesLoading" @click="loadDevices()" />
           </el-tooltip>
         </div>
-        <el-table :data="devices" v-loading="devicesLoading" stripe size="small" class="clickable-rows" @row-click="openDeviceFacts">
+        <el-table :data="devices" v-loading="devicesLoading" stripe size="small" class="clickable-rows" @row-click="openDeviceFacts" @sort-change="onDevicesSortChange">
           <el-table-column type="index" label="序号" width="60" :index="deviceRowIndex" />
           <el-table-column label="设备" min-width="290">
             <template #default="{ row }">
@@ -63,25 +63,25 @@
           <el-table-column label="版本" width="80">
             <template #default="{ row }">{{ row.appVersion || "未知" }}</template>
           </el-table-column>
-          <el-table-column label="缓存预算" width="100">
+          <el-table-column prop="allocatedStorage" label="缓存预算" width="110" sortable="custom" :sort-orders="['descending', 'ascending', null]">
             <template #default="{ row }">{{ fmtBytes(row.allocatedStorage) }}</template>
           </el-table-column>
-          <el-table-column label="实际占用" width="100">
+          <el-table-column prop="usedStorage" label="实际占用" width="110" sortable="custom" :sort-orders="['descending', 'ascending', null]">
             <template #header>
               <el-tooltip content="被动缓存 + 下载目录（含下载中的 .part 半文件）" placement="top"><span>实际占用</span></el-tooltip>
             </template>
             <template #default="{ row }">{{ fmtBytes(row.usedStorage) }}</template>
           </el-table-column>
-          <el-table-column label="事实数" width="80">
+          <el-table-column prop="facts" label="事实数" width="90" sortable="custom" :sort-orders="['descending', 'ascending', null]">
             <template #default="{ row }">{{ Number(row.facts) }}</template>
           </el-table-column>
-          <el-table-column label="首次创建" width="170">
+          <el-table-column prop="firstSeen" label="首次创建" width="170" sortable="custom" :sort-orders="['descending', 'ascending', null]">
             <template #default="{ row }">{{ new Date(row.firstSeen).toLocaleString() }}</template>
           </el-table-column>
           <el-table-column label="所用时长" width="90">
             <template #default="{ row }">{{ fmtDuration(row.usedDuration) }}</template>
           </el-table-column>
-          <el-table-column label="更新时间" width="170">
+          <el-table-column prop="lastSeen" label="更新时间" width="170" sortable="custom" :sort-orders="['descending', 'ascending', null]">
             <template #default="{ row }">
               <div class="time-cell">
                 <div class="window">时间（{{ fmtWindow(row.usedDuration) }}）</div>
@@ -355,6 +355,8 @@ type DeviceRow = {
   firstSeen: string;
   isOnline: boolean;
 };
+// 列排序：首击倒序→升序→取消回默认（在线优先序）；翻页/切 tab 保留，刷新页面回默认
+const devicesSort = ref<{ sortBy: string; sortOrder: "asc" | "desc" } | null>(null);
 const {
   items: devices,
   total: devicesTotal,
@@ -362,7 +364,15 @@ const {
   size: devicesSize,
   loading: devicesLoading,
   load: loadDevices,
-} = usePagedList<DeviceRow>("/admin/stats/devices");
+} = usePagedList<DeviceRow>("/admin/stats/devices", () =>
+  devicesSort.value ? { ...devicesSort.value } : {},
+);
+
+function onDevicesSortChange({ prop, order }: { prop: string; order: "ascending" | "descending" | null }) {
+  devicesSort.value = order && prop ? { sortBy: prop, sortOrder: order === "ascending" ? "asc" : "desc" } : null;
+  devicesPage.value = 1;
+  void loadDevices();
+}
 
 // 序号跨页连续
 function deviceRowIndex(i: number) {

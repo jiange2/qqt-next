@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除）。
+Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后端 API 获取歌曲、专辑、艺术家、分类等数据，通过 ExoPlayer 播放，支持后台播放（前台服务 + MediaSession）、本地下载，以及读系统媒体库（MediaStore）的本地音乐（歌曲 / 专辑视图、离线播放、元数据覆盖层、文件夹排除、歌行左滑删除）。
 
 ## 技术栈
 
@@ -16,7 +16,7 @@ Android 端是用 Kotlin + Jetpack Compose 编写的音乐播放应用。从后�
 - Navigation Compose 2.7.7（页面路由）
 - ViewModel + StateFlow（状态管理，MVVM 架构）
 - SharedPreferences（本地持久化）
-- compileSdk 35，minSdk 26（Android 8.0+）
+- compileSdk 35，minSdk 21（Android 5.0+），targetSdk 35
 
 ## 目录结构
 
@@ -39,6 +39,8 @@ app/src/main/java/com/qqt/music/
       LocalMusicStore.kt    # 本地音乐库快照与元数据覆盖层（JSON，原子写）
       LocalMusicLibrarySource.kt # 系统媒体库来源接缝：音频权限检查、按卷查询 MediaStore、行归一化
       LocalFolderExclusion.kt # 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数）
+      LocalMusicDeleter.kt  # 本地歌曲删除接缝：分版本路由（30+ 系统删除框 / 29 RSE 授权 / ≤28 写入权限直接删）与结果归一
+      LocalDeleteRules.kt   # 删除纯规则：结果 → 整库列表整形、是否需要 App 确认框（仅 ≤28）
       LocalSong.kt / LocalAlbum.kt / LocalMetadataEdit.kt
     repository/
       MusicRepository.kt    # 所有 API 方法封装（getHome/getArtists/搜索/收藏切换等）
@@ -62,8 +64,8 @@ app/src/main/java/com/qqt/music/
     screens/
       home/                 # HomeScreen.kt + HomeViewModel.kt（Banner/趋势歌曲/专辑/艺术家）
       latest/               # 最新歌曲分页列表
-      localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑）
-      localalbum/           # 本地专辑页（整张专辑播放）
+      localmusic/           # 本地音乐（歌曲 / 专辑两视图、权限空态、库刷新、排除面板、元数据编辑、歌行左滑删除）
+      localalbum/           # 本地专辑页（整张专辑播放、歌行左滑删除）
       download/             # 已下载（DownloadManager 实时列表）
       category/             # 分类 2列网格，无限分页
       artist/               # 艺术家 2列网格，分页
@@ -78,7 +80,8 @@ app/src/main/java/com/qqt/music/
       BottomBar.kt          # 底部导航栏（4 Tab，中间下载为 FAB 样式）
       DrawerContent.kt      # 侧边抽屉（橙色头图 + 6个导航项 + 底部设置）
       MiniPlayer.kt         # 底部迷你播放器：实时显示歌曲名、进度、播放控制
-      SongListItem.kt       # 歌曲列表行（缩略图+标题+艺术家+评分+下载按钮）
+      SongListItem.kt       # 在线歌曲列表行（序号+标题+歌手与播放/下载计数+行尾封面，可选左滑操作按钮）
+      RowSwipeReveal.kt     # 行内左滑露出操作按钮（ADR 0018）：88dp 红底白字按钮、同页互斥展开
       TopBar.kt             # 顶部导航栏（菜单/返回 + 标题 + 搜索按钮）
     theme/                  # Material3 主题（OrangePrimary=#E8441C，固定橙色不跟随系统Dynamic Color）
 ```
@@ -110,7 +113,7 @@ object AppConfig {
 
 - **依赖后端**：所有内容数据从 `AppConfig.BASE_URL` + `"api.php"` 获取；域名入口连接层失败时由 ApiClient 自动切换回退地址（仓库 docs/adr/0009）
 - **对外无暴露**：纯客户端 App，不对外提供接口
-- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 等；本地音乐申请音频读取权限 `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（12 及以下，清单标 `maxSdkVersion 32`）——来源是系统媒体库（ADR 0022）
+- **权限**：`INTERNET`、`FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 等；本地音乐申请音频读取权限 `READ_MEDIA_AUDIO`（Android 13+）/ `READ_EXTERNAL_STORAGE`（12 及以下，清单标 `maxSdkVersion 32`）——来源是系统媒体库（ADR 0022）。本地歌曲删除另声明 `WRITE_EXTERNAL_STORAGE`（清单标 `maxSdkVersion="29"`），**运行时只在 Android 9 及以下（≤28）链路且 API 23+ 申请**：API 21–22 没有运行时权限框（清单声明即安装时授予），API 29 走 `RecoverableSecurityException` 系统授权（scoped storage 下 WRITE 不授予删除能力），API 30+ 走系统删除框、不申请也不持有
 
 ## 开发指南
 
