@@ -1728,9 +1728,19 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     reply.send({ total: count, items: rows });
   });
 
+  // 设备快照排序白名单：前端 sortBy → SQL 列，值恒为常量，Prisma.raw 拼接无注入面。
+  const DEVICE_SORT_COLUMNS: Record<string, string> = {
+    allocatedStorage: "f.allocated_storage",
+    usedStorage: "f.used_storage",
+    facts: "s.facts",
+    firstSeen: "s.first_seen",
+    lastSeen: "f.accessed_at",
+  };
+
   // 设备快照：每设备最新一条事实的快照值（allocated/used、UA、最近上报 IP，快照长事实上，ADR 0008）。
   // 预期下线 = 最新事实时刻 + 曲时长 + 1 分钟冗余（口径同「在线状态」词条），歌删或时长缺失仅加冗余。
-  // 分页在 SQL 层：「在线优先」是实时派生排序键，必须随 LIMIT 一起下推，组内保持最近访问倒序。
+  // 分页在 SQL 层：默认「在线优先」是实时派生排序键，必须随 LIMIT 一起下推，组内保持最近访问倒序；
+  // 列排序生效时在线优先让位，NULL（未上报预算/占用）永远沉底，次级键 accessed_at DESC + device_id ASC 保证翻页不重不漏。
   // SQL 内时刻比较一律 UTC_TIMESTAMP()、不得用 NOW() —— Prisma 存 UTC 墙上时间但不钉会话时区，
   // 部署库 SYSTEM=CST 时 NOW() 会混入 8 小时偏差（computeOnlineCount / 趋势窗口同此约定）。
   // 展示的 isOnline 仍在 Node 侧比对（与写库同源的时钟基），与排序键仅可能在边界瞬间不同步：
@@ -1738,6 +1748,14 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
   // 「最新一条」用每组 MAX(id) 回连：id 自增单调、插入序即时序，且无窗口函数（MySQL 5.7 不支持 OVER，部署库即 5.7）
   app.get("/admin/stats/devices", { preHandler: requireAdmin }, async (req, reply) => {
     const { size, skip } = paging(req);
+    const q = req.query as Record<string, string | undefined>;
+    const sortCol = DEVICE_SORT_COLUMNS[str(q["sortBy"])];
+    const sortDir = str(q["sortOrder"]).toLowerCase() === "asc" ? "ASC" : "DESC";
+    const orderBy = sortCol
+      ? Prisma.raw(`(${sortCol} IS NULL) ASC, ${sortCol} ${sortDir}, f.accessed_at DESC, f.device_id ASC`)
+      : Prisma.raw(
+          `(f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND > UTC_TIMESTAMP()) DESC, f.accessed_at DESC`,
+        );
     const [countRows, rows] = await Promise.all([
       // 设备数 = 有事实的设备数（本端点一行一设备）
       prisma.$queryRaw<{ total: bigint }[]>`SELECT COUNT(DISTINCT device_id) AS total FROM access_facts`,
@@ -1755,8 +1773,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
           GROUP BY device_id
         ) s ON s.max_id = f.id
         LEFT JOIN songs so ON so.id = f.song_id
-        ORDER BY (f.accessed_at + INTERVAL (IFNULL(so.duration, 0) + 60) SECOND > UTC_TIMESTAMP()) DESC,
-                 f.accessed_at DESC
+        ORDER BY ${orderBy}
         LIMIT ${size} OFFSET ${skip}
       `,
     ]);
