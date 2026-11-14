@@ -25,6 +25,7 @@ import com.qqt.music.data.local.excludingFolders
 import com.qqt.music.data.local.groupIntoAlbums
 import com.qqt.music.data.local.needsAppDeleteConfirm
 import com.qqt.music.data.local.overrideFrom
+import com.qqt.music.data.local.remainingVisibleInAlbum
 import com.qqt.music.data.local.songsAfterDelete
 import com.qqt.music.data.local.sortedByDisplayTitle
 import com.qqt.music.data.local.trackNoInput
@@ -86,7 +87,7 @@ data class LocalDeleteSuccess(val albumKey: String, val remainingSongs: Int)
  * 元数据编辑（[saveMetadata] / [restoreDefaultMetadata]）只改写覆盖层与展示值（按歌曲身份记键），
  * 不重查、不碰文件；重扫后改动仍然生效。
  * 左滑删除（[requestDelete]）经分版本接缝 [LocalMusicDeleter]：成功即时移除行并落盘快照，
- * 失败提示「删除失败」并标记不可用，≤28 先弹 App 确认框（29/30+ 系统框即唯一确认）。
+ * 失败提示「删除失败」、仅在确认文件已不在时标记不可用，≤28 先弹 App 确认框（29/30+ 系统框即唯一确认）。
  */
 class LocalMusicViewModel(private val application: Application) : AndroidViewModel(application) {
 
@@ -304,7 +305,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         refresh(notify = true)
     }
 
-    /** 页面 Toast 后清空一次性提示 */
+    /** 导航层 Toast 后清空一次性提示 */
     fun consumeNotice() {
         _notice.value = null
     }
@@ -430,16 +431,35 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
         _pendingDeleteConfirm.value = null
     }
 
-    /** 系统删除 / 授权框回调（导航层注册的 launcher）：把原始结果码喂回接缝 */
-    fun onSystemDeleteDialogResult(resultCode: Int) {
-        val song = pendingDeleteSong ?: return
+    /**
+     * 系统删除 / 授权框回调（导航层注册的 launcher）：把原始结果码喂回接缝。
+     * [launchFailed] = IntentSender 发送自身失败（契约回 RESULT_CANCELED + EXTRA_SEND_INTENT_EXCEPTION）：
+     * 没有真实框结果，不喂接缝、直接按失败处理——文件还在，只提示不灰显。
+     */
+    fun onSystemDeleteDialogResult(resultCode: Int, launchFailed: Boolean = false) {
+        val song = pendingDeleteSong
+        if (song == null) {
+            // 系统框 / 权限框开着时进程被杀 → ViewModel 重建、待删歌曲丢失：
+            // 给「删除失败」提示而非静默（两个回调同口径）
+            _notice.value = "删除失败"
+            return
+        }
         pendingDeleteSong = null
+        if (launchFailed) {
+            applyDeleteResult(song, LocalDeleteResult.Failure())
+            return
+        }
         viewModelScope.launch { driveDelete(song, deleter.onSystemDialogResult(song, resultCode)) }
     }
 
     /** 写入权限申请回调（仅 ≤28 链路）：授予即删，拒绝失败不删 */
     fun onWritePermissionResult(granted: Boolean) {
-        val song = pendingDeleteSong ?: return
+        val song = pendingDeleteSong
+        if (song == null) {
+            // 同上：进程死亡丢失待删歌曲也要给提示
+            _notice.value = "删除失败"
+            return
+        }
         pendingDeleteSong = null
         viewModelScope.launch { driveDelete(song, deleter.onWritePermissionResult(song, granted)) }
     }
@@ -472,7 +492,7 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
     /**
      * 删除结果的列表联动（spec「列表联动与快照」）：成功即从整库移除该行并落盘快照
      * （照 [markUnavailable] 范式，不新增锁），专辑分组与计数是纯派生、自动更新；
-     * 失败提示「删除失败」并把该行标记不可用；取消不动。
+     * 失败提示「删除失败」，仅在确认媒体库行已不在时把该行标记不可用；取消不动。
      * 不清理派生数据（覆盖层、排除清单、播放队列快照——spec 明确的已知取舍）。
      */
     private fun applyDeleteResult(song: LocalSong, result: LocalDeleteResult) {
@@ -487,12 +507,14 @@ class LocalMusicViewModel(private val application: Application) : AndroidViewMod
                 }
                 // 专辑剩余可见行数此刻同步算好放进事件：albums 派生是异步的，消费时读它会拿到旧值
                 val albumKey = target.albumKey()
-                val remaining = updated.excludingFolders(_excludedFolders.value).count { it.albumKey() == albumKey }
+                val remaining = remainingVisibleInAlbum(updated, albumKey, _excludedFolders.value)
                 _deleteSucceeded.value = LocalDeleteSuccess(albumKey, remaining)
             }
             is LocalDeleteResult.Failure -> {
                 _notice.value = "删除失败"
-                markUnavailable(song.id)
+                // 只有确认媒体库行已不在（delete 返回 0 行）才灰显：灰显会落盘并阻断播放，
+                // 拒绝写入权限 / provider 异常 / 异常框结果码都不证明文件不可播，行保持可播
+                if (result.fileUnavailable) markUnavailable(song.id)
             }
             LocalDeleteResult.Cancelled -> Unit
         }
