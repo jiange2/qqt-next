@@ -1,6 +1,6 @@
 # 本地歌曲播放器功能图标行整行移除（纯播放形态）
 
-Status: ready-for-agent
+Status: resolved
 
 > 延续「本地歌曲播放器只留播放设置」（f6f72fa）的收敛：那次收起喜欢 / 下载 / 加入歌单三个图标，本次把本地歌曲仅剩的两个（播放设置 / 更多）也去掉，本地歌曲播放页进入纯播放形态。不推翻任何 ADR：ADR 0007（评分身份与更多菜单可扩展列表）在线分支原样保留，ADR 0020（元数据覆盖层）与列表长按编辑入口不动。
 
@@ -82,10 +82,14 @@ Status: ready-for-agent
 - 歌词页 / song_info 请求口径（本地歌曲本就没有歌词页）。
 - 缓存染色、主控行、队列浮层、播放模式、迷你播放器。
 - 布局常量调整（fixedContentHeight、间距最小值、封面上下限）。
-- 批量管理特性（在途 .scratch/local-music-batch-edit/，独立实现）。
+- 批量管理特性（.scratch/local-music-batch-edit/，已合入基线并归档，独立实现）。
 
 ## Further Notes
 
 - grilling 四决策（2026-11-14 用户全部确认）：Q1 仅本地分支移除；Q2 定时入口彻底移除不留替代；Q3 接受本地播放期间定时不可见但仍生效；Q4 编辑信息只留列表长按。
-- 与在途批量编辑 spec（ready-for-agent）正交：那是列表级编辑模式（LocalMusicScreen / LocalSongRow），本特性是播放器级入口移除（PlayerScreen / AppNavigation / PlayerIcons）。唯一交点是 PlayerIcons.Edit（本 spec 删除、其需要时重加）与 LocalMetadataEditSheet 的共用说明文案（各自更新所在段落）。实现时以届时分支最新状态为基线。
+- 与批量编辑 spec 正交：那是列表级编辑模式（LocalMusicScreen / LocalSongRow），本特性是播放器级入口移除（PlayerScreen / AppNavigation / PlayerIcons）。实现时批量编辑已合入基线（c79808f）并归档、且不使用铅笔图标——PlayerIcons.Edit 删除后全仓代码引用归零，无需协调；唯一文案交点是 LocalMetadataEditSheet 的共用说明（已更新为仅列表长按）。
 - 本次移除后本地歌曲播放页无任何功能图标，「更多菜单」「播放设置」对本地歌曲不再可达——这是决策结果而非遗漏。
+
+## Comments
+
+- 2026-11-14 实现与归档：票据 01 53c5669（合并 22a33c4）、票据 02 cda7b84（合并 31e7fdd）、双轴评审修复 4e5c38a（合并 13a24ff）全部合入集成分支 feat/local-player-icon-row-removal。评审结论：Standards 0 硬违规（1 判断项 ui.md 本地差异节冗余，FIX2 已修）；Spec 0 缺失 / 0 scope creep（2 项实现发现同根因——「在线开浮层→自动切本地歌」时更多菜单评分可点 / 播放设置定时可取消残留，FIX1 浮层随切歌收敛已修：LaunchedEffect(isLocalSong) 进入本地播放即收起两浮层，在线行为零改动、不恢复评分项守卫；FIX3 本 spec 补收敛口径）。编排层裁定：player.md 203/211 纳入文档同步、列表侧三处 KDoc 与 LocalMetadataEditSheet 共用说明仅注释同步（行为零改动）。无新测试（Testing Decisions：纯 UI 移除无接缝）；未编译、不跑 gradlew（仓规约），设备级验收待人工真机。Further Notes「在途批量编辑」假设实现时已过时（已合入并归档），文字对齐事实。Status ready-for-agent → resolved，两票同步 resolved；勾选项保持未勾。
