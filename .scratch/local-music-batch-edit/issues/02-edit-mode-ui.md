@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** open
+**Status:** resolved
 
 - [ ] 歌曲视图 ⋮ 菜单出现「批量管理」（视图切换之后），专辑视图不显示；未授权禁用
 - [ ] 进入编辑模式：勾选框出现、点行 / 长按勾选不跳播不弹单首面板、左滑收起
@@ -20,3 +20,4 @@
 ## Comments
 
 - 2026-11-14 实现完成：提交 6a97b9a、a177510（合并 c159c86），落在集成分支 `feat/local-music-batch-edit`。改动七文件：新增 `LocalMusicEditRules.kt`、`LocalBatchEditSheet.kt`、`LocalMusicEditRulesTest.kt`，改 `AppNavigation.kt`、`LocalMusicScreen.kt`、`LocalSongRow.kt`、`LocalMetadataEditSheet.kt`。摘要：纯规则 `LocalMusicEditRules.kt`（`selectableSongIds` 灰显跳过 / `toggleSelectAll` 已全选再点清空 / `isAllSelected` 顶栏文案判据 / `batchPanelCanSave` 两字段 trim 皆空禁用）+ JVM 测试 13 例；菜单「批量管理」插视图切换之后、重新扫描之前（仅 `!showAlbums` 显示、`editEnabled = permissionGranted` 禁用、空库不额外禁用、点击收起菜单）；编辑态 `localMusicEditing` / 勾选 `localMusicSelection` / 面板 `localMusicBatchPanelOpen` 提升 `AppNavigation` `remember(localMusicEntry)`（与视图状态同键，离开本页键置空重建），`exitLocalMusicEditMode` 统一清空；歌行序号位换前置勾选框（`Checkbox onCheckedChange = null` 只展示、点行 / 长按切换、灰显 `enabled` 挡住）、编辑态 `swipe = null`、`LaunchedEffect(showAlbums, editing)` 收起左滑；topBar lambda 编辑态整条换 `LocalMusicEditTopBar`（取消 / 已选 n 首 / 全选·取消全选，⋮ 隐藏）、`LocalMusicBatchBar`（编辑信息、0 选禁用、Scaffold 内容区底部 NavHost 之下）；`LocalBatchEditSheet` 双空字段、留空 = 不改、无恢复默认、保存接 `saveBatchMetadata` 后即退出（`MetadataField` private→internal 共用）；退出路径：取消 / `BackHandler`（面板先收再退编辑、不退出页面）/ 切页（结构保证）/ 点保存 / 权限收回 `LaunchedEffect`。勾选项为设备级验收清单，待人工编译真机逐项确认（本仓规约：AI 不编译、不跑 gradlew），照先例保持未勾；Status 推进与归档由编排层在评审修复后统一执行。
+- 2026-11-14 归档：resolved。实现 6a97b9a / a177510（合并 c159c86）；双轴评审 Spec 轴零发现（选择态归属 / 菜单门槛 / 行交互 / 顶底栏 / 面板 / 五退出路径全核对成立），Standards 轴修复（74875c2 / 69e90f6，合并 4ac0a4c）：注释与面板标题弃用词「批量编辑」改规范词「批量管理」（标题裁定为「批量管理」，ui.md 同步）、toggleSelectAll 委托 isAllSelected 去重（行为不变，13 例测试不动）；提交过滤不复查 available 与零可用行清残留勾选两条 minor notes 经裁定保留。勾选项保持未勾（设备级验收清单待人工编译真机确认）。

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** open
+**Status:** resolved
 
 - [ ] ui.md 编辑模式入口 / 选择态 / 顶栏底栏 / 面板 / 退出路径与实现一致
 - [ ] storage.md 批量提交口径与实现一致
@@ -22,3 +22,4 @@
   - `spec.md`：文字对齐 7 处（详见 spec Comments：勾选框序号位、MusicTopBar 整条替换机制、面板开关状态归属、BackHandler 面板先收、纯函数接缝与锁内表更新、点保存即退出、测试文件名与例数）；补实现完成 Comments（票据 01：24926f0 / 9833c8b / 4512c68 合并 cb6d378；票据 02：6a97b9a / a177510 合并 c159c86）。**Status 不动**（仍 ready-for-agent，推进与归档由编排层在评审修复后统一执行，照 local-music-delete / view-switch 先例）。
   - **不新增 ADR 的判定经交付代码核对成立**：批量覆盖写是可逆的数据层扩展（延续 ADR 0020 / 0022、无推翻），「留空 = 不改」已写入 CONTEXT.md「批量管理」词条，身份 / 权限 / 快照模型不动；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。故未新增 ADR，`android/docs/adr/`、仓库级 `docs/adr/`、`GLOSSARY-MAP.md` 全未动。
   - 票据 01 / 02 Comments 记实现哈希与摘要；本票 Comments 记同步清单。三票 Status 与勾选项均不动（勾选项是设备级验收清单，待人工编译真机确认，照先例不勾）。历史 spec（`.scratch/local-music/`、`local-music-delete/`、`local-music-rescan/`、`local-music-view-switch/`）归档不改写。本票为文档同步，未改行为代码、未新增测试（照先例 169c7dc）。
+- 2026-11-14 归档：resolved。文档同步 52c2666（合并 32c2eff）；评审修复（74875c2 / 69e90f6，合并 4ac0a4c）同步 ui.md 面板标题「批量管理」与 spec 序言规范词（后者编排层代补——子代理沙箱拦截 .scratch 写入）；CONTEXT.md 三词条核对一致未改动的结论经评审复核成立。勾选项保持未勾（设备级验收清单待人工编译真机确认）；「归档提交在评审修复合入之后」照先例口径于本次归档满足（归档在 4ac0a4c 之后）。

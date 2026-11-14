@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** open
+**Status:** resolved
 
 - [ ] 勾 N 首只填专辑 → N 首专辑变、专辑艺术家保持原展示值
 - [ ] 只填专辑艺术家 → 专辑保持原展示值
@@ -21,3 +21,4 @@
 ## Comments
 
 - 2026-11-14 实现完成：提交 24926f0、9833c8b、4512c68（合并 cb6d378），落在集成分支 `feat/local-music-batch-edit`。改动三文件：`LocalMetadataEdit.kt`、`LocalMusicViewModel.kt`、新增 `LocalBatchMetadataTest.kt`。摘要：`LocalMetadataEdit.kt` 新增 `LocalSong.batchAlbumOverride(albumInput, albumArtistInput)`（trim 留空保留原覆盖该字段、非空与文件标签同值清覆盖、其余存裁剪值，标题 / 艺术家 / 音轨号 / 年份四字段原样，复用 private `overrideIfCustom`）与 `batchAlbumCommit(songs, overlay, selectedIds, albumInput, albumArtistInput): BatchAlbumCommit`（整表变换纯函数：只换选中行、原覆盖以覆盖表现值为准、空壳删键、未选中键保留、行从快照取 `available` 保留本值、不在快照的选中行跳过、`sortedByDisplayTitle`）；`LocalMusicViewModel.saveBatchMetadata(songs, albumInput, albumArtistInput)` 一次 `editLock.withLock`（与单首共用）：锁内读覆盖表 → Default 线程 `batchAlbumCommit` → `overlay` 与 `_songs` 一次落位 → 一次 `LocalMusicStore.saveOverlay` 原子落盘 → notice「已修改 n 首」（n = `songs.size` 提交数）；覆盖表更新在锁内（区别于单首 `applyOverride` 锁外先行），空提交早退，快照不动 / 不重查 / 不碰文件 / 不做播放器同步，不走 N 次 `applyOverride`。JVM 测试 `LocalBatchMetadataTest` 15 例（独立字面量断言，JUnit4 中文 backtick + `row()` 工厂风格）已写待人工执行。勾选项为设备级验收清单，待人工编译真机逐项确认（本仓规约：AI 不编译、不跑 gradlew），照先例保持未勾；Status 推进与归档由编排层在评审修复后统一执行。
+- 2026-11-14 归档：resolved。实现 24926f0 / 9833c8b / 4512c68（合并 cb6d378）；双轴评审 Spec 轴零发现（批量语义与一次提交链路逐条核对成立），Standards 轴涉及本票代码的修复仅参数更名 songs → selectedSongs（74875c2，合并 4ac0a4c，签名形状不变）；双字符串参数对经裁定保留（票据建议签名）。勾选项为设备级验收清单，保持未勾，待人工编译真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
