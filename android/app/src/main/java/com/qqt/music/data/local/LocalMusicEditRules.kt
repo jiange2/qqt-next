@@ -17,8 +17,7 @@ internal fun selectableSongIds(songs: List<LocalSong>): Set<String> =
  * 没有可用行时是 no-op（空库 / 整库灰显），顺带清掉不在可见列表里的残留勾选。
  */
 internal fun toggleSelectAll(songs: List<LocalSong>, selected: Set<String>): Set<String> {
-    val ids = selectableSongIds(songs)
-    return if (ids.isNotEmpty() && ids.all { it in selected }) emptySet() else ids
+    return if (isAllSelected(songs, selected)) emptySet() else selectableSongIds(songs)
 }
 
 /**
