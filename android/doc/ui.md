@@ -92,10 +92,10 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 
 本地音乐相关接线：
 
-- `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单、播放器「编辑信息」与排除面板共用同一实例
+- `LocalMusicViewModel` 提升到 `AppNavigation`，页面、顶栏菜单与排除面板共用同一实例
 - 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：视图切换（第一项，文案随视图翻转）/ 批量管理（第二项，仅歌曲视图显示、未授权音频权限禁用）/ 重新扫描（完成后提示「新增 x、移除 y」）/「排除的文件夹」；编辑模式下整条顶栏被替换，此菜单隐藏
 - 本地音乐视图状态（默认专辑）提升在 `AppNavigation`：`remember` 以 `local_music` 返回栈条目为键（初值 true = 专辑，离开本页键置空），页面与顶栏菜单共用。离开本页（含进本地专辑页，条目虽在栈上但已不是当前条目）键即置空、状态重建，返回必回专辑视图，「不记忆上次选择」由结构保证；播放器覆盖层不切 NavHost，条目不变、视图状态保留。视图变化即收起左滑展开态（页内 `LaunchedEffect(showAlbums)`）
-- 本地音乐编辑模式状态提升在 `AppNavigation`：开关 `localMusicEditing`、勾选集合 `localMusicSelection`（`Set<LocalSong.id>`）与批量面板开关 `localMusicBatchPanelOpen`，都 `remember` 以 `local_music` 返回栈条目为键（与视图状态同键）。离开本页（含切底部 Tab / 进本地专辑页）键即置空、状态重建，「离开即退出、勾选不跨页保留」由结构保证；播放器覆盖层不切 NavHost，条目不变、编辑态保留。不放 `LocalMusicViewModel`——它是导航层单例、与专辑页 / 播放器共用，放进去会跨页泄漏。退出路径共用 `exitLocalMusicEditMode()`（清空勾选、关面板）：顶栏取消、系统返回、点保存、权限被收回（`LaunchedEffect(permissionGranted)`）；面板开着时系统返回先收面板、再按一次才退出编辑模式（`BackHandler` 不退出页面）
+- 本地音乐编辑模式状态提升在 `AppNavigation`：开关 `localMusicEditing`、勾选集合 `localMusicSelection`（`Set<LocalSong.id>`）与批量面板开关 `localMusicBatchPanelOpen`，都 `remember` 以 `local_music` 返回栈条目为键（与视图状态同键）。离开本页（含切底部 Tab / 进本地专辑页）键即置空、状态重建，「离开即退出、勾选不跨页保留」由结构保证；播放器覆盖层不切 NavHost，条目不变、编辑态保留。不放 `LocalMusicViewModel`——它是导航层单例、与专辑页共用，放进去会跨页泄漏。退出路径共用 `exitLocalMusicEditMode()`（清空勾选、关面板）：顶栏取消、系统返回、点保存、权限被收回（`LaunchedEffect(permissionGranted)`）；面板开着时系统返回先收面板、再按一次才退出编辑模式（`BackHandler` 不退出页面）
 - 编辑态 `AppNavigation` 的 topBar lambda 把 `MusicTopBar` 整条换成 `LocalMusicEditTopBar`（左「取消」、标题「已选 n 首」、右「全选 / 取消全选」；`MusicTopBar` 标题是纯字符串、左侧固定菜单/返回键，无内部本地音乐分支，表达不了编辑态），⋮ 菜单隐藏；全选 / 已全选判据与批量保存门槛是纯规则（`data/local/LocalMusicEditRules.kt`）。批量底栏 `LocalMusicBatchBar` 只在编辑态渲染，放 Scaffold 内容区底部（NavHost 之下）——底部导航在 Scaffold bottomBar、MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠；批量面板 `LocalBatchEditSheet` 在导航层渲染，保存按可见列表过滤勾选行调 `saveBatchMetadata` 后即退出编辑模式
 - 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
 - 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
@@ -147,7 +147,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
   - 权限被系统关闭（进页面或回前台复查发现）→ 旧列表整体灰显（含专辑卡片）+ 重新授权横幅（重试 / 去系统设置），不放空列表假装没歌；此时歌行不露左滑删除（整库灰显是权限问题，不是文件失效）；重新授权后自动刷新，灰显的行恢复可播
   - 播放中文件被删 → 该行灰显并轻提示「文件不可用」，下次刷新后自然消失（媒体库里已无此行）
 - **排除文件夹**：顶栏「排除的文件夹」打开底部面板（`LocalExcludedFoldersSheet`），自动列出库中含音乐的文件夹并带开关；排除含其全部子文件夹，切换即时生效（纯内存过滤）、不需要重扫，状态随快照落盘、重启保留
-- **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）；编辑模式下长按改为切换勾选，不弹此面板
+- **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`；编辑模式下长按改为切换勾选，不弹此面板
 - **删除（左滑）**：歌行左滑露出红色「删除」按钮，点按钮才执行（见「行内左滑操作」；展开态在列表滚动与歌曲/专辑视图切换时收起）。删的是设备存储里的音频文件本身，删后其他应用也不再可见，与「排除文件夹」（仅本 App 不展示、文件保留）是两回事。删除经 `data/local/LocalMusicDeleter` 分版本接缝，UI 与 ViewModel 不直接碰 MediaStore 删除 API；全程纯本地、零网络请求，飞行模式可用
 - **删除确认按系统版本分档**：Android 11+（API 30+）`createDeleteRequest` 的系统删除框即唯一确认，允许后由系统执行删除；Android 10（API 29）`resolver.delete` 捕获 `RecoverableSecurityException` → 系统授权框 → 授权后重试删除（App 自有文件可能直接删成功、不弹框）；Android 9 及以下（≤28）没有系统框，先弹导航层的 App 确认框（标题 `删除本地歌曲`，正文 `「歌名」将从设备存储删除，其他应用也不再可见。`——歌名取覆盖后的展示标题，按钮 `删除` / `取消`，两个 Text 走 M3 默认色），确认后进接缝，API 23+ 且未授予写入权限时再弹 `WRITE_EXTERNAL_STORAGE` 权限框（API 21–22 安装即授予、无权限框；已授予则不再弹）
 - **删除结果**：成功 → 该行即时从列表消失、专辑分组与卡片计数随之重算（纯派生）、整库快照原子落盘，不等下次扫描；失败 → 一律轻提示「删除失败」，仅当确认媒体库行已不在（delete 返回 0 行——文件已被外部删除 / URI 失效）才把该行标为不可用（灰显并落盘）；拒绝写入权限、provider 异常、异常框结果码、IntentSender 发送失败都保持该行可播（它们不证明文件不可播，真不可播的文件走既有「文件不可用」链路、下次刷新自然消失）；取消 → 一行不动、无提示。灰显（文件不可用）的行照样可左滑删除；删除正在播放的歌不做特殊处理（不主动停止、不跳歌），真播不了时走既有「文件不可用」链路
@@ -167,7 +167,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 
 ### LocalMetadataEditSheet（元数据编辑面板）
 - 底部弹层，字段：标题、艺术家、专辑、专辑艺术家、音轨号、年份 + 「恢复默认」
-- 入口两个：本地音乐页 / 本地专辑页长按歌曲行；全屏播放器「更多菜单 → 编辑信息」（仅当前歌曲为本地歌曲且快照里找得到该记录时出现）
+- 入口仅列表长按：本地音乐页歌曲视图 / 本地专辑页长按歌曲行
 - 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与媒体库标签相同不算「改过」
 - 保存只写覆盖层，不回写音频文件；保存后歌曲列表、专辑分组与封面立即刷新，并同步播放器上的标题 / 艺术家展示值（不打断播放）
 - **批量变体 `LocalBatchEditSheet`**：本地音乐页编辑模式底栏「编辑信息」打开（已选 ≥1 首），与单首面板同款 ModalBottomSheet，但仅专辑 / 专辑艺术家两个自由文本字段，初始为空、不预填、无「恢复默认」按钮；**留空 = 不改**（与单首面板「留空 = 恢复文件原值」相反），两字段 trim 皆空时保存禁用；标题「批量管理」，副标题显示已选数与「只改 App 里的显示，不会修改音频文件本身」；字段标签用规范词「专辑」「专辑艺术家」（CONTEXT.md，弃用「专辑作者」）
@@ -231,11 +231,11 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 按压反馈：全页可点控件无波纹、无按压投影/抬升；线性图标与文字类按下变淡（α 0.5，按下约 100ms、松手约 150ms），62dp 实心播放键改为按压缩放至 0.9 回弹（graphicsLayer 置于 shadow 前，投影随钮缩放）；手感参数集中在 `PlayerScreen.kt` 底部常量（`PressDimAlpha` / `PressScaleDown` / `PressInMs` / `PressOutMs`）；封面/播放键/滑钮的常驻投影是视觉层次，不属于反馈
 - 歌曲封面（歌曲页槽位）：24dp 圆角方形 1:1，藏青阴影居中，不可点（无按压反馈）；切歌时旧图淡出、新图淡入并从 0.95 放大进场（AnimatedContent，400ms 与背景过渡同步）；暂停时饱和度 1→0.7 + 叠加 18% 深色 scrim（300ms），恢复播放还原；加载中/失败/无 URL 统一显示 72dp 音符占位图标（PlayerIconGray），图片加载成功后覆盖其上
 - 标题区（左对齐）：歌名 / 歌手 / 队列位置（`当前序号 / 队列总数`）
-- 功能图标行：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多；图标 28dp 居中于 48dp 触控框，行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘与进度条两端对齐；喜欢为本地实心/描边心形切换；下载点击将当前歌曲入队下载，下载中图标位变 28dp 品牌橙环形进度 + 中心百分比数字（排队/总长未知时为不确定式旋转圈，点击无反应），已下载图标变 DownloadedGreen（#4CAF50）且点击无反应（取消/删除在下载列表页）；下载中/已下载均为不可操作态、无按压反馈（已下载由 `PlayerGlyph` `enabled = false` 实现，环形进度本身不可点）；播放设置 / 加入歌单 / 更多点击打开对应底部浮层（播放设置=定时关闭，加入歌单=勾选我的歌单/新建，更多=当前歌曲扩展操作）；定时生效期间播放设置图标右上角小圆点角标
+- 功能图标行（仅在线歌曲；本地歌曲整行不出现）：喜欢 / 播放设置 / 下载 / 加入歌单 / 更多；图标 28dp 居中于 48dp 触控框，行 padding 18dp = 28dp 内容线 − (48−28)/2，首末图标盒边缘与进度条两端对齐；喜欢为本地实心/描边心形切换；下载点击将当前歌曲入队下载，下载中图标位变 28dp 品牌橙环形进度 + 中心百分比数字（排队/总长未知时为不确定式旋转圈，点击无反应），已下载图标变 DownloadedGreen（#4CAF50）且点击无反应（取消/删除在下载列表页）；下载中/已下载均为不可操作态、无按压反馈（已下载由 `PlayerGlyph` `enabled = false` 实现，环形进度本身不可点）；播放设置 / 加入歌单 / 更多点击打开对应底部浮层（播放设置=定时关闭，加入歌单=勾选我的歌单/新建，更多=当前歌曲扩展操作）；定时生效期间播放设置图标右上角小圆点角标
 - 本地歌曲差异（`Song.isLocalSong()`，ID 走 `local:` 命名空间或 URL 是 `content://`）：
-  - 功能图标行只剩「播放设置」与「更多」：收藏 / 下载 / 加入歌单对本地歌曲无意义或必然失败，一律不出现
+  - 功能图标行整行不出现（纯播放形态）：收藏 / 下载 / 加入歌单对本地歌曲无意义或必然失败，播放设置与更多也一并收起
   - 页签只剩「歌曲」，没有歌词页与刷新入口，播放期间不发 `song_info` 请求；切回在线歌曲后全部恢复
-  - 「更多」里没有评分，换成「编辑信息」，打开与列表长按共用的 `LocalMetadataEditSheet`；快照里找不到该记录（文件已删等）时入口也收起
+  - 没有「更多」菜单与播放设置入口：元数据编辑只走列表长按入口（本地音乐页歌曲视图 / 本地专辑页）；已设定时本地播放期间仍全局生效，不可见、不可取消，切回在线歌曲恢复可见可操作
   - 队列来源为 `QueueSource.LOCAL`，播放模式按该来源单独记忆
 - 进度条：藏青 4dp 细轨道 + 16dp 小圆点滑钮（20dp slot 容器内居中，规避 M3 slot 贴左上问题）；M3 Slider 轨道两端各内缩半个 slot 宽（10dp），Slider 容器 padding 18dp（= 28 − 10）补偿，使轨道两端落在 28dp 内容线上（改滑钮/slot 尺寸需同步调整）；下方时间标签行左右 28dp
 - 主控行（钉底常驻）：播放模式（三态：随机播放/顺序播放/单曲循环，ADR 0008，图标随模式换图形——随机=乱序箭头、顺序=循环环绕、单曲循环=环绕+1；顺序播放为默认态 PlayerIconGray，其余 BrandOrange；点击图标弹出白底圆角菜单（宽随最宽行整行内容右边不留白，IntrinsicSize.Max——不可用 Min：中文可逐字断行会窄到单字竖排；底边在图标顶边上方 20dp 防误触，行内 20dp 图标+14sp 文字，当前模式行 PlaceholderBg 高亮满行宽），菜单打开时再点图标按 随机→顺序→单曲循环 轮转且高亮跟随不关闭；状态持久化于 PlayerSettingsManager，Service collect 落到 ExoPlayer：随机=shuffleModeEnabled+REPEAT_ALL、顺序=REPEAT_ALL、单曲循环=REPEAT_ONE）/ 上一首 / 62dp 藏青大圆播放键 / 下一首 / 播放队列入口（打开队列浮层，点选为队列内跳播），含 navigationBarsPadding 手势区避让
