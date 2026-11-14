@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -38,6 +41,8 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 文件不可用的行整体灰显、不可点，右侧以「不可用」代替时长（spec「权限与失效」）。
  * [swipe] 非空时该行可左滑露出操作按钮（见 [SwipeRevealRow]，本地两页传「删除」）；
  * 灰显只关行内点击，不影响外层左滑——文件不可用的行照样可删。
+ * [editing] 为 true（编辑模式，仅歌曲视图）时序号位换成前置勾选框：点行 / 长按切换勾选
+ * （由调用方接线），灰显行不可勾选；勾选框本身不接事件，避免与整行点击双重切换。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -49,6 +54,8 @@ internal fun LocalSongRow(
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     swipe: RowSwipeAction? = null,
+    editing: Boolean = false,
+    selected: Boolean = false,
 ) {
     val currentSong by playerViewModel.currentSong.collectAsState()
     val isCurrent = currentSong?.id == song.id
@@ -63,16 +70,27 @@ internal fun LocalSongRow(
                 .padding(start = 8.dp, end = 16.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "$index",
-                fontSize = songIndexFontSize("$index".length),
-                fontWeight = if (isCurrent && available) FontWeight.SemiBold else FontWeight.Normal,
-                textAlign = TextAlign.Center,
-                color = if (isCurrent && available) BrandOrange else InkSecondary,
-                maxLines = 1,
-                softWrap = false,
-                modifier = Modifier.width(26.dp),
-            )
+            if (editing) {
+                // 编辑模式：序号位换成前置勾选框。只展示不接事件（onCheckedChange = null），
+                // 勾选切换统一走整行点击 / 长按，避免点框与点行双重切换；灰显行禁用不可勾选
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = null,
+                    enabled = available,
+                    colors = CheckboxDefaults.colors(checkedColor = BrandOrange, checkmarkColor = Color.White),
+                )
+            } else {
+                Text(
+                    text = "$index",
+                    fontSize = songIndexFontSize("$index".length),
+                    fontWeight = if (isCurrent && available) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    color = if (isCurrent && available) BrandOrange else InkSecondary,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.width(26.dp),
+                )
+            }
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
