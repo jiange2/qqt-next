@@ -134,3 +134,38 @@ private fun String.batchAlbumField(tagValue: String, existing: String?): String?
     val text = trim()
     return if (text.isEmpty()) existing else text.overrideIfCustom(tagValue)
 }
+
+/** 批量提交后的整表形态：新覆盖表 + 新列表（[batchAlbumCommit] 的产物，ViewModel 拿去锁内落位） */
+data class BatchAlbumCommit(
+    val overlay: Map<String, LocalSongOverride>,
+    val songs: List<LocalSong>,
+)
+
+/**
+ * 批量提交的整表变换（spec「批量提交语义」，JVM 可测接缝）：按快照列表与当前覆盖表，
+ * 为选中行生成新覆盖表与新列表——
+ *
+ * - 只替换选中行，其余行原样；行从快照取，可用状态保留快照本值（UI 传入的展示副本可能灰显，不参与生成）
+ * - 原覆盖以覆盖表现值为准（它是按行 ID 落盘与合并的权威来源）
+ * - 新覆盖成空壳 → 删键（沿用单首「空壳不落盘」口径）；未选中行的键不动
+ * - 列表按展示标题重排（批量只改专辑字段，行序实际不变）
+ *
+ * 不在快照里的选中行直接跳过（与在途删除竞态的已知取舍）。锁、一次原子落盘与提示由
+ * ViewModel 入口编排（[com.qqt.music.ui.screens.localmusic.LocalMusicViewModel.saveBatchMetadata]）。
+ */
+fun batchAlbumCommit(
+    songs: List<LocalSong>,
+    overlay: Map<String, LocalSongOverride>,
+    selectedIds: Set<String>,
+    albumInput: String,
+    albumArtistInput: String,
+): BatchAlbumCommit {
+    var updated = overlay
+    val rows = songs.map { row ->
+        if (row.id !in selectedIds) return@map row
+        val override = row.withOverride(overlay[row.id]).batchAlbumOverride(albumInput, albumArtistInput)
+        updated = if (override.isEmpty) updated - row.id else updated + (row.id to override)
+        row.withOverride(override.takeUnless { it.isEmpty })
+    }
+    return BatchAlbumCommit(updated, rows.sortedByDisplayTitle())
+}
