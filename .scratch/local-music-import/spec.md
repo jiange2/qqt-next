@@ -42,14 +42,14 @@ Status: ready-for-agent
 
 ### 入口与接收
 
-- MainActivity 新增 intent-filter：`ACTION_VIEW` + `ACTION_SEND`，MIME 限 `audio/*`，`content` scheme（VIEW 取 `intent.data`，SEND 取 `EXTRA_STREAM`）。对任何 App 的音频打开/分享生效，不止微信/QQ。
+- MainActivity 新增 intent-filter：`ACTION_VIEW` + `ACTION_SEND`，MIME 限 `audio/*`（VIEW 取 `intent.data`，SEND 取 `EXTRA_STREAM`）。对任何 App 的音频打开/分享生效，不止微信/QQ。**实现偏差（已裁定）**：VIEW filter 声明 `content` scheme + `audio/*`；SEND filter 仅声明 `audio/*`、**不带 scheme**——SEND 意图只带 MIME、无 data URI，`IntentFilter.matchData` 在 filter 声明 scheme 时对 SEND 的空 scheme 必不匹配（NO_MATCH_DATA，源码核实），带 scheme 会令分享入口失效；`content` scheme 改由胶水层对 `EXTRA_STREAM` 防御性校验（非 content 拒收），spec 意图（只收音频 content URI）不变。
 - 先只处理单文件；多文件分享（`ACTION_SEND_MULTIPLE`）本期不支持。
 - qqt 界面内不设导入按钮、不做 SAF 选择器掏来源 App 私有目录（系统边界，ADR 0022 已定不补充）。
 - 非音频 MIME 不接收（intent-filter 已限 `audio/*`，胶水层再校验一次）。
 
 ### 意图胶水（UI 层）
 
-- MainActivity `onCreate`（冷启动）与 `onNewIntent`（在运行）解析意图：取音频 URI → 调 `LocalMusicViewModel.importAudio(uri)`。必要时调整 launchMode 保证在运行复用实例走 `onNewIntent`。
+- MainActivity `onCreate`（冷启动）与 `onNewIntent`（在运行）解析意图：取音频 URI → 调 `LocalMusicViewModel.importAudio(uri)`。launchMode 取 `singleTask`（在运行复用实例走 `onNewIntent` 的必要条件，standard 会新建 Activity/ViewModel；副作用为任务根复用与桌面回栈行为变化，单 Activity + NavHost 内部栈影响面小，留真机三态验收）。
 - 胶水只做「解析 URI + 转交」，不含复制/命名/刷新逻辑（那些在接缝与 ViewModel）。
 
 ### 唯一写侧接缝（数据层）
@@ -59,6 +59,7 @@ Status: ready-for-agent
 - 实现 `MediaStoreImporter(context, sdkInt)`（与 `MediaStoreLibrarySource` / `MediaStoreDeleter` 同口径注入 sdkInt）：
   - Android 10+（API 29+）：`MediaStore.Audio.Media` 插入，`RELATIVE_PATH = "Music/导入/"`，`IS_PENDING = 1` 期间写入字节、写完置 0（失败不暴露半截文件）；App 拥有自己创建的行，**不需要新权限**。
   - Android 9 及以下（≤28）：写公共 `Music/导入/` 目录 + `MediaScannerConnection` 触发扫描（`WRITE_EXTERNAL_STORAGE` 清单已有，maxSdkVersion 29）。
+  - ≤28 权限取舍（已裁定）：API 23+ 未授予 `WRITE_EXTERNAL_STORAGE` 时直接返回 `Failure`、**不弹运行时申请框**——spec 钉死单步 suspend 接缝，不镜像删除的两步动作机（`RequestWritePermission` 交接）；≤28 的 READ/WRITE 同属 STORAGE 权限组，授过读即有写（API 21–22 安装即授予），影响面极小。
 - 框架 IO（ContentResolver 读写、MediaStore 插入、扫描）留真机手工验收。
 
 ### 纯函数（JVM 可测）
@@ -88,16 +89,17 @@ Status: ready-for-agent
 ### 文档
 
 - CONTEXT.md 已新增「导入（本地音乐）」词条（grilling 期间落地），弃用「扫描微信/QQ」「导入按钮」。
-- `android/doc/ui.md`、`android/doc/storage.md` 补导入节（入口、接缝、落库目录、刷新与提示）——随实现票据同步。
+- 文档口径（票据03 已同步）：`android/doc/ui.md` 记导入入口（来源 App 打开方式 / 分享、qqt 内无按钮）、intent-filter 事实与意图胶水、VM 实例共享口径、分版本落库与结果提示；`android/doc/storage.md` 记导入分版本落库、重名加后缀、≤28 写入权限取舍与静默刷新后整份快照重写；`android/project.md` 记导入能力、目录树与不新增权限口径。
 - 不新增 ADR：导入是可逆的新增能力（去掉 intent-filter 与接收逻辑即可），延续 ADR 0020 / 0022、无推翻；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）中「难以反转」不成立。「入口在来源 App 而非 qqt 按钮」的系统边界理由记入词条与本 spec。
 
 ## Testing Decisions
 
 - 好测试只测外部行为、不测实现细节：纯函数测路由/命名/归一的输入输出，ViewModel 测「成功→刷新+提示 / 失败→提示 / 不播放」的可观察结果，不断言内部调用顺序。
-- 纯函数 JVM 测试：`importRoute` 版本路由、`resolveImportFileName`（重名加后缀、扩展名保留、无扩展名/空名等边界）、展示名推导（`LocalImportRulesTest`，照 `LocalMusicDeleterTest` 先例）。
-- ViewModel 编排 JVM 测试：fake `LocalMusicImporter` 经内部构造器注入，断言 Success 触发刷新与「已导入到本地音乐」、Failure 出「导入失败」、不自动播放（照 source / deleter 的 fake 注入范式）。
-- 接缝 MediaStore 实现 + 意图胶水：真机手工验收（设备级验收清单，各票未勾选项）——微信/QQ 打开方式与分享、冷启动/在运行、落 `Music/导入/`、重名加后缀、重复导入各自成行、失败提示、无权限落库成功、导入歌可播/可编辑/可删除、飞行模式可用（纯本地）。
-- 先例：`LocalMusicDeleterTest`、`MediaStoreProjectionTest`、`AudioReadPermissionTest`（纯函数 JVM）；ViewModel fake 注入照 `LocalMusicLibrarySource` / `LocalMusicDeleter`。
+- 纯函数 JVM 测试：`importRoute` 版本路由、`resolveImportFileName`（重名加后缀、扩展名保留、无扩展名/空名等边界）、展示名规范化、落库目录口径与 ≤28 写入权限门槛（`LocalImportRulesTest` **24 例**，照 `LocalMusicDeleterTest` 先例：独立字面量断言、不重言式），已写、未执行。
+- ViewModel 编排 JVM 测试：fake `LocalMusicImporter` / `LocalMusicLibrarySource` 经 internal 构造器注入，断言 Success 触发刷新与「已导入到本地音乐」（新歌经 `songs` 可见）、Failure 出「导入失败」且列表不动、无音频权限时成功提示 + 刷新静默跳过，不自动播放（`LocalMusicViewModelImportTest` **3 例**），已写、未执行。「照 source / deleter 的 fake 注入范式」澄清为**构造器口径**：internal 构造器原已存在但零调用方，仓内原无 VM 测试先例，本测试为首个。
+- VM 测试基础设施（spec 缺口，票据02 已裁定）：新增 `testImplementation` kotlinx-coroutines-test **1.8.1**（与运行时解析版本对齐：coil 2.7.0 → coroutines-android 1.8.1，lifecycle 2.8.4 声明 1.7.3 冲突取高；gradle 缓存仅 descriptor 无 jar，**首次人工编译需联网**拉取）+ `testOptions.unitTests.isReturnDefaultValues = true`（Application() 可构造、框架方法返回默认值；现有纯函数测试不调 android 方法、不受影响），不引 Robolectric/mockk。mockable jar 清空 `Uri` 静态初始化 → 测试 source set `android.net.TestUri` 替身（同包继承，除 toString 外全抛、意外框架调用响亮失败）；测试 Application 覆写 `getFilesDir` 到 `TemporaryFolder`（否则 filesDir=null 快照落工作目录、用例间串库）；`StandardTestDispatcher` + `Dispatchers.setMain` 驱动 viewModelScope，VM 硬编码 IO/Default 跳线程由 runTest 实时等待、挂起 `first{}` 等可观察结果落定。
+- 接缝 MediaStore 实现 + 意图胶水：真机手工验收（设备级验收清单，各票未勾选项）——微信/QQ 打开方式与分享、冷启动/在运行/桌面图标回栈（singleTask 三态）、落 `Music/导入/`、重名加后缀、重复导入各自成行、失败提示、无权限落库成功、导入歌可播/可编辑/可删除、飞行模式可用（纯本地）。
+- 先例：`LocalMusicDeleterTest`、`MediaStoreProjectionTest`、`AudioReadPermissionTest`（纯函数 JVM）；ViewModel fake 注入照 `LocalMusicLibrarySource` / `LocalMusicDeleter` 的 internal 构造器口径（无现成 VM 测试代码先例）。
 - 本仓规约：AI 不编译、不跑 gradlew，测试已写待人工执行。
 
 ## Out of Scope
@@ -123,3 +125,4 @@ Status: ready-for-agent
 ## Comments
 
 - 2026-11-14 grilling 定稿：方向（做导入功能）与入口形态（来源 App「用其他应用打开 / 分享」+ qqt 接收器、qqt 内无按钮）确认；Q1 进库即止不自动播放、Q2 落 `Music/导入/`、Q3 各自成行不去重不覆盖，三项全部同意。机制委托项（VIEW+SEND audio/*、MediaStore 插入 IS_PENDING、重名加后缀、冷启动/在运行、复用刷新与 notice、无需新权限、单文件先行）随答复一并确认。接缝提案（唯一写侧接缝 `LocalMusicImporter` 镜像 `LocalMusicDeleter` + 纯函数 JVM 测 + ViewModel fake 注入 + 意图胶水真机验收）经用户确认。CONTEXT.md「导入（本地音乐）」词条已写入。spec 入库，Status ready-for-agent，票据留待 /to-tickets 编排（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 票据03 文档同步：实现提交票据01 e07b270（合并 a2ba40c）、票据02 689e60f（合并 c701e4b）；本票文档提交哈希留待编排层补记。spec 文字对齐代码事实：SEND filter 仅 MIME 不带 scheme 的偏差与原因（IntentFilter.matchData 对 SEND 空 scheme 必不匹配，content scheme 由胶水层校验）、「唯一写侧接缝」补 ≤28 未授 WRITE 直接 Failure 不弹申请框的取舍（单步接缝钉死、STORAGE 权限组授读即有写）、launchMode 落定 singleTask、Testing Decisions 更新为 LocalImportRulesTest 24 例 + LocalMusicViewModelImportTest 3 例已写未执行、fake 注入澄清为构造器口径、VM 测试基础设施裁定（coroutines-test 1.8.1 + returnDefaultValues + TestUri 替身 + TemporaryFolder 隔离，首次编译需联网）。android/doc/ui.md（关键文件表 + 接线 bullets + LocalMusicScreen 导入三段 + 注意事项所有权口径）、android/doc/storage.md（关键文件表 + 导入落库段）、android/project.md（模块职责 / 目录树 / MainActivity 注释 / 权限句）已同步；CONTEXT.md「导入（本地音乐）」词条核对与最终实现一致、未改。**不新增 ADR 判定对照交付代码核实成立**：导入是可逆新增能力（去掉 intent-filter、意图胶水与接缝即可，读 / 删除 / 编辑 / 播放管线零改动）；延续 ADR 0022（行 ID 身份、各自成行不去重、全机音乐 + 排除文件夹自然收录 `Music/导入/`，查询零改动）与 ADR 0020（只复制字节、不写来源文件标签，导入歌编辑仍走覆盖层），无推翻；三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）中「难以反转」不成立——SEND filter 偏差是平台机制（IntentFilter.matchData）强制，≤28 权限取舍是单步接缝约束下的实现选择，均不构成架构推翻，理由已记入正文；「入口在来源 App 而非 qqt 按钮」的系统边界理由已在词条与本 spec。Status 推进与票据归档留待评审修复合入后统一执行（照 local-music-delete / local-music-rescan 先例）。

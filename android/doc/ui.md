@@ -12,11 +12,12 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 |------|------|
 | `ui/navigation/Screen.kt` | 所有路由枚举（route 字符串 + title），`bottomNavRoutes` / `drawerTopRoutes` 分组 |
 | `ui/navigation/AppNavigation.kt` | 整体框架：ModalNavigationDrawer + Column（Scaffold + MiniPlayer）+ NavHost，控制 TopBar 和 MiniPlayer 显示逻辑 |
+| `MainActivity.kt` | App 入口：宿主 `AppNavigation`；导入意图胶水——`singleTask` 接收音频 `VIEW`/`SEND` 意图（冷启动 `onCreate` / 在运行 `onNewIntent`），只「解析 URI + MIME/scheme 再校验 + 转交 `LocalMusicViewModel.importAudio`」，不在此弹 Toast |
 | `ui/components/TopBar.kt` | `MusicTopBar`：橙色顶栏，标题支持文本截断（`TextOverflow.Ellipsis`）和宽度限制防止溢出，左侧菜单/返回，右侧搜索 |
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换与批量管理在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除、编辑模式勾选歌行与 `LocalMusicEditTopBar` / `LocalMusicBatchBar`）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘、批量保存一次提交）、`LocalSongRow`（编辑态序号位换勾选框）、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet`、`LocalBatchEditSheet` |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换与批量管理在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除、编辑模式勾选歌行与 `LocalMusicEditTopBar` / `LocalMusicBatchBar`）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘、导入编排、批量保存一次提交）、`LocalSongRow`（编辑态序号位换勾选框）、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet`、`LocalBatchEditSheet` |
 | `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列；歌行左滑删除（与本地音乐页同一条接缝），删空这张专辑时由导航层自动返回 |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
@@ -100,7 +101,8 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
 - 本地歌曲删除的两个 launcher 同样注册在导航层：`StartIntentSenderForResult` 拉系统框（API 30+ 删除确认框 / API 29 `RecoverableSecurityException` 授权框，同一个契约），`RequestPermission` 拉 ≤28 的 `WRITE_EXTERNAL_STORAGE`。`LocalMusicViewModel` 产出「下一步动作」（`pendingDeleteAction`），导航层拉起后清空（与 `notice` 同范式）。**放常驻宿主而不是页面**：本地音乐页导航到专辑页时离开组合，页面级 `rememberLauncherForActivityResult` 随之注销，从专辑页发起删除、系统框返回时回调就丢了；导航层不随路由离开组合，两页共用一份。IntentSender 发送自身失败时契约回 `RESULT_CANCELED` + `EXTRA_SEND_INTENT_EXCEPTION`，launcher 检查该 extra 并标成拉起失败，ViewModel 据此弹「删除失败」——不会被当成用户取消而静默吞掉
 - ≤28 的 App 内删除确认框也只在导航层渲染一份（`pendingDeleteConfirm` 非空即弹，两页共用）；API 29/30+ 系统框即唯一确认，此框永不出现
-- 本地音乐域的一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败 / 批量保存「已修改 n 首」）在导航层统一 Toast：专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页不再自己消费，避免双弹）
+- 本地音乐域的一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败 / 批量保存「已修改 n 首」/ 导入成功「已导入到本地音乐」/ 导入失败「导入失败」）在导航层统一 Toast：专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页不再自己消费，避免双弹）
+- 导入不改导航接线（`AppNavigation` 零改动）：`MainActivity` 的意图胶水经 `by viewModels()` 访问 `LocalMusicViewModel`，与 `AppNavigation` 的 Compose `viewModel()` 命中**同一实例**（同 Activity ViewModelStore + 默认 factory + 默认 key，无 owner 覆写 / 自定义 factory，机制与前提见「注意事项」）；导入提示复用上一条的既有 `notice` collector，任何 Tab 下导入都会弹 Toast，StateFlow 保值、冷启动 `onCreate` 设的提示首帧组合后照样弹
 - 删除成功且删空的是当前专辑 → 自动 `popBackStack()` 回本地音乐页：绑定在删除成功事件上（`deleteSucceeded` 带专辑键与删后剩余可见行数，剩余数在删除提交时同步算好——`albums` 派生异步重算，消费时读它会拿到旧值），并校验当前路由的专辑键一致；不做「专辑消失就 pop」的通用观察，进程被杀恢复到本就不存在的专辑时仍显示既有空态
 - 音频权限统一走 `ActivityResultContracts.RequestPermission()`，权限名按系统版本取用（`audioReadPermission()`：Android 13+ `READ_MEDIA_AUDIO`、12 及以下 `READ_EXTERNAL_STORAGE`）；授权成功自动静默刷新，拒绝过的入口升级为「重试 + 去系统设置」
 
@@ -149,6 +151,9 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - **删除（左滑）**：歌行左滑露出红色「删除」按钮，点按钮才执行（见「行内左滑操作」；展开态在列表滚动与歌曲/专辑视图切换时收起）。删的是设备存储里的音频文件本身，删后其他应用也不再可见，与「排除文件夹」（仅本 App 不展示、文件保留）是两回事。删除经 `data/local/LocalMusicDeleter` 分版本接缝，UI 与 ViewModel 不直接碰 MediaStore 删除 API；全程纯本地、零网络请求，飞行模式可用
 - **删除确认按系统版本分档**：Android 11+（API 30+）`createDeleteRequest` 的系统删除框即唯一确认，允许后由系统执行删除；Android 10（API 29）`resolver.delete` 捕获 `RecoverableSecurityException` → 系统授权框 → 授权后重试删除（App 自有文件可能直接删成功、不弹框）；Android 9 及以下（≤28）没有系统框，先弹导航层的 App 确认框（标题 `删除本地歌曲`，正文 `「歌名」将从设备存储删除，其他应用也不再可见。`——歌名取覆盖后的展示标题，按钮 `删除` / `取消`，两个 Text 走 M3 默认色），确认后进接缝，API 23+ 且未授予写入权限时再弹 `WRITE_EXTERNAL_STORAGE` 权限框（API 21–22 安装即授予、无权限框；已授予则不再弹）
 - **删除结果**：成功 → 该行即时从列表消失、专辑分组与卡片计数随之重算（纯派生）、整库快照原子落盘，不等下次扫描；失败 → 一律轻提示「删除失败」，仅当确认媒体库行已不在（delete 返回 0 行——文件已被外部删除 / URI 失效）才把该行标为不可用（灰显并落盘）；拒绝写入权限、provider 异常、异常框结果码、IntentSender 发送失败都保持该行可播（它们不证明文件不可播，真不可播的文件走既有「文件不可用」链路、下次刷新自然消失）；取消 → 一行不动、无提示。灰显（文件不可用）的行照样可左滑删除；删除正在播放的歌不做特殊处理（不主动停止、不跳歌），真播不了时走既有「文件不可用」链路
+- **导入（入口在来源 App，qqt 内无按钮）**：qqt 够不到来源 App 私有目录（`Android/data/`），界面内不设导入按钮、不做 SAF 选择器——入口在来源 App 一侧：微信/QQ 等任意 App 里点音频 →「用其他应用打开」或「分享」→ 选 qqt（不止微信/QQ）。`MainActivity` 注册两个 intent-filter：`VIEW` 带 `content` scheme + `audio/*`；`SEND` 仅 `audio/*` **不带 scheme**——SEND 意图只带 MIME、无 data URI，`IntentFilter.matchData` 在 filter 声明 scheme 时对 SEND 的空 scheme 必不匹配，带 scheme 会令分享入口失效，`content` scheme 改由胶水层对 `EXTRA_STREAM` 防御性校验。`singleTask` 保证在运行复用实例：冷启动 `onCreate` 末尾与 `onNewIntent` 共用同一解析（VIEW 取 `data`、SEND 取 `EXTRA_STREAM` 单文件，`SEND_MULTIPLE` 静默忽略；非 content 拒收，MIME 取 `intent.type`、拿不到退回 `resolver.getType(uri)`，非 `audio/*` 拒收），胶水只「解析 URI + 转交 `LocalMusicViewModel.importAudio`」，不含复制/命名/刷新逻辑、不在此弹 Toast。导入经 `data/local/LocalMusicImporter` 唯一写侧接缝，UI 与 ViewModel 不直接碰 MediaStore 写入 API；全程纯本地、零网络请求，飞行模式可用
+- **导入落库按系统版本分档**：Android 10+（API 29+）`MediaStore.Audio.Media` 插入自有行（`RELATIVE_PATH = "Music/导入/"`，`IS_PENDING = 1` 期间写入字节、写完置 0 发布，任何失败清理自有 pending 行不留半截），App 拥有自己创建的行、不需要新权限；Android 9 及以下（≤28）直写公共 `Music/导入/`（临时文件 + rename）后 `MediaScannerConnection.scanFile` 触发扫描，API 23+ 未授予 `WRITE_EXTERNAL_STORAGE` 直接失败、不弹申请框（单步接缝取舍，见 [storage.md](storage.md)）。目标目录重名自动加后缀 `name (2).ext` 不覆盖旧文件；重复导入各自成行、不去重（ADR 0022）
+- **导入结果**：成功 → 轻提示「已导入到本地音乐」+ 静默刷新（复用整库刷新管线），回到本地音乐页新歌自动可见、不用手动重扫，随快照落盘重启仍在；失败 → 轻提示「导入失败」，不留半截文件。导入只落库：不自动播放、不重建播放队列、不打断当前播放。未授音频读取权限时导入照样落库成功（来源 URI 读权限 + 写自有行），刷新在权限门槛静默跳过；进本地音乐页走现有权限引导、授权后即可见。导入的歌 = 普通本地歌曲：播放、元数据编辑、批量管理、左滑删除全复用现有机制；专辑归并按现有规则（有专辑标签按「专辑名 + 专辑艺术家」，无标签按文件夹名兜底聚成「导入」专辑），`Music/导入/` 可被「排除文件夹」照常排除
 - 库快照与覆盖层见 [storage.md](storage.md)；来源与权限口径见 `LocalMusicLibrarySource`（`IS_MUSIC != 0`、`IS_PENDING` / `IS_TRASHED` 版本条件、多存储卷合并、行 ID 身份）
 
 ### LocalAlbumScreen（本地专辑页）
@@ -249,6 +254,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 ## 注意事项
 
 - `PlayerViewModel` 通过 `by viewModels()` 在 `MainActivity` 创建，然后通过参数逐层传递给页面 Composable（非 Hilt inject）
+- `LocalMusicViewModel` 的所有权是**隐式共享**：实例由 `AppNavigation` 的 Compose `viewModel()` 构造，`MainActivity` 的导入胶水经 `by viewModels()` 访问到的是同一实例——两者都解析到宿主 Activity 的同一个 ViewModelStore + 默认 factory + 默认 key（类全名）。前提：全仓无 `LocalViewModelStoreOwner` 覆写、无自定义 `ViewModelProvider.Factory`、无自定义 key（`PlayerViewModel` 先例同机制）。将来若引入 owner 覆写或自定义 factory/key，此共享即失效，导入胶水需改为显式传参（照 `PlayerViewModel` 范式）
 - Settings 页面与各详情页（含搜索组三页）的 `gesturesEnabled = false` 是为了防止侧滑手势与页面内部滑动冲突
 - `Screen.titleOf(route)` 函数用于 `TopBar` 动态显示当前页面标题，新增路由时需同步更新此函数
 - **[坑] TopBar 文本溢出处理**：使用 `TextOverflow.Ellipsis` 时，**必须导入** `androidx.compose.ui.text.style.TextOverflow`（注意包含 `.style.`），而不是 `androidx.compose.ui.text.TextOverflow`。后者不存在，会导致编译错误。参考 `SongListItem.kt`、`MiniPlayer.kt` 等其他组件的导入方式。
