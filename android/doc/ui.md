@@ -95,7 +95,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 本地音乐 Tab 的 TopBar 右侧不是搜索，而是 `LocalMusicTopBarMenu`：重新扫描（完成后提示「新增 x、移除 y」）与「排除的文件夹」
 - 本地音乐域（`local_music` 与 `local_album`）**不显示离线横幅**：这两个页面不发起任何网络请求
 - 播放失败产生的 `unavailableLocalSongId` 在导航层消费：把该行标记为不可用并轻提示「文件不可用」，不自动刷新；下次刷新后媒体库里已无此行，自然消失
-- 本地歌曲删除的两个 launcher 同样注册在导航层：`StartIntentSenderForResult` 拉系统框（API 30+ 删除确认框 / API 29 `RecoverableSecurityException` 授权框，同一个契约），`RequestPermission` 拉 ≤28 的 `WRITE_EXTERNAL_STORAGE`。`LocalMusicViewModel` 产出「下一步动作」（`pendingDeleteAction`），导航层拉起后清空（与 `notice` 同范式）。**放常驻宿主而不是页面**：本地音乐页导航到专辑页时离开组合，页面级 `rememberLauncherForActivityResult` 随之注销，从专辑页发起删除、系统框返回时回调就丢了；导航层不随路由离开组合，两页共用一份
+- 本地歌曲删除的两个 launcher 同样注册在导航层：`StartIntentSenderForResult` 拉系统框（API 30+ 删除确认框 / API 29 `RecoverableSecurityException` 授权框，同一个契约），`RequestPermission` 拉 ≤28 的 `WRITE_EXTERNAL_STORAGE`。`LocalMusicViewModel` 产出「下一步动作」（`pendingDeleteAction`），导航层拉起后清空（与 `notice` 同范式）。**放常驻宿主而不是页面**：本地音乐页导航到专辑页时离开组合，页面级 `rememberLauncherForActivityResult` 随之注销，从专辑页发起删除、系统框返回时回调就丢了；导航层不随路由离开组合，两页共用一份。IntentSender 发送自身失败时契约回 `RESULT_CANCELED` + `EXTRA_SEND_INTENT_EXCEPTION`，launcher 检查该 extra 并标成拉起失败，ViewModel 据此弹「删除失败」——不会被当成用户取消而静默吞掉
 - ≤28 的 App 内删除确认框也只在导航层渲染一份（`pendingDeleteConfirm` 非空即弹，两页共用）；API 29/30+ 系统框即唯一确认，此框永不出现
 - 本地音乐域的一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败）在导航层统一 Toast：专辑页没有页面级 collector，放这里两页都覆盖（本地音乐页不再自己消费，避免双弹）
 - 删除成功且删空的是当前专辑 → 自动 `popBackStack()` 回本地音乐页：绑定在删除成功事件上（`deleteSucceeded` 带专辑键与删后剩余可见行数，剩余数在删除提交时同步算好——`albums` 派生异步重算，消费时读它会拿到旧值），并校验当前路由的专辑键一致；不做「专辑消失就 pop」的通用观察，进程被杀恢复到本就不存在的专辑时仍显示既有空态
@@ -140,7 +140,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - **元数据编辑**：长按歌曲行打开 `LocalMetadataEditSheet`（与全屏播放器「更多菜单 → 编辑信息」共用）
 - **删除（左滑）**：歌行左滑露出红色「删除」按钮，点按钮才执行（见「行内左滑操作」；展开态在列表滚动与歌曲/专辑视图切换时收起）。删的是设备存储里的音频文件本身，删后其他应用也不再可见，与「排除文件夹」（仅本 App 不展示、文件保留）是两回事。删除经 `data/local/LocalMusicDeleter` 分版本接缝，UI 与 ViewModel 不直接碰 MediaStore 删除 API；全程纯本地、零网络请求，飞行模式可用
 - **删除确认按系统版本分档**：Android 11+（API 30+）`createDeleteRequest` 的系统删除框即唯一确认，允许后由系统执行删除；Android 10（API 29）`resolver.delete` 捕获 `RecoverableSecurityException` → 系统授权框 → 授权后重试删除（App 自有文件可能直接删成功、不弹框）；Android 9 及以下（≤28）没有系统框，先弹导航层的 App 确认框（标题 `删除本地歌曲`，正文 `「歌名」将从设备存储删除，其他应用也不再可见。`——歌名取覆盖后的展示标题，按钮 `删除` / `取消`，两个 Text 走 M3 默认色），确认后进接缝，API 23+ 且未授予写入权限时再弹 `WRITE_EXTERNAL_STORAGE` 权限框（API 21–22 安装即授予、无权限框；已授予则不再弹）
-- **删除结果**：成功 → 该行即时从列表消失、专辑分组与卡片计数随之重算（纯派生）、整库快照原子落盘，不等下次扫描；失败（文件已被外部删除、URI 失效、拒绝写入权限等）→ 轻提示「删除失败」并把该行标为不可用（灰显）；取消 → 一行不动、无提示。灰显（文件不可用）的行照样可左滑删除；删除正在播放的歌不做特殊处理（不主动停止、不跳歌），真播不了时走既有「文件不可用」链路
+- **删除结果**：成功 → 该行即时从列表消失、专辑分组与卡片计数随之重算（纯派生）、整库快照原子落盘，不等下次扫描；失败 → 一律轻提示「删除失败」，仅当确认媒体库行已不在（delete 返回 0 行——文件已被外部删除 / URI 失效）才把该行标为不可用（灰显并落盘）；拒绝写入权限、provider 异常、异常框结果码、IntentSender 发送失败都保持该行可播（它们不证明文件不可播，真不可播的文件走既有「文件不可用」链路、下次刷新自然消失）；取消 → 一行不动、无提示。灰显（文件不可用）的行照样可左滑删除；删除正在播放的歌不做特殊处理（不主动停止、不跳歌），真播不了时走既有「文件不可用」链路
 - 库快照与覆盖层见 [storage.md](storage.md)；来源与权限口径见 `LocalMusicLibrarySource`（`IS_MUSIC != 0`、`IS_PENDING` / `IS_TRASHED` 版本条件、多存储卷合并、行 ID 身份）
 
 ### LocalAlbumScreen（本地专辑页）
@@ -148,7 +148,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - 专辑头：封面（系统专辑图，无图占位）+ 专辑名 + 艺术家 + 歌曲数；歌曲按音轨号升序（无音轨号按标题）
 - 点歌以整张专辑为播放队列，来源仍是 `QueueSource.LOCAL`（与本地音乐页共用同一份播放模式记忆）
 - 长按歌曲行同样打开元数据编辑面板；专辑因刷新或改专辑名而不存在时显示「专辑已不存在」
-- **删除（左滑）**：歌行左滑「删除」与本地音乐页共用同一行组件、同一条接缝与同一套分版本确认口径（30+ 系统删除框 / 29 系统授权框 / ≤28 App 确认框），结果口径也一致：成功即移除该行、整库快照原子落盘，专辑头歌曲数与列表随之更新；失败轻提示「删除失败」+ 该行灰显；取消不动。删掉这张专辑的最后一首歌 → 导航层自动返回本地音乐页，不闪「专辑已不存在」空态
+- **删除（左滑）**：歌行左滑「删除」与本地音乐页共用同一行组件、同一条接缝与同一套分版本确认口径（30+ 系统删除框 / 29 系统授权框 / ≤28 App 确认框），结果口径也一致：成功即移除该行、整库快照原子落盘，专辑头歌曲数与列表随之更新；失败一律轻提示「删除失败」，仅在确认文件已不在时才灰显该行；取消不动。删掉这张专辑的最后一首歌 → 导航层自动返回本地音乐页，不闪「专辑已不存在」空态
 - **权限核对**：进页面核对一次音频权限（`onAlbumPageEntered()`，只核对、不刷新——刷新仍由本地音乐页入口触发），回前台（`ON_RESUME`）再核对一次。进程被杀后直接恢复到专辑页不经过本地音乐页的 `onPageEntered`，不核对则权限状态停在初值 false，正常已授权的库会被误判成权限被关（整库灰显、左滑删除露不出）；权限被关时歌行不露左滑删除
 - 删除失败等一次性轻提示由导航层统一 Toast，本页当场可见（不再静默挂着等回到本地音乐页才迟到弹出）
 
