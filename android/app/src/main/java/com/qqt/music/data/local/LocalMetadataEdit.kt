@@ -105,5 +105,32 @@ fun LocalSong.overrideFrom(draft: LocalMetadataDraft, trackNo: Int?, year: Int?)
         year = year?.takeIf { it != tags.year },
     )
 
+/**
+ * 批量面板（spec「批量提交语义」）：专辑 / 专辑艺术家两个原始输入 → 这首歌的新覆盖，
+ * 「填了的字段才改」——与单首面板「留空 = 恢复文件原值」相反：
+ *
+ * - trim 后留空 → 保留原覆盖的该字段（没填的字段不动）
+ * - 非空且与文件标签值相同 → 该字段覆盖清除（不制造把标签「冻结」住的假覆盖，沿用 [overrideIfCustom] 口径）
+ * - 其余 → 存裁剪后的输入值
+ *
+ * 标题 / 艺术家 / 音轨号 / 年份四字段原样保留。结果可能是空壳（[LocalSongOverride.isEmpty]），
+ * 调用方按单首「空壳不落盘」口径删键，见 [batchAlbumCommit]。
+ */
+fun LocalSong.batchAlbumOverride(albumInput: String, albumArtistInput: String): LocalSongOverride =
+    LocalSongOverride(
+        title = overlay?.title,
+        artist = overlay?.artist,
+        album = albumInput.batchAlbumField(tags.album, overlay?.album),
+        albumArtist = albumArtistInput.batchAlbumField(tags.albumArtist, overlay?.albumArtist),
+        trackNo = overlay?.trackNo,
+        year = overlay?.year,
+    )
+
 /** 留空或与文件标签值一致都不算「用户改过」 */
 private fun String.overrideIfCustom(tagValue: String): String? = takeIf { it.isNotBlank() && it != tagValue }
+
+/** 批量字段口径：留空保留原覆盖；填了走单首同款 [overrideIfCustom]（同标签清除、其余存裁剪值） */
+private fun String.batchAlbumField(tagValue: String, existing: String?): String? {
+    val text = trim()
+    return if (text.isEmpty()) existing else text.overrideIfCustom(tagValue)
+}
