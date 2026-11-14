@@ -1,6 +1,7 @@
 package com.qqt.music
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -21,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.qqt.music.data.local.FavoriteStore
 import com.qqt.music.data.local.LocalPlaylistStore
@@ -32,6 +34,7 @@ import com.qqt.music.player.PlayerSettingsManager
 import com.qqt.music.ui.components.AppUpdateDialog
 import com.qqt.music.ui.components.WhitelistGuidanceDialog
 import com.qqt.music.ui.navigation.AppNavigation
+import com.qqt.music.ui.screens.localmusic.LocalMusicViewModel
 import com.qqt.music.ui.theme.QQTMusicTheme
 import com.qqt.music.update.AppUpdateChecker
 import com.qqt.music.viewmodel.PlayerViewModel
@@ -44,6 +47,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private val playerViewModel: PlayerViewModel by viewModels()
+
+    /**
+     * 本地音乐导入的意图接收方（票据02）：与 AppNavigation 的 Compose `viewModel()` 命中同一
+     * Activity ViewModelStore + 默认 factory + 默认 key = 同一实例（无 owner 覆写、无自定义 factory，
+     * PlayerViewModel 的 by viewModels() 先例同机制），AppNavigation 零改动。
+     */
+    private val localMusicViewModel: LocalMusicViewModel by viewModels()
 
     /** 非空时显示更新弹窗 */
     private var updateResult by mutableStateOf<AppUpdateChecker.Result?>(null)
@@ -116,6 +126,36 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             updateResult = AppUpdateChecker.check(this@MainActivity)
         }
+
+        // 3. 冷启动导入：来源 App「用其他应用打开 / 分享」音频选 qqt（在运行复用走 onNewIntent）。
+        //    提示走 VM notice → 导航层 collector，StateFlow 保值，首帧组合后照样弹
+        handleImportIntent(intent)
+    }
+
+    /** 在运行复用（launchMode=singleTask）：新意图走这里，setIntent 后与冷启动同一解析口径 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleImportIntent(intent)
+    }
+
+    /**
+     * 导入意图胶水（spec「意图胶水」，票据02）：只「解析 URI + 转交 ViewModel」，不含复制/命名/刷新
+     * 逻辑（在接缝与 VM），也不在这里弹 Toast（提示走 VM notice → 导航层既有 collector，避免双弹）。
+     * ACTION_VIEW 取 data；ACTION_SEND 取 EXTRA_STREAM（单文件）；SEND_MULTIPLE 本期不支持，静默忽略。
+     * 防御性再校验（intent-filter 已限 audio/*）：非 content scheme 拒收；MIME 取 intent.type，
+     * VIEW 无 type 时退回 contentResolver.getType(uri)，拿不到按拒收。
+     */
+    private fun handleImportIntent(intent: Intent) {
+        val uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else -> null
+        } ?: return
+        if (!ContentResolver.SCHEME_CONTENT.equals(uri.scheme, ignoreCase = true)) return
+        val mime = intent.type ?: contentResolver.getType(uri)
+        if (mime == null || !mime.startsWith("audio/", ignoreCase = true)) return
+        localMusicViewModel.importAudio(uri)
     }
 
     /** 跳转后台配置的下载地址（appRedirectUrl） */

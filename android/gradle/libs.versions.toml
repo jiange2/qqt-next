@@ -14,6 +14,9 @@ okhttp = "4.12.0"
 coil = "2.7.0"
 navigationCompose = "2.7.7"
 paletteKtx = "1.0.0"
+# 与运行时解析版本对齐：coil 2.7.0 → kotlinx-coroutines-android 1.8.1（lifecycle 2.8.4 声明 1.7.3，
+# 冲突取高者 1.8.1；gradle 缓存已核 POM 依赖链），coroutines-test 同版本避免双份 core
+coroutines = "1.8.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -40,6 +43,7 @@ navigation-compose = { group = "androidx.navigation", name = "navigation-compose
 androidx-palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "paletteKtx" }
 viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntimeKtx" }
 material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
