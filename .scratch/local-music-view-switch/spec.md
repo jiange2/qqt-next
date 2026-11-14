@@ -1,6 +1,6 @@
 # 本地音乐视图切换优化（默认专辑视图 + 切换进顶栏菜单）
 
-Status: ready-for-agent
+Status: resolved
 
 > 延续 ADR 0022（MediaStore 系统媒体库），只改默认视图与切换入口，不推翻任何 ADR。专辑分组、排除文件夹、元数据编辑、播放接入与在途的本地音乐删除特性均不受影响。
 
@@ -67,3 +67,4 @@ Status: ready-for-agent
 ## Comments
 
 - 2026-11-14 实现完成：票据 01（7372fb8，合并 fad377d）已合入集成分支 `feat/local-music-view-switch`（tip fad377d）；票据 02 的文档同步与本 spec 文字对齐随票据分支提交入库（待编排层合入）。落地内容（两文件：`AppNavigation.kt`、`LocalMusicScreen.kt`）：默认专辑视图；整体删除 `LibraryViewSwitch` / `ViewSwitchSegment` 胶囊分段控件，`LibraryArea` 去掉切换行与 `onSelectView` 参数；视图切换收进顶栏 ⋮ 菜单第一项（`LocalMusicTopBarMenu` 新增 `showAlbums` / `onToggleView`，文案随视图翻转「切换到歌曲视图 / 切换到专辑视图」，点击翻转并收起菜单，始终可点）；视图状态提升到 `AppNavigation`（`remember` 以 `local_music` 返回栈条目为键，初值 true = 专辑，离开本页键置空重建），替换页内 remember 并分别传给页面与顶栏菜单；视图变化收起左滑展开态（`LaunchedEffect(showAlbums)`）；页头与菜单注释更新。状态不入 ViewModel、不落盘。**spec 文字对齐代码事实（1 处）**：「默认视图与状态归属」原「每次进入该目的地都是新 entry，状态天然重建」改为实际机制——底部导航 `navigateSingle` 带 `restoreState = true`，返回还原同一 entry，「不记忆」靠离开本页键置空、返回时重建；其余文字经逐条核对与代码一致，未改。**不新增 ADR 的判定经交付代码核对成立**：可逆 UI 调整（默认视图 + 切换入口位置），无架构推翻，延续 ADR 0022；身份/权限/快照模型不动，三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。CONTEXT.md「本地音乐」词条经逐条核对与最终实现一致（默认专辑视图、切换在顶栏菜单、不记忆上次选择），未改动。文档同步明细见票据 02 Comments。Status 推进与归档留待评审修复后由编排层统一执行（照 `local-music-delete` 先例），故 spec 仍 `ready-for-agent`、两票仍 `open`，全部 `- [ ]` 保持未勾——它们是设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
+- 2026-11-14 归档：resolved。集成分支 `feat/local-music-view-switch`（基于 feat/local-music-delete 尖端 632f97f，含删除特性与 1.8 版本号）。提交链：入库 7e87850 → 票据01 实现 7372fb8（合并 fad377d）→ 票据02 文档同步 169c7dc（合并 5fc0915）→ 评审修复 0b505d3（合并 160037b）→ 本次归档。双轴评审结论：Spec 轴零发现（默认专辑与三路径不记忆、覆盖层保留状态、胶囊整删、菜单文案翻转/恒可点/三项顺序、重扫与排除及左滑删除不受影响、状态不入 ViewModel 不落盘、Out of Scope 未动、文档一致、旋转回默认，9 项全成立）；Standards 轴零硬违规，2 处轻微 judgement call——CONTEXT.md「顶栏菜单」歧义已修（0b505d3），Boolean 视图状态经评审建议保持（spec 明示选择）。spec 文字对齐 1 处（票据02）：「每次进入都是新 entry」改为实际机制（navigateSingle 带 restoreState 还原同一 entry，不记忆靠离开本页键置空重建）。不新增 ADR 判定经评审复核成立。勾选项全部保持未勾（照 local-music-rescan / local-music-delete 先例：resolved 票据的设备级验收清单不勾），待人工编译后真机逐项确认。
