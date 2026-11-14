@@ -143,7 +143,7 @@ class MainActivity : ComponentActivity() {
      * 导入意图胶水（spec「意图胶水」，票据02）：只「解析 URI + 转交 ViewModel」，不含复制/命名/刷新
      * 逻辑（在接缝与 VM），也不在这里弹 Toast（提示走 VM notice → 导航层既有 collector，避免双弹）。
      * ACTION_VIEW 取 data；ACTION_SEND 取 EXTRA_STREAM（单文件）；SEND_MULTIPLE 本期不支持，静默忽略。
-     * 防御性再校验（intent-filter 已限 audio/*）：非 content scheme 拒收；MIME 取 intent.type，
+     * 防御性再校验（intent-filter 已限 audio 类 MIME）：非 content scheme 拒收；MIME 取 intent.type，
      * VIEW 无 type 时退回 contentResolver.getType(uri)，拿不到按拒收。
      */
     private fun handleImportIntent(intent: Intent) {
