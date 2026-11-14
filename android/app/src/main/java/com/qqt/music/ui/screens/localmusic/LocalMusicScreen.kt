@@ -68,7 +68,10 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 视图状态提升到导航层（以本页返回栈条目为键），不记忆上次选择：从专辑页返回、重新进入都是专辑视图。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
  * 顶栏菜单：「切换视图」（第一项，文案随当前视图翻转、始终可点）、
+ * 「批量管理」（仅歌曲视图，未授权禁用；进入编辑模式，票据02）、
  * 「重新扫描」（完成后提示新增 / 移除数量）与「排除的文件夹」（票据 03）。
+ * 编辑模式（[editing]，开关与勾选集合在导航层）：歌行前置勾选框、点行 / 长按切换勾选
+ * （不跳播、不弹单首面板）、左滑删除收起；顶栏 / 底栏 / 批量面板由导航层接线。
  * 两个视图都不发起任何网络请求。
  */
 @Composable
@@ -76,6 +79,9 @@ fun LocalMusicScreen(
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
     showAlbums: Boolean,
+    editing: Boolean,
+    selection: Set<String>,
+    onToggleSelect: (LocalSong) -> Unit,
     onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
@@ -89,8 +95,9 @@ fun LocalMusicScreen(
     // 左滑展开互斥状态提升在页面级：LibraryArea 在 when 两个分支各调一次，放它里面会随分支切换重置
     val swipeState = remember { RowSwipeRevealState() }
     // 视图切换在顶栏菜单（状态提升到导航层）：视图变化即收起左滑展开态——歌曲行离组合
-    // 不会清掉页面级 holder 里的展开状态，不收起的话切回歌曲视图原行仍停在展开位
-    LaunchedEffect(showAlbums) { swipeState.close() }
+    // 不会清掉页面级 holder 里的展开状态，不收起的话切回歌曲视图原行仍停在展开位。
+    // 进入 / 退出编辑模式同样收起：编辑态左滑删除收起（swipe = null），退出时不残留展开位
+    LaunchedEffect(showAlbums, editing) { swipeState.close() }
 
     // 一次性轻提示（重扫数量 / 刷新失败 / 删除失败）的 Toast 消费在导航层：专辑页也要能收到
     val context = LocalContext.current
@@ -182,6 +189,9 @@ fun LocalMusicScreen(
                 onAlbumClick = onAlbumClick,
                 swipeState = swipeState,
                 onDeleteSong = { viewModel.requestDelete(it) },
+                editing = editing,
+                selection = selection,
+                onToggleSelect = onToggleSelect,
                 albumsEnabled = false,
                 deleteEnabled = false,
             )
@@ -201,6 +211,9 @@ fun LocalMusicScreen(
                 onAlbumClick = onAlbumClick,
                 swipeState = swipeState,
                 onDeleteSong = { viewModel.requestDelete(it) },
+                editing = editing,
+                selection = selection,
+                onToggleSelect = onToggleSelect,
             )
         }
     }
@@ -218,7 +231,8 @@ fun LocalMusicScreen(
 
 /** 歌曲视图与专辑视图的公共区域：列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
  *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行；
- *  [deleteEnabled] 为 false（权限被关）时歌行不露左滑删除：整库灰显是权限问题，不是文件失效 */
+ *  [deleteEnabled] 为 false（权限被关）时歌行不露左滑删除：整库灰显是权限问题，不是文件失效。
+ *  [editing] 为 true（编辑模式）时点行 / 长按切换勾选（不跳播、不弹单首面板）、左滑删除收起 */
 @Composable
 private fun ColumnScope.LibraryArea(
     showAlbums: Boolean,
@@ -229,6 +243,9 @@ private fun ColumnScope.LibraryArea(
     onAlbumClick: (LocalAlbum) -> Unit,
     swipeState: RowSwipeRevealState,
     onDeleteSong: (LocalSong) -> Unit,
+    editing: Boolean,
+    selection: Set<String>,
+    onToggleSelect: (LocalSong) -> Unit,
     albumsEnabled: Boolean = true,
     deleteEnabled: Boolean = true,
 ) {
@@ -251,20 +268,41 @@ private fun ColumnScope.LibraryArea(
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
             itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
-                LocalSongRow(
-                    index = index + 1,
-                    song = song,
-                    playerViewModel = playerViewModel,
+                // 显式声明类型：if 分支里直接写 lambda 字面量会掉进可空函数类型的推断坑
+                // （onLongClick 可空，见 LocalMetadataEditSheet 同款注释）
+                val rowClick: () -> Unit = if (editing) {
+                    // 编辑模式：点行 = 切换勾选（不跳播）
+                    { onToggleSelect(song) }
+                } else {
                     // 点歌以当前完整歌曲列表为队列，来源记为本地音乐（播放模式按该来源记忆）
-                    onClick = {
+                    {
                         playerViewModel.playSong(
                             song = song.toSong(),
                             queue = songs.map { it.toSong() },
                             sourceDescriptor = QueueSource.LOCAL,
                         )
+                    }
+                }
+                val rowLongClick: () -> Unit = if (editing) {
+                    // 编辑模式：长按同样切换勾选，不弹单首面板；灰显行由行内 enabled 挡住
+                    { onToggleSelect(song) }
+                } else {
+                    { onSongClick(song) }
+                }
+                LocalSongRow(
+                    index = index + 1,
+                    song = song,
+                    playerViewModel = playerViewModel,
+                    onClick = rowClick,
+                    onLongClick = rowLongClick,
+                    // 编辑模式收起左滑删除：勾选交互不与行内手势打架（spec 用户故事 13）
+                    swipe = if (!editing && deleteEnabled) {
+                        RowSwipeAction(swipeState, "删除") { onDeleteSong(song) }
+                    } else {
+                        null
                     },
-                    onLongClick = { onSongClick(song) },
-                    swipe = if (deleteEnabled) RowSwipeAction(swipeState, "删除") { onDeleteSong(song) } else null,
+                    editing = editing,
+                    selected = song.id in selection,
                 )
             }
         }
@@ -472,6 +510,8 @@ private fun PermissionRevokedBanner(onRetry: () -> Unit, onOpenSettings: () -> U
  * 本地音乐页的顶栏菜单（替换默认搜索入口）：
  * - 「切换到歌曲视图 / 切换到专辑视图」：文案随当前视图翻转，点击立即切换并收起菜单；
  *   不依赖音频权限与库内容（区别于「重新扫描」），空库 / 未授权 / 加载中始终显示、始终可点
+ * - 「批量管理」：仅歌曲视图显示（编辑模式只做歌曲列表），进入编辑模式并收起菜单；
+ *   未授权音频权限时不可用（沿用「重新扫描」的门槛范式），空库不额外禁用（票据02）
  * - 「重新扫描」：整库一次查询，完成后提示新增 / 移除数量；未授权音频权限时不可用
  * - 「排除的文件夹」：打开排除面板（票据 03）——自动列出库中含音乐的文件夹并带开关，
  *   切换即时生效、不需要重新扫描，飞行模式下照常可用（纯本地过滤），故始终可点
@@ -481,6 +521,8 @@ fun LocalMusicTopBarMenu(
     viewModel: LocalMusicViewModel,
     showAlbums: Boolean,
     onToggleView: () -> Unit,
+    editEnabled: Boolean,
+    onEnterEdit: () -> Unit,
     rescanEnabled: Boolean,
     onRescan: () -> Unit,
 ) {
@@ -499,6 +541,16 @@ fun LocalMusicTopBarMenu(
                     onToggleView()
                 },
             )
+            if (!showAlbums) {
+                DropdownMenuItem(
+                    text = { Text("批量管理") },
+                    enabled = editEnabled,
+                    onClick = {
+                        menuExpanded = false
+                        onEnterEdit()
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text("重新扫描") },
                 enabled = rescanEnabled,
@@ -519,5 +571,69 @@ fun LocalMusicTopBarMenu(
 
     if (showExcludedFolders) {
         LocalExcludedFoldersSheet(viewModel = viewModel, onDismiss = { showExcludedFolders = false })
+    }
+}
+
+/**
+ * 编辑模式顶栏（票据02，spec「顶栏与底栏」）：取消 / 已选 n 首 / 全选·取消全选，⋮ 菜单隐藏。
+ * 与 [MusicTopBar] 同款暖白底与标题样式，但左侧是「取消」而不是抽屉菜单——
+ * [MusicTopBar] 的标题是纯字符串、左侧固定菜单/返回键，表达不了编辑态，故整条替换（导航层接线）。
+ * [allSelected] 为 true 时右侧文案翻转为「取消全选」（已全选再点清空，纯规则在导航层）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LocalMusicEditTopBar(
+    selectedCount: Int,
+    allSelected: Boolean,
+    onCancel: () -> Unit,
+    onToggleSelectAll: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Text(
+                text = "已选 $selectedCount 首",
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+                color = InkPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        navigationIcon = {
+            TextButton(onClick = onCancel) {
+                Text("取消", color = InkSecondary)
+            }
+        },
+        actions = {
+            TextButton(onClick = onToggleSelectAll) {
+                Text(if (allSelected) "取消全选" else "全选", color = BrandOrange)
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = WarmBackground,
+            titleContentColor = InkPrimary,
+        ),
+    )
+}
+
+/**
+ * 编辑模式底栏（票据02）：只有一个「编辑信息」按钮，0 选禁用、≥1 选可点。
+ * 由导航层放在 Scaffold 内容区底部（NavHost 之下）：底部导航在 Scaffold bottomBar、
+ * MiniPlayer 在 Scaffold 之外下方，都不与本栏重叠（spec「与 MiniPlayer / 底部导航的避让」）。
+ */
+@Composable
+fun LocalMusicBatchBar(selectedCount: Int, onEditInfo: () -> Unit) {
+    Surface(color = Color.White, shadowElevation = 6.dp) {
+        Button(
+            onClick = onEditInfo,
+            enabled = selectedCount > 0,
+            colors = ButtonDefaults.buttonColors(containerColor = BrandOrange),
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        ) {
+            Text("编辑信息")
+        }
     }
 }

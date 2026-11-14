@@ -184,10 +184,11 @@ private fun syncPlayerDisplay(playerViewModel: PlayerViewModel, song: LocalSong)
 
 /**
  * 单个字段：M3 描边输入框。数值字段用数字键盘，非法时红框 + 字段下方提示。
- * 不给占位文案——面板初值就是合并后的展示值，用户看到的就是当前生效的值。
+ * 不给占位文案——单首面板初值就是合并后的展示值，用户看到的就是当前生效的值；
+ * 批量面板（[LocalBatchEditSheet]）复用本组件，初值为空（不预填）。
  */
 @Composable
-private fun MetadataField(
+internal fun MetadataField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
