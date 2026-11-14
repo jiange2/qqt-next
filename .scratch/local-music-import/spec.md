@@ -58,20 +58,20 @@ Status: ready-for-agent
 - 结果归一 `LocalImportResult`（sealed，镜像 `LocalDeleteResult` / `LocalLibraryResult` 风格）：Success / Failure（带可空原因）。
 - 实现 `MediaStoreImporter(context, sdkInt)`（与 `MediaStoreLibrarySource` / `MediaStoreDeleter` 同口径注入 sdkInt）：
   - Android 10+（API 29+）：`MediaStore.Audio.Media` 插入，`RELATIVE_PATH = "Music/导入/"`，`IS_PENDING = 1` 期间写入字节、写完置 0（失败不暴露半截文件）；App 拥有自己创建的行，**不需要新权限**。
-  - Android 9 及以下（≤28）：写公共 `Music/导入/` 目录 + `MediaScannerConnection` 触发扫描（`WRITE_EXTERNAL_STORAGE` 清单已有，maxSdkVersion 29）。
+  - Android 9 及以下（≤28）：写公共 `Music/导入/` 目录 + `MediaScannerConnection` 触发扫描（`WRITE_EXTERNAL_STORAGE` 清单已有，maxSdkVersion 29）。扫描触发是辅助步骤：`scanFile` 失败仅记日志仍返回 `Success`（文件已落位，系统周期扫描兜底收录）。
   - ≤28 权限取舍（已裁定）：API 23+ 未授予 `WRITE_EXTERNAL_STORAGE` 时直接返回 `Failure`、**不弹运行时申请框**——spec 钉死单步 suspend 接缝，不镜像删除的两步动作机（`RequestWritePermission` 交接）；≤28 的 READ/WRITE 同属 STORAGE 权限组，授过读即有写（API 21–22 安装即授予），影响面极小。
 - 框架 IO（ContentResolver 读写、MediaStore 插入、扫描）留真机手工验收。
 
 ### 纯函数（JVM 可测）
 
 - `importRoute(sdkInt)`：版本路由（MediaStore 插入 / 直写 + 扫描），镜像 `deleteRoute`。
-- `resolveImportFileName(desired, existingNames)`：目标目录重名时加后缀、保留扩展名，保证「各自成行、不覆盖」。
-- 展示名推导：从来源 URI 尾段 / 文件名取展示名（接缝 impl 取原始名，纯函数做规范化）。
+- `resolveImportFileName(desired, existingNames, ignoreCase)`：目标目录重名时加后缀、保留扩展名，保证「各自成行、不覆盖」。29+ 精确匹配（ignoreCase 默认 false）；≤28 外置存储文件系统大小写不敏感，传 ignoreCase = true——大小写撞名（`Song.mp3` vs `song.mp3`）同样加后缀而非失败，后缀候选也按大小写不敏感判占用。
+- 展示名推导：从来源 URI 尾段 / 文件名取展示名（接缝 impl 取原始名，纯函数做规范化）；规范化对无扩展名的非空名（微信语音裸名等）补 `.mp3`——扩展名是入库提示（MediaStore / 扫描器按扩展名推 MIME、置 `IS_MUSIC`），缺了它导入「成功」却库里看不到；实际容器格式由播放器按字节嗅探，已有扩展名原样保留。
 
 ### 重复与重名语义
 
 - 每次导入生成新文件、新媒体库行（各自成行，沿用 ADR 0022「同一内容多副本各自成行、不做内容级去重」）。
-- 目标目录已有同名文件 → 纯函数加后缀，不覆盖旧文件。
+- 目标目录已有同名文件 → 纯函数加后缀，不覆盖旧文件；≤28 按大小写不敏感判「同名」（外置存储文件系统大小写不敏感），29+ 精确匹配。落位前的目标 exists 核对是第二道防线，真并发竞态重列目录 + 重解析有限重试（收敛、不死循环），超限仍失败不覆盖。
 
 ### ViewModel 编排
 
@@ -95,8 +95,8 @@ Status: ready-for-agent
 ## Testing Decisions
 
 - 好测试只测外部行为、不测实现细节：纯函数测路由/命名/归一的输入输出，ViewModel 测「成功→刷新+提示 / 失败→提示 / 不播放」的可观察结果，不断言内部调用顺序。
-- 纯函数 JVM 测试：`importRoute` 版本路由、`resolveImportFileName`（重名加后缀、扩展名保留、无扩展名/空名等边界）、展示名规范化、落库目录口径与 ≤28 写入权限门槛（`LocalImportRulesTest` **24 例**，照 `LocalMusicDeleterTest` 先例：独立字面量断言、不重言式），已写、未执行。
-- ViewModel 编排 JVM 测试：fake `LocalMusicImporter` / `LocalMusicLibrarySource` 经 internal 构造器注入，断言 Success 触发刷新与「已导入到本地音乐」（新歌经 `songs` 可见）、Failure 出「导入失败」且列表不动、无音频权限时成功提示 + 刷新静默跳过，不自动播放（`LocalMusicViewModelImportTest` **3 例**），已写、未执行。「照 source / deleter 的 fake 注入范式」澄清为**构造器口径**：internal 构造器原已存在但零调用方，仓内原无 VM 测试先例，本测试为首个。
+- 纯函数 JVM 测试：`importRoute` 版本路由、`resolveImportFileName`（重名加后缀、扩展名保留、无扩展名/空名等边界、≤28 大小写不敏感撞名与后缀候选占用、29+ 精确匹配不受影响）、展示名规范化（含无扩展名补 .mp3、点号开头/结尾点号边界）、落库目录口径与 ≤28 写入权限门槛（`LocalImportRulesTest` **30 例**，照 `LocalMusicDeleterTest` 先例：独立字面量断言、不重言式），已写、未执行。
+- ViewModel 编排 JVM 测试：fake `LocalMusicImporter` / `LocalMusicLibrarySource` 经 internal 构造器注入（导入 fake 拆成功 / 失败两个无分支 fake：成功 fake 把新歌行放进 source 模拟落库、失败 fake 不动 source——mocking.md「mock 内无分支」），断言 Success 触发刷新与「已导入到本地音乐」（新歌经 `songs` 可见）、Failure 出「导入失败」且列表不动、无音频权限时成功提示 + 刷新静默跳过，不自动播放（`LocalMusicViewModelImportTest` **3 例**），已写、未执行。「照 source / deleter 的 fake 注入范式」澄清为**构造器口径**：internal 构造器原已存在但零调用方，仓内原无 VM 测试先例，本测试为首个。
 - VM 测试基础设施（spec 缺口，票据02 已裁定）：新增 `testImplementation` kotlinx-coroutines-test **1.8.1**（与运行时解析版本对齐：coil 2.7.0 → coroutines-android 1.8.1，lifecycle 2.8.4 声明 1.7.3 冲突取高；gradle 缓存仅 descriptor 无 jar，**首次人工编译需联网**拉取）+ `testOptions.unitTests.isReturnDefaultValues = true`（Application() 可构造、框架方法返回默认值；现有纯函数测试不调 android 方法、不受影响），不引 Robolectric/mockk。mockable jar 清空 `Uri` 静态初始化 → 测试 source set `android.net.TestUri` 替身（同包继承，除 toString 外全抛、意外框架调用响亮失败）；测试 Application 覆写 `getFilesDir` 到 `TemporaryFolder`（否则 filesDir=null 快照落工作目录、用例间串库）；`StandardTestDispatcher` + `Dispatchers.setMain` 驱动 viewModelScope，VM 硬编码 IO/Default 跳线程由 runTest 实时等待、挂起 `first{}` 等可观察结果落定。
 - 接缝 MediaStore 实现 + 意图胶水：真机手工验收（设备级验收清单，各票未勾选项）——微信/QQ 打开方式与分享、冷启动/在运行/桌面图标回栈（singleTask 三态）、落 `Music/导入/`、重名加后缀、重复导入各自成行、失败提示、无权限落库成功、导入歌可播/可编辑/可删除、飞行模式可用（纯本地）。
 - 先例：`LocalMusicDeleterTest`、`MediaStoreProjectionTest`、`AudioReadPermissionTest`（纯函数 JVM）；ViewModel fake 注入照 `LocalMusicLibrarySource` / `LocalMusicDeleter` 的 internal 构造器口径（无现成 VM 测试代码先例）。

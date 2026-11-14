@@ -80,30 +80,42 @@ fun importRoute(sdkInt: Int): ImportRoute =
  * 空名 / 全非法字符兜底的默认展示名：带 `.mp3` 扩展名，保证 MediaStore（29+ 按扩展名推 MIME）
  * 与媒体扫描器（≤28）都把它识别为音频、`IS_MUSIC` 置位进库；实际容器格式由播放器按字节嗅探，
  * 扩展名只是入库提示（来源名整体不可用时才落到这里，无扩展名信息可保留）。
+ * 非空但无扩展名的来源名由 [normalizeImportDisplayName] 补 `.mp3`，同一口径。
  */
 internal const val DEFAULT_IMPORT_NAME = "导入音频.mp3"
 
 /**
  * 目标目录重名解析（纯函数，JVM 可测）：无冲突原样返回；冲突加后缀 ` (n)`（n 从 2 递增）、
- * 保留扩展名，保证结果不在 [existingNames] 中（各自成行、不覆盖，ADR 0022）。
+ * 保留扩展名，保证结果不与 [existingNames] 占用冲突（各自成行、不覆盖，ADR 0022）。
  * 空 / 全空白 [desired] 兜底 [DEFAULT_IMPORT_NAME] 后同样参与重名解析。
  * 扩展名按最后一个 `.` 切分（点号开头如 `.mp3` 无主名，整体视作无扩展名），后缀插在扩展名之前。
- * 这是重名的第一道防线：查询→插入之间无锁，极端并发（连续两次导入同一文件）由 MediaStore
- * 插入自身的同目录同名自动加后缀兜底（系统行为），不另加锁。
+ * [ignoreCase] 钉死撞名比较口径：默认 false 精确匹配（29+ MediaStore 链路）；≤28 外置存储
+ * 文件系统大小写不敏感，传 true——`Song.mp3` 与 `song.mp3` 视作同名，大小写撞名同样加后缀
+ * 而非失败（用户故事 10），后缀候选也按同一口径判占用。
+ * 这是重名的第一道防线：查询→落位之间无锁，极端并发（连续两次导入同一文件）29+ 由 MediaStore
+ * 插入自身的同目录同名自动加后缀兜底（系统行为），≤28 由落位前 exists 核对 + 有限重试兜底，不另加锁。
  */
-internal fun resolveImportFileName(desired: String, existingNames: Collection<String>): String {
+internal fun resolveImportFileName(
+    desired: String,
+    existingNames: Collection<String>,
+    ignoreCase: Boolean = false,
+): String {
     val base = desired.trim().ifBlank { DEFAULT_IMPORT_NAME }
-    if (base !in existingNames) return base
+    if (!importNameTaken(base, existingNames, ignoreCase)) return base
     val dot = base.lastIndexOf('.')
     val stem = if (dot > 0) base.substring(0, dot) else base
     val extension = if (dot > 0) base.substring(dot) else ""
     var suffix = 2
     while (true) {
         val candidate = "$stem ($suffix)$extension"
-        if (candidate !in existingNames) return candidate
+        if (!importNameTaken(candidate, existingNames, ignoreCase)) return candidate
         suffix++
     }
 }
+
+/** 名是否被占用：精确匹配（29+）或大小写不敏感（≤28 外置存储文件系统）；existingNames 有限，后缀递增必收敛 */
+private fun importNameTaken(name: String, existingNames: Collection<String>, ignoreCase: Boolean): Boolean =
+    if (ignoreCase) existingNames.any { it.equals(name, ignoreCase = true) } else name in existingNames
 
 /** 文件名非法字符：路径分隔符 + Windows 保留字符（跨平台 / MediaStore 安全）；控制字符另按码点剔除 */
 private const val ILLEGAL_NAME_CHARS = "/\\:*?\"<>|"
@@ -112,11 +124,18 @@ private const val ILLEGAL_NAME_CHARS = "/\\:*?\"<>|"
  * 展示名规范化（纯函数，JVM 可测）：来源 URI 的原始展示名（provider `DISPLAY_NAME`，取不到退回
  * URI 尾段）去掉路径分隔符与文件名非法字符（`/ \ : * ? " < > |` 及控制字符）、裁掉首尾空白；
  * 结果为空 / 全空白 / 纯点号（`.` `..` 等目录引用名）时兜底 [DEFAULT_IMPORT_NAME]。
- * 规范化后的名交 [resolveImportFileName] 做重名解析——规范化只管字符合法，重名只管不覆盖。
+ * 无可用扩展名的非空名补 `.mp3`：无点号（微信语音裸名等）、点号开头无主名（`.mp3`，与
+ * [resolveImportFileName] 的扩展名切分同口径）、结尾点号扩展名为空（`song.`）都视作无扩展名——
+ * 扩展名是入库提示（MediaStore 29+ 按扩展名推 MIME、≤28 扫描器同理），缺了它 `IS_MUSIC` 不置位、
+ * 导入「成功」却库里看不到（用户故事 15）；实际容器格式由播放器按字节嗅探，已有扩展名（含非 mp3）
+ * 原样保留不改写。规范化后的名交 [resolveImportFileName] 做重名解析——规范化只管字符合法与入库
+ * 提示，重名只管不覆盖。
  */
 internal fun normalizeImportDisplayName(raw: String): String {
     val cleaned = raw.filterNot { it in ILLEGAL_NAME_CHARS || it < ' ' }.trim()
-    return if (cleaned.isBlank() || cleaned.all { it == '.' }) DEFAULT_IMPORT_NAME else cleaned
+    if (cleaned.isBlank() || cleaned.all { it == '.' }) return DEFAULT_IMPORT_NAME
+    val dot = cleaned.lastIndexOf('.')
+    return if (dot <= 0 || dot == cleaned.lastIndex) "$cleaned.mp3" else cleaned
 }
 
 /**
@@ -167,10 +186,8 @@ class MediaStoreImporter(
     private fun importViaMediaStore(sourceUri: Uri): LocalImportResult {
         var pendingUri: Uri? = null
         return try {
-            val displayName = resolveImportFileName(
-                normalizeImportDisplayName(rawDisplayName(sourceUri)),
-                existingImportNames(),
-            )
+            // 29+ 保持精确匹配重名解析（语义不变；同名并发由系统插入自身的加后缀兜底）
+            val displayName = resolveImportFileName(desiredImportName(sourceUri), existingImportNames())
             val resolver = context.contentResolver
             val values = ContentValues().apply {
                 put(MediaStore.Audio.Media.DISPLAY_NAME, displayName)
@@ -202,8 +219,9 @@ class MediaStoreImporter(
     }
 
     /**
-     * ≤28：核对写入权限（23–28 未授予直接失败、不弹申请框）→ 公共 `Music/导入/` 目录 → 解析重名 →
-     * 写临时文件成功后 rename 到目标（失败删临时文件、目标已存在则不覆盖）→ scanFile 触发扫描。
+     * ≤28：核对写入权限（23–28 未授予直接失败、不弹申请框）→ 公共 `Music/导入/` 目录 →
+     * 大小写不敏感重名解析（外置存储文件系统大小写不敏感，真并发竞态有限重试，见 [resolveLegacyTarget]）→
+     * 写临时文件成功后 rename 到目标（失败删临时文件、目标已存在则不覆盖）→ scanFile 触发扫描（辅助步骤，失败仅记日志）。
      */
     private fun importViaLegacyFile(sourceUri: Uri): LocalImportResult {
         if (legacyImportRequiresWriteGrant(sdkInt) && !hasWritePermission()) {
@@ -219,13 +237,7 @@ class MediaStoreImporter(
             if (!dir.isDirectory && !dir.mkdirs()) {
                 throw IOException("无法创建导入目录：$dir")
             }
-            // 目录不存在时 list() 返回 null，按空集合处理
-            val existing = dir.list()?.toSet() ?: emptySet()
-            val displayName = resolveImportFileName(
-                normalizeImportDisplayName(rawDisplayName(sourceUri)),
-                existing,
-            )
-            val target = File(dir, displayName)
+            val target = resolveLegacyTarget(dir, desiredImportName(sourceUri))
             val temp = File.createTempFile("import-", ".part", dir)
             tempFile = temp
             temp.outputStream().use { output -> copySource(sourceUri, output) }
@@ -242,6 +254,27 @@ class MediaStoreImporter(
             Log.w(TAG, "直写导入失败", e)
             tempFile?.delete() // 清理半截临时文件，忽略删除结果
             LocalImportResult.Failure(e)
+        }
+    }
+
+    /**
+     * ≤28 目标文件解析（大小写不敏感撞名 + 真并发竞态有限重试）：外置存储文件系统大小写不敏感，
+     * 撞名解析传 `ignoreCase = true`——大小写撞名（`Song.mp3` vs 已有 `song.mp3`）同样加后缀而非
+     * 撞 [File.exists] 直接失败（用户故事 10）。列目录后目标仍存在说明是真并发竞态（列表与落位之间
+     * 冒出新文件）：重列目录 + 重解析，至多重试 [LEGACY_NAME_RETRY_LIMIT] 次，超限抛错——
+     * 不覆盖、不死循环（每轮重列都纳入新文件，后缀递增必收敛）。
+     */
+    private fun resolveLegacyTarget(dir: File, desired: String): File {
+        var retries = 0
+        while (true) {
+            // 目录不存在时 list() 返回 null，按空集合处理
+            val existing = dir.list()?.toSet() ?: emptySet()
+            val target = File(dir, resolveImportFileName(desired, existing, ignoreCase = true))
+            if (!target.exists()) return target
+            if (retries >= LEGACY_NAME_RETRY_LIMIT) {
+                throw IOException("导入目标反复被占用（重名竞态），不覆盖：$target")
+            }
+            retries++
         }
     }
 
@@ -274,6 +307,14 @@ class MediaStoreImporter(
         }
         return names
     }
+
+    /**
+     * 期望展示名（两条版本链路共享的命名调用）：来源 provider `DISPLAY_NAME`（取不到退回 URI 尾段）
+     * → 纯函数规范化（非法字符 / 空名兜底 / 无扩展名补 `.mp3`）。撞名解析按链路各走各的口径：
+     * 29+ 精确匹配（[existingImportNames]），≤28 大小写不敏感 + 有限重试（[resolveLegacyTarget]）。
+     */
+    private fun desiredImportName(sourceUri: Uri): String =
+        normalizeImportDisplayName(rawDisplayName(sourceUri))
 
     /**
      * 来源展示名：先查 provider `OpenableColumns.DISPLAY_NAME`（微信/QQ 递出的 URI 尾段可能是编码路径
@@ -312,5 +353,8 @@ class MediaStoreImporter(
 
     private companion object {
         const val TAG = "MediaStoreImporter"
+
+        /** ≤28 重名竞态重试上限（重列目录 + 重解析）：超限按失败归一，不覆盖、不死循环 */
+        const val LEGACY_NAME_RETRY_LIMIT = 3
     }
 }
