@@ -14,3 +14,5 @@
 - [ ] 票据 01–03 勾选项经人工编译真机确认后归档
 
 ## Comments
+
+- 2026-11-14 完成。提交 c4a103b（合并 c5b40ca），4 个文件：`android/doc/ui.md`（关键文件表补 MainActivity 行与 VM 导入编排职责、接线 bullets 补导入（含 SEND filter 不带 scheme 事实与原因）、LocalMusicScreen 照删除三段范本补导入入口/分版本落库/导入结果、注意事项补 LocalMusicViewModel 隐式共享所有权口径（机制+前提+失效时需显式传参））、`android/doc/storage.md`（关键文件表加 LocalMusicImporter.kt、库快照节补导入落库段：分版本/重名后缀/≤28 权限取舍/静默刷新整份快照重写/覆盖层与排除清单零特殊处理）、`android/project.md`（模块职责/目录树/MainActivity 注释 singleTask/权限句不新增）、`spec.md` 文字对齐代码事实（SEND filter 偏差与 IntentFilter.matchData 原因、≤28 未授 WRITE 直接 Failure 取舍、launchMode 落定 singleTask、Testing Decisions 更新 24+3 例与基础设施裁定、Comments 记录实现提交）。CONTEXT.md「导入（本地音乐）」词条核对与最终实现一致、未改。**不新增 ADR 判定对照交付代码核实成立**：可逆新增能力（去掉 filter/胶水/接缝即可，读/删/编辑/播放管线零改动），延续 ADR 0022（行 ID 身份、不去重、查询零改动自然收录）与 ADR 0020（只复制字节、编辑走覆盖层），三条门槛不成立——SEND 偏差是平台机制强制、≤28 取舍是单步接缝约束下的实现选择，均非架构推翻。Status 推进与归档留待评审修复合入后统一执行（照 local-music-delete / local-music-rescan 先例）；勾选项保持未勾，待人工编译后真机逐项确认。
