@@ -67,6 +67,13 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        // ViewModel 编排 JVM 测试（LocalMusicViewModelImportTest）：mockable android.jar 的方法
+        // 返回默认值而非抛 "not mocked"——Application() 可构造、filesDir 返回 null 时快照读写
+        // 走 LocalMusicStore 既有兜底（读按空库、写失败只记日志）。现有纯函数测试不调 android
+        // 方法，不受影响。不引 Robolectric/mockk（spec「Testing Decisions」fake 注入即可）
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -104,6 +111,8 @@ dependencies {
     implementation(libs.material.icons.extended)
 
     testImplementation(libs.junit)
+    // ViewModel 编排测试的 Dispatchers.setMain / StandardTestDispatcher / runTest（票据02）
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
