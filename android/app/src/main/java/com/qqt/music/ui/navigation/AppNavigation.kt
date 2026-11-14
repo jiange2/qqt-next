@@ -145,6 +145,12 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         localMusicViewModel.consumeNotice()
     }
     val isLocalMusic = currentRoute == Screen.LocalMusic.route
+    // 本地音乐视图状态（默认专辑）提升到导航层，页面与顶栏菜单共用：remember 以 local_music 的
+    // 返回栈条目为键——离开本页（含进本地专辑页，此时条目虽在栈上但已不是当前条目）键即置空、
+    // 状态重建，返回时总是专辑视图，「不记忆上次选择」由结构保证；播放器覆盖层不切 NavHost，
+    // 条目不变，视图状态保留
+    val localMusicEntry = if (isLocalMusic) backStackEntry else null
+    var localMusicShowAlbums by remember(localMusicEntry) { mutableStateOf(true) }
     // 本地音乐域（歌曲/专辑视图与本地专辑页）不发任何请求：断网/服务不可达横幅对它没有意义（spec 用户故事 38）
     val isLocalMusicArea = isLocalMusic || isLocalAlbum
     // 播放器不走导航：纯覆盖层状态控制开关。下层 NavHost 永不切页，
@@ -175,11 +181,13 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                             onSearchClick = { navController.navigate(Screen.Search.route) },
                             showBackButton = showBackButton,
                             onBackClick = { navController.popBackStack() },
-                            // 本地音乐不兼搜索：右侧换成该页自己的菜单（重新扫描 / 排除的文件夹）
+                            // 本地音乐不兼搜索：右侧换成该页自己的菜单（切换视图 / 重新扫描 / 排除的文件夹）
                             actions = if (isLocalMusic) {
                                 {
                                     LocalMusicTopBarMenu(
                                         viewModel = localMusicViewModel,
+                                        showAlbums = localMusicShowAlbums,
+                                        onToggleView = { localMusicShowAlbums = !localMusicShowAlbums },
                                         rescanEnabled = localMusicPermissionGranted,
                                         onRescan = { localMusicViewModel.rescan() },
                                     )
@@ -238,6 +246,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
                                 LocalMusicScreen(
                                     viewModel = localMusicViewModel,
                                     playerViewModel = playerViewModel,
+                                    showAlbums = localMusicShowAlbums,
                                     onAlbumClick = { album ->
                                         // 专辑键按 URL 安全编码后作为路由参数；专辑名给顶栏标题
                                         LocalAlbumNav.albumName = album.name
