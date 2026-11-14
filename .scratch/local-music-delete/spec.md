@@ -10,7 +10,7 @@ Status: ready-for-agent
 
 ## Solution
 
-本地音乐页与本地专辑页的歌行增加行内左滑「删除」（复用 ADR 0018 的 `SwipeRevealRow`，样式对齐下载页），删除经系统媒体库删除链路真正移除设备上的音频文件，全系统版本支持：Android 11+ 走官方 `createDeleteRequest`（系统确认框即唯一确认）、Android 10 走 `RecoverableSecurityException` 系统授权、Android 9 及以下申请 `WRITE_EXTERNAL_STORAGE` 后直接删（App 内确认框兜底）。删除成功该行即时从列表消失并落盘快照；失败 Toast 提示。长按元数据编辑、排除文件夹、播放接入全部不动。
+本地音乐页与本地专辑页的歌行增加行内左滑「删除」（复用 ADR 0018 的 `SwipeRevealRow`，样式对齐下载页），删除经系统媒体库删除链路真正移除设备上的音频文件，全系统版本支持：Android 11+ 走官方 `createDeleteRequest`（系统确认框即唯一确认）、Android 10 走 `RecoverableSecurityException` 系统授权、Android 9 及以下先经 App 内确认框、再按需申请 `WRITE_EXTERNAL_STORAGE`（API 23+ 且未授予时）后直接删。删除成功该行即时从列表消失并落盘快照；失败 Toast 提示。长按元数据编辑、排除文件夹、播放接入全部不动。
 
 ## User Stories
 
@@ -19,7 +19,7 @@ Status: ready-for-agent
 3. 作为本地音乐听众，我希望删除的是设备存储里的音频文件本身（其他播放器也不再可见），以便真正清理空间，而不只是本 App 藏起来。
 4. 作为本地音乐听众，我希望删除前有一次确认，以便不会误删。
 5. 作为本地音乐听众，我希望 Android 10+ 的确认就是系统删除框、不再多弹一个 App 框，以便确认一次就够。
-6. 作为本地音乐听众，我希望 Android 9 及以下删除时先申请存储写入权限、再弹 App 确认框，以便老设备也能删。
+6. 作为本地音乐听众，我希望 Android 9 及以下删除时先弹 App 确认框、确认后再按需申请存储写入权限（API 23+ 且尚未授予时才弹权限框），以便老设备也能删。
 7. 作为本地音乐听众，我希望删除成功后该行立刻从列表消失，以便所见即所得、不用手动重扫。
 8. 作为本地音乐听众，我希望删除失败时得到提示，以便知道文件没删掉（如已被外部删除）。
 9. 作为本地音乐听众，我希望长按歌行仍是编辑元数据、与左滑删除互不干扰，以便两种管理并存。
@@ -33,28 +33,38 @@ Status: ready-for-agent
 
 - 删除 = 经系统媒体库删除链路移除设备上的音频文件本身（其他应用也不再可见），区别于「排除文件夹」（仅本 App 不展示）。术语见 CONTEXT.md「删除（本地歌曲）」。
 - 入口：本地音乐页与本地专辑页的歌行（同一 `LocalSongRow` 组件）行内左滑露「删除」按钮，复用 `SwipeRevealRow` / `RowSwipeAction` / `RowSwipeRevealState`（ADR 0018），按钮样式对齐下载页（`DangerRed`、88dp、白字）。长按元数据编辑保持不变。
+- 权限门槛：音频权限被系统关闭时整库灰显，歌行**不露**左滑删除（`swipe = null`，与既有 `albumsEnabled = false` 同口径）——整库灰显是权限问题、不是文件失效；文件真不可用（`markUnavailable`）的灰显行照常可删（用户故事 11）。
+- 手势状态：两页各持一个页面级 `RowSwipeRevealState`（同页同一时刻只一行展开），`LazyColumn` 传 `rememberLazyListState()`、列表滚动即收起；本地音乐页切换歌曲/专辑视图时也收起。
 - 不做多选/批量删除；删除入口只有左滑一处（长按元数据面板不加删除按钮）。
 
 ### 分版本删除链路（新接缝 LocalMusicDeleter）
 
-- 唯一新接缝 `LocalMusicDeleter`（data/local）：输入本地歌曲 content URI（按卷 + 行 ID 构造，沿用 `LocalSong`），按系统版本路由三条链路，输出归一化删除结果（成功 / 失败 / 用户取消）。UI 与 ViewModel 只调它，不直接碰 MediaStore 删除 API。
+- 唯一新接缝 `LocalMusicDeleter`（data/local）：输入本地歌曲，直接 `Uri.parse(song.contentUri)`——该 URI 在媒体库查询期就按卷 + 行 ID 构造好并随快照入盘，不存在也不需要第二个 URI 构造函数。按系统版本路由三条链路，输出归一化删除结果（成功 / 失败 / 用户取消）。UI 与 ViewModel 只调它，不直接碰 MediaStore 删除 API。
 - Android 11+（API 30+）：`MediaStore.createDeleteRequest(resolver, uris)` → `startIntentSenderForResult` 拉系统确认框 → 用户允许后系统执行删除。无需任何写入权限（已持音频读取权限即可）。
-- Android 10（API 29）：`resolver.delete(uri)` 捕获 `RecoverableSecurityException` → 用其 IntentSender 拉系统授权框 → 授权后重试删除。
-- Android 9 及以下（API ≤28）：运行时申请 `WRITE_EXTERNAL_STORAGE` → `resolver.delete(uri)` 直接删。
-- 系统框经 `ActivityResultLauncher<IntentSenderRequest>` 拉起（注册在 UI 层，沿用现有权限申请/Activity result 模式）；`LocalMusicDeleter` 负责版本路由与结果归一，不持有 Activity。
-- Manifest 新增 `WRITE_EXTERNAL_STORAGE`（`maxSdkVersion=29`），仅 ≤29 删除时申请；30+ 不申请、不持有。
+- Android 10（API 29）：`resolver.delete(uri)` 捕获 `RecoverableSecurityException` → 用其 IntentSender 拉系统授权框 → 授权后重试删除（App 自有文件可能直接删成功、不弹框）。
+- Android 9 及以下（API ≤28）：`resolver.delete(uri)` 直接删；API 23+ 且尚未授予 `WRITE_EXTERNAL_STORAGE` 时先运行时申请，授予后再删、拒绝则失败不删；API 21–22 没有运行时权限框（清单声明即安装时授予），跳过申请直接删。
+- 交接模型是「动作 → 回调」：`startDelete` 产出 UI 下一步动作（`LaunchSystemDialog` 自带接缝构造好的 `IntentSenderRequest` / `RequestWritePermission` / `Finished`），UI 执行后把原始结果喂回 `onSystemDialogResult` / `onWritePermissionResult`，回调总是终态；接缝无状态，待删歌曲由 ViewModel 在两次调用之间保管。
+- 两个 launcher（系统框 `StartIntentSenderForResult`、写入权限 `RequestPermission`）与 ≤28 的 App 确认框都注册/渲染在常驻导航宿主 `AppNavigation`，不在页面：本地音乐页导航到专辑页时离开组合，页面级 launcher 随之注销、系统框返回时回调会丢。`LocalMusicDeleter` 负责版本路由与结果归一，不持有 Activity 与 launcher。
+- Manifest 新增 `WRITE_EXTERNAL_STORAGE`（`maxSdkVersion="29"`）；**运行时申请只在 ≤28 链路且 API 23+**——29 走 RSE 授权（scoped storage 下 WRITE 不授予删除能力），30+ 不申请、不持有。
 
 ### 确认交互
 
 - Android 10+：系统删除/授权框即唯一确认，App 不再叠加自己的确认框（下载页有 App 框是因为删私有缓存无系统框，本地歌不同）。
-- Android 9 及以下：无系统框，App 内 `AlertDialog` 确认兜底（文案对齐下载页删除确认）；此 App 框由 UI 层在调用删除前弹出。
-- 用户在系统框/App 框取消 → 不删、行保持原样。
+- Android 9 及以下：无系统框，App 内 `AlertDialog` 确认兜底，由导航层在调用删除接缝前弹出（两页共用一份）。文案沿用下载页删除确认的句式、语义改对本地歌曲：标题 `删除本地歌曲`，正文 `「${song.displayTitle()}」将从设备存储删除，其他应用也不再可见。`，确认 `删除`、取消 `取消`；两个 `Text` 都不设 color（走 M3 默认，与下载页一致）。歌名取 `displayTitle()`（覆盖层优先，ADR 0020；`LocalSong` 没有 `.title`）。
+- ≤28 的实际顺序：App 确认 → `startDelete` → 需要时才弹写入权限框 → 删除（再次删除、WRITE 已授予则无权限框）。「是否需要 WRITE」只有接缝内部知道，而 App 确认必须先于 `startDelete`，故权限框落在确认之后。
+- 用户在系统框/App 框取消 → 不删、行保持原样、无提示。
 
 ### 列表联动与快照
 
-- 删除成功：从 ViewModel 的 `_songs` 即时移除该行 → 专辑分组/计数随之重算 → 库快照落盘（`LocalMusicStore` 原子写），不等下次扫描。媒体库行已删，下次刷新自然不再出现。
-- 删除失败（含文件已被外部删除、URI 失效）：Toast「删除失败」并刷新该行状态（走现有不可用标记链路）。
-- 不清理派生数据：播放队列快照、元数据覆盖层（ADR 0020）不做连带清理——与 ADR 0022 现有取舍一致（文件删除重加行 ID 变新、覆盖丢失为已知取舍）。队列里残留的同一首真播不了时走现有「文件不可用」链路。
+- 删除成功：从 ViewModel 的 `_songs`（整库，含被排除文件夹的行）即时移除该行 → 专辑分组/计数随之重算（纯派生，零新增代码）→ 库快照落盘（`LocalMusicStore` 原子写），不等下次扫描。媒体库行已删，下次刷新自然不再出现。列表整形是纯函数 `songsAfterDelete`：成功只按歌曲身份移除目标行，失败/取消原样返回同一列表。
+- 专辑删空自动返回：删除成功事件带被删歌曲的专辑键与删后剩余可见行数，剩余数在删除提交的主线程时刻同步算好（`albums` 派生经默认调度器异步重算，事件消费时读它会拿到删除前的旧值）；导航层只在「当前就在专辑页 + 剩余 0 + 路由专辑键与事件一致」时 `popBackStack()` 回本地音乐页。返回绑定在「删除成功」这个动作上，不做「album == null 就 pop」的通用观察——进程被杀后恢复到本就不存在的专辑时仍显示既有空态。
+- 删除失败（含文件已被外部删除、URI 失效、拒绝写入权限）：Toast「删除失败」（硬编码中文，经导航层 collector 弹出）并 `markUnavailable(song.id)` 刷新该行状态（走现有不可用标记链路；对已灰显行是 no-op，状态本就正确）。
+- 不清理派生数据：播放队列快照、元数据覆盖层（ADR 0020）、排除清单不做连带清理——与 ADR 0022 现有取舍一致（文件删除重加行 ID 变新、覆盖丢失为已知取舍）。队列里残留的同一首真播不了时走现有「文件不可用」链路。
+
+### 提示消费与专辑页权限核对
+
+- 一次性轻提示 `notice`（重扫数量 / 刷新失败 / 删除失败）的 Toast 消费在导航层 `AppNavigation`，不在页面：专辑页没有页面级 collector，放页面会让专辑页的删除失败静默无声、提示挂着等回到本地音乐页才迟到弹出。上移后两页 + 顶栏重扫提示口径统一，本地音乐页不再自己消费（避免双弹），`consumeNotice()` 语义不变。
+- 专辑页进页面核对一次音频权限（`onAlbumPageEntered()`，**只核对权限、不刷新**）并补 `ON_RESUME` 观察（`onAppResumed()`，与本地音乐页同构）。原因：专辑页从不走 `onPageEntered()`，进程被杀后直接恢复到专辑页时 `permissionGranted` 停在初值 false，会把正常已授权的库误判成权限被关（整库灰显、左滑删除露不出）。不让专辑页调 `onPageEntered()`：那会给它加入口刷新，扩大在途刷新竞态窗口、改变既有刷新语义。
 
 ### 播放中删除
 
@@ -62,14 +72,15 @@ Status: ready-for-agent
 
 ### 文档
 
-- CONTEXT.md「本地音乐」节新增「删除（本地歌曲）」词条（已落，与「排除文件夹」明确区分）。
-- 不新增 ADR：本特性为增量功能，与 ADR 0018（左滑删除）、ADR 0022（MediaStore）一致，无架构推翻；分版本链路与确认交互决策记入本 spec。
+- 文档口径：CONTEXT.md「本地音乐」节有「删除（本地歌曲）」词条（与「排除文件夹」明确区分）；`android/doc/ui.md` 描述两页的左滑删除入口、分版本确认与结果联动、导航层的 launcher / App 确认框 / 提示消费 / 删空返回，以及共享的行内左滑机制（ADR 0018）；`android/doc/storage.md` 描述删除成功后整库快照重写与派生数据不清理；`android/project.md` 记 `WRITE_EXTERNAL_STORAGE` 的声明与运行时申请口径。
+- 不新增 ADR：本特性走的正是 ADR 0018 预留的扩展路径（「以后新增行内操作一律走同一手势与同一个按钮位」），身份 / 权限 / 快照模型仍落在 ADR 0022 内，也不与 ADR 0020 冲突（0020 只否决回写文件标签，不禁止删除文件）。三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立——分版本路由是平台强制、确认口径是平台能力差异。分版本链路与确认交互决策记入本 spec，ADR 0018 的启用范围枚举不改。
 
 ## Testing Decisions
 
 - 好的测试只测外部行为：给 `LocalMusicDeleter` 喂 URI 与版本条件、断言删除结果与列表/快照最终形态，不测 MediaStore 内部。
 - 接缝：`LocalMusicDeleter` 之下的结果处理（成功移除行 + 落盘、失败 Toast + 刷新、取消不动）与专辑分组联动为可注入逻辑；分版本系统框链路（`createDeleteRequest` / `RecoverableSecurityException` / WRITE 申请）依赖系统交互，以真机手工验收为主。
-- 本仓维持手工验收（AI 不编译），清单覆盖：30+ 左滑删除 → 系统框 → 允许 → 行即时消失 + 重启不复活；取消 → 行不动；29 系统授权框链路；≤28 权限申请 + App 确认框 + 删除；拒绝写入权限 → 不删 + 提示；删除失败（外部已删）→ Toast；长按编辑与左滑共存；灰显行可删；删正在播放的歌 → 走文件不可用；专辑页删除 → 分组更新；飞行模式可删（纯本地）。
+- 纯函数以 JVM 测试覆盖（版本路由 / 写入权限门槛 / 系统框结果码与删除行数归一 / 删除结果列表整形 / App 确认门槛 / 删除后专辑分组与剩余计数）：`LocalMusicDeleterTest` 12 例 + `LocalDeleteRulesTest` 8 例，均已写、待人工执行（本仓规约：AI 不编译、不跑 gradlew）。
+- 本仓维持手工验收（AI 不编译），清单覆盖：30+ 左滑删除 → 系统框 → 允许 → 行即时消失 + 重启不复活；取消 → 行不动；29 系统授权框链路；≤28 App 确认框 → 写入权限申请（API 23+ 首次）→ 删除，21–22 无权限框；拒绝写入权限 → 不删 + 提示；删除失败（外部已删）→ Toast；长按编辑与左滑共存（含按住 >400ms 再横滑的竞争）；灰显行可删；权限被关时不露左滑；删正在播放的歌 → 走文件不可用；专辑页删除 → 分组/计数更新、失败提示当场弹；专辑删空 → 自动返回本地音乐页；进程被杀恢复到专辑页 → 不误灰显、真不存在的专辑不误 pop；飞行模式可删（纯本地）。
 
 ## Out of Scope
 
@@ -82,10 +93,13 @@ Status: ready-for-agent
 
 ## Further Notes
 
-- 左滑组件 `SwipeRevealRow` 为 internal（ui.components），同模块可用；行内容须不透明（组件已置白底），灰显行自绘背景不受影响。
-- `LocalSongRow` 现用 `combinedClickable`（单击播放 + 长按编辑），包左滑后须验证横向拖动手势与单击/长按不冲突（下载页/歌单页已有左滑 + 单击共存先例，长按共存为本特性新增验证点）。
+- 左滑组件 `SwipeRevealRow` 为 internal（ui.components），同模块可用；行内容须不透明，白底由组件加在内容 Box 上，`LocalSongRow` 自身不画背景。灰显不是自绘背景，而是 `InkFaint` 文字 + `combinedClickable(enabled = false)`——只关行内点击、不影响外层左滑，故灰显行照样可删。
+- `LocalSongRow` 用 `combinedClickable`（单击播放 + 长按编辑），包左滑后横向拖动与单击/长按共存（下载页/歌单页已有左滑 + 单击先例，长按共存为本特性新增验证点）。仓内无 swipe + 长按先例，已知失败模式：先按住不动 >400ms 再横滑 → 长按先触发弹出元数据面板、行可能停在半开位（滚动可收起）；按最简包裹实现，不预先加 `enabled` 回传机制，留真机验证。
+- 与在途刷新的竞态（已知取舍，刻意不缓解）：静默刷新是整库重查 → 整份列表原子替换，若其查询在删除前执行、提交在删除后，被删的行会复活并重新落盘，直到下次刷新才消失。窗口毫秒级、入口刷新只在进页面时触发；不取消 refreshJob、不维护已删 id 黑名单。
+- 系统框拉起自身失败的边缘（罕见）：`StartIntentSenderForResult` 在 IntentSender 发送失败时回 `RESULT_CANCELED` + `EXTRA_SEND_INTENT_EXCEPTION`，接缝按契约归一为 `Cancelled` → 静默不动、无 Toast；未做 extra 区分，记录待真机观察。
 - 删除链路全部本地、零网络请求；与「下载列表」删私有缓存是两条独立链路（下载删 App 私有文件无系统框，本地歌删系统媒体库有系统框）。
-- 多存储卷：content URI 按卷构造，删除按 URI 逐卷生效，沿用 ADR 0022 多卷身份。
+- 多存储卷：删除按快照里已存的、按卷限定的 content URI 逐卷生效，沿用 ADR 0022 多卷身份（不另构造 URI）。
+- 快照落盘失败只记日志（`LocalMusicStore.writeAtomically`），故「重启不复活」不可静态观测、需真机验收；落盘异步（`viewModelScope`）并与刷新 / 排除开关共用同一把写锁，最后写入胜出。
 
 ## Comments
 

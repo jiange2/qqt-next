@@ -22,6 +22,8 @@
 | `data/local/LocalMusicLibrarySource.kt` | 本地音乐来源接缝：音频权限检查、按卷查询 `MediaStore.Audio.Media`、行归一化 |
 | `data/local/LocalMusicStore.kt` | 本地音乐库快照与覆盖层的 JSON 落盘，原子写入与旧版本整份丢弃 |
 | `data/local/LocalFolderExclusion.kt` | 文件夹排除黑名单：目录段前缀匹配与过滤（纯函数） |
+| `data/local/LocalMusicDeleter.kt` | 本地歌曲删除接缝：按系统版本路由（30+ 系统删除框 / 29 RSE 授权 / ≤28 写入权限直接删）与结果归一（成功 / 失败 / 取消），不持有 Activity |
+| `data/local/LocalDeleteRules.kt` | 删除纯规则：删除结果 → 整库列表整形（成功移除目标行、失败与取消原样）、是否需要 App 确认框（仅 ≤28） |
 | `download/DownloadManager.kt` | 主动缓存（下载）管理器：串行下载队列、下载列表状态、与磁盘对账 |
 | `player/LastPlayedStore.kt` | 队列快照：保存/加载上次播放的队列、索引、进度与来源 |
 | `MainActivity.kt` | `PrefsManager.init(applicationContext)` — 必须在使用前调用 |
@@ -63,6 +65,8 @@ override fun onCreate(savedInstanceState: Bundle?) {
 歌曲身份 = 行 ID（同卷内移动 / 改名文件行 ID 不变；文件删除后重加则行 ID 变化，覆盖层编辑随之丢失——已知取舍）。同一内容的多个副本各自成行，不做内容级去重。查询与权限口径见 `LocalMusicLibrarySource`：`IS_MUSIC != 0`（Android 10+ 附加 `IS_PENDING = 0`、11+ 附加 `IS_TRASHED = 0`），Android 10+ 用 `getExternalVolumeNames` 逐外置卷查询合并。
 
 排除清单是一组文件夹路径，匹配语义为「该文件夹及其全部子文件夹」（目录段边界上的前缀命中，`Music` 不吃掉 `MusicX`）；被排除的行不进歌曲列表、不进专辑分组、不进播放队列候选。整库行（含被排除的）都在快照里——取消排除立即恢复，不需要重查媒体库。过滤在 `LocalFolderExclusion`，纯函数。
+
+本地歌曲删除成功后，该行从整库快照里移除、整份快照按下面同一条原子写路径重写（临时文件 + rename，写失败只记日志、内存列表照常可用）；元数据覆盖层、排除清单与播放队列快照刻意不做连带清理——覆盖层按行 ID 记键，文件删后重加即新行 ID（见「注意事项」的已知取舍）。删除本身经 `LocalMusicDeleter` 分版本链路（系统删除框 / 系统授权 / 写入权限直接删），落盘由 `LocalMusicViewModel` 按删除结果整形后触发（纯函数 `LocalDeleteRules`）。
 
 ### 原子写
 
