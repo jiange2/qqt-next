@@ -34,6 +34,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.qqt.music.data.local.LocalDeleteAction
+import com.qqt.music.data.local.albumArtistSuggestions
+import com.qqt.music.data.local.albumSuggestions
 import com.qqt.music.data.local.batchAlbumNewKeys
 import com.qqt.music.data.local.decodeLocalAlbumKey
 import com.qqt.music.data.local.encodeLocalAlbumKey
@@ -514,12 +516,19 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
             )
         }
 
+        // 批量面板编辑候选（spec「编辑候选」）：两处批量面板共用，取整库可见歌曲——
+        // 专辑页批量也是把歌归并进库里任何一张已有专辑，候选不限于当前专辑
+        val batchAlbumSuggestions = remember(localMusicSongs) { localMusicSongs.albumSuggestions() }
+        val batchAlbumArtistSuggestions = remember(localMusicSongs) { localMusicSongs.albumArtistSuggestions() }
+
         // 批量管理面板（票据02，spec「批量面板」）：编辑模式底栏「编辑信息」打开。
         // 保存接票据01 的一次提交入口（整表一次原子落盘），成功即关面板 + 退出编辑模式 + 清空勾选；
         // Toast「已修改 n 首」走上方既有 notice 链路自动弹出，这里不另弹、不做播放器同步
         if (localMusicEditing && localMusicBatchPanelOpen) {
             LocalBatchEditSheet(
                 selectedCount = localMusicSelection.size,
+                albumSuggestions = batchAlbumSuggestions,
+                albumArtistSuggestions = batchAlbumArtistSuggestions,
                 onSave = { albumInput, albumArtistInput ->
                     val selected = localMusicSongs.filter { it.id in localMusicSelection }
                     localMusicViewModel.saveBatchMetadata(selected, albumInput, albumArtistInput)
@@ -535,6 +544,8 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         if (localAlbumEditing && localAlbumBatchPanelOpen) {
             LocalBatchEditSheet(
                 selectedCount = localAlbumSelection.size,
+                albumSuggestions = batchAlbumSuggestions,
+                albumArtistSuggestions = batchAlbumArtistSuggestions,
                 onSave = { albumInput, albumArtistInput ->
                     val album = localAlbum
                     val selected = localAlbumSongs.filter { it.id in localAlbumSelection }

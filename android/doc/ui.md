@@ -17,7 +17,7 @@ App 使用 Jetpack Compose Navigation 管理页面路由。整体布局由 `AppN
 | `ui/components/BottomBar.kt` | `MusicBottomBar`：4 个 Tab（首页 / 本地音乐 / 音乐分类 / 最新歌曲），中间「我的下载」为突出 FAB 样式 |
 | `ui/components/DrawerContent.kt` | 侧边抽屉：橙色渐变头图 + 6 个导航项 + 底部设置 |
 | `ui/components/MiniPlayer.kt` | 迷你播放器（与底部导航连为一体的扁平长条，白底延伸至屏幕底部并自动避让系统手势区；有歌曲时显示播放控制，无歌曲时显示占位符，可点击打开全屏播放器） |
-| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换与批量管理在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除、编辑模式勾选歌行与 `LocalMusicEditTopBar` / `LocalMusicBatchBar`）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘、导入编排、批量保存一次提交）、`LocalSongRow`（编辑态序号位换勾选框）、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet`、`LocalBatchEditSheet` |
+| `ui/screens/localmusic/` | 本地音乐页组：`LocalMusicScreen`（歌曲 / 专辑两视图、默认专辑、视图切换与批量管理在顶栏菜单、权限空态与灰显横幅、排除面板、歌行左滑删除、编辑模式勾选歌行与 `LocalMusicEditTopBar` / `LocalMusicBatchBar`）、`LocalMusicViewModel`（库快照与覆盖层、库刷新、权限核对、排除清单、删除接缝调用与结果落盘、导入编排、批量保存一次提交）、`LocalSongRow`（编辑态序号位换勾选框）、`LocalExcludedFoldersSheet`、`LocalMetadataEditSheet`、`LocalBatchEditSheet`、`MetadataSuggestionField`（编辑候选输入框） |
 | `ui/screens/localalbum/LocalAlbumScreen.kt` | 本地专辑页：某张本地专辑的歌曲列表，点歌以整张专辑为播放队列；歌行左滑删除（与本地音乐页同一条接缝），删空这张专辑时由导航层自动返回；编辑模式（`LocalAlbumTopBarMenu` ⋮ 菜单「批量管理」进入、勾选歌行，顶底栏/面板在导航层接线，全选改名整张搬走时页面跟随新专辑） |
 | `ui/screens/player/PlayerScreen.kt` | 全屏播放器：双页 Pager（歌词页左/歌曲页右）+ 封面主色动态背景 + 钉底主控行；下箭头顶栏 + 页签（真实导航）、标题/队列位置行、功能图标行、进度条；横滑切页手势；按压反馈为线性变淡/实心缩放（无波纹，见 PlayerScreen 小节） |
 | `ui/screens/player/LyricsPanel.kt` | 歌词区组件：LRC 行渲染、当前行高亮与自动滚动居中、点击行跳播、手动滚动暂停跟随；`LyricsCache` 会话缓存与 `loadLyrics`（内嵌 lrcText 优先、外链 lrcUrl 兜底） |
@@ -140,7 +140,7 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 - **编辑模式（批量管理）**：本页入口仅歌曲视图，从顶栏 ⋮ 菜单「批量管理」进入（点击进入并收起菜单与左滑展开态；本地专辑页有独立入口，见 LocalAlbumScreen 小节）；开关、勾选集合与面板开关都在导航层（见 AppNavigation 接线），离开本页即退出、勾选不记忆
   - **勾选交互**：歌行序号位换成前置勾选框（勾选框只展示不接事件，切换统一走整行点击 / 长按，避免点框与点行双重切换）；点行 / 长按 = 切换勾选，不跳播、不弹单首面板；左滑删除收起（`swipe = null`）；灰显行（`available = false`）不可勾选
   - **顶栏 / 底栏**：顶栏整条换成 `LocalMusicEditTopBar`——左「取消」、标题「已选 n 首」、右「全选 / 取消全选」（已全选时文案翻转、再点清空勾选），⋮ 菜单隐藏；全选 = 可见列表（排除过滤后）全部可用行，灰显行跳过；底栏 `LocalMusicBatchBar` 只有一个「编辑信息」按钮，0 选禁用，放 Scaffold 内容区底部（NavHost 之下），不与底部导航 / MiniPlayer 重叠
-  - **批量面板**：「编辑信息」打开 `LocalBatchEditSheet`——仅专辑 / 专辑艺术家两个自由文本字段，初始为空、不预填、无「恢复默认」，留空 = 不改（与单首面板相反），两字段 trim 皆空时保存禁用（详见 LocalMetadataEditSheet 小节）
+  - **批量面板**：「编辑信息」打开 `LocalBatchEditSheet`——仅专辑 / 专辑艺术家两个字段（自由输入 + 编辑候选），初始为空、不预填、无「恢复默认」，留空 = 不改（与单首面板相反），两字段 trim 皆空时保存禁用（详见 LocalMetadataEditSheet 小节）
   - **保存与退出**：保存调 `LocalMusicViewModel.saveBatchMetadata` 一次提交（覆盖层整表一次原子写，见 [storage.md](storage.md)），点保存即退出编辑模式、清空勾选、关闭面板，提交完成后 Toast「已修改 n 首」（n = 勾选提交数）经 `notice` 弹出；专辑分组 / 计数 / 封面随列表重算，歌曲按新专辑 / 专辑艺术家换组；取消、系统返回（面板开着先收面板、再按一次退出）、切页 / 进其他页面、编辑中权限被收回都退出并清空勾选，未保存输入随面板离组合丢弃；全程纯本地、零网络
 - **刷新**：一次整库查询，无进度条、无取消；静默刷新不提示，顶栏「重新扫描」完成后提示「新增 x、移除 y」（数量按排除过滤后的可见库统计——被排除文件夹里的增删列表看不见，不计入）；刷新期间旧列表照常可用、播放不打断；查询失败（卷不可用等）保留旧快照不动，不放空列表假装没歌
 - **空态与失效**：
@@ -172,10 +172,11 @@ showBackButton = ... || isSearchSongs || isArtistSongs || isSearch || isLocalAlb
 
 ### LocalMetadataEditSheet（元数据编辑面板）
 - 底部弹层，字段：标题、艺术家、专辑、专辑艺术家、音轨号、年份 + 「恢复默认」
+- **编辑候选**（spec「编辑候选」）：艺术家 / 专辑 / 专辑艺术家三字段用 `MetadataSuggestionField`——聚焦展开本地库当前值派生的内联候选列表（专辑行带专辑艺术家次文本），打字即过滤（忽略大小写、次文本也命中），点选回填；专辑候选点选连带回填专辑艺术家框（归并键 = 专辑名 + 专辑艺术家，两框一起填才并进同一张）；自由输入保留，标题 / 音轨号 / 年份仍用 `MetadataField`。候选只取本地库（文件夹兜底专辑排除——改标签无法归并进文件夹组），最多渲染 50 行、超出提示输入过滤；失焦 / 尾部箭头收起，空候选不渲染列表。内联展开而非 Popup：ModalBottomSheet + 软键盘下始终在 imePadding 之上可见
 - 入口仅列表长按：本地音乐页歌曲视图 / 本地专辑页长按歌曲行
 - 音轨号只接受正整数、年份只接受四位数字，首尾空白统一裁剪；留空或与媒体库标签相同不算「改过」
 - 保存只写覆盖层，不回写音频文件；保存后歌曲列表、专辑分组与封面立即刷新，并同步播放器上的标题 / 艺术家展示值（不打断播放）
-- **批量变体 `LocalBatchEditSheet`**：本地音乐页 / 本地专辑页编辑模式底栏「编辑信息」打开（已选 ≥1 首），与单首面板同款 ModalBottomSheet，但仅专辑 / 专辑艺术家两个自由文本字段，初始为空、不预填、无「恢复默认」按钮；**留空 = 不改**（与单首面板「留空 = 恢复文件原值」相反），两字段 trim 皆空时保存禁用；标题「批量管理」，副标题显示已选数与「只改 App 里的显示，不会修改音频文件本身」；字段标签用规范词「专辑」「专辑艺术家」（CONTEXT.md，弃用「专辑作者」）
+- **批量变体 `LocalBatchEditSheet`**：本地音乐页 / 本地专辑页编辑模式底栏「编辑信息」打开（已选 ≥1 首），与单首面板同款 ModalBottomSheet，但仅专辑 / 专辑艺术家两个字段（自由输入 + 同款编辑候选，专辑点选同样联动回填专辑艺术家），初始为空、不预填、无「恢复默认」按钮；**留空 = 不改**（与单首面板「留空 = 恢复文件原值」相反），两字段 trim 皆空时保存禁用；标题「批量管理」，副标题显示已选数与「只改 App 里的显示，不会修改音频文件本身」；字段标签用规范词「专辑」「专辑艺术家」（CONTEXT.md，弃用「专辑作者」）；候选由导航层从整库可见歌曲派生传入（本地音乐页与专辑页两处批量面板共用）
 - 批量保存走 `LocalMusicViewModel.saveBatchMetadata` 一次提交（与单首共用 `editLock`、覆盖层整表一次原子写，见 [storage.md](storage.md)）；点保存即关面板 + 退出编辑模式 + 清空勾选，Toast「已修改 n 首」（n = 提交数）经导航层 `notice` 弹出；批量只改专辑字段，播放器只显示标题 + 艺术家，不做播放器同步
 
 ### DownloadScreen（无 ViewModel）
