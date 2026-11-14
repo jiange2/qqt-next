@@ -159,7 +159,7 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
     var localMusicShowAlbums by remember(localMusicEntry) { mutableStateOf(true) }
     // 编辑模式开关与勾选集合（spec「编辑模式状态与选择态」，票据02）：与视图状态同键——
     // 离开本页（含切底部 Tab / 进本地专辑页）键即置空、状态重建，「离开即退出、勾选不跨页保留」
-    // 由结构保证；不放 LocalMusicViewModel——它是导航层单例、与专辑页 / 播放器共用，放进去会跨页泄漏
+    // 由结构保证；不放 LocalMusicViewModel——它是导航层单例、与专辑页共用，放进去会跨页泄漏
     var localMusicEditing by remember(localMusicEntry) { mutableStateOf(false) }
     var localMusicSelection by remember(localMusicEntry) { mutableStateOf(emptySet<String>()) }
     var localMusicBatchPanelOpen by remember(localMusicEntry) { mutableStateOf(false) }
@@ -442,11 +442,10 @@ fun AppNavigation(playerViewModel: PlayerViewModel) {
         }
 
         // 全屏播放器覆盖层：playerOverlay 为 true 时组合，叠在常驻下层之上；收起整页滑出即露出下层页面。
-        // 本地歌曲的「更多菜单 → 编辑信息」要用本地音乐的快照与覆盖层，与导航层共用同一个实例
+        // 播放器不接 LocalMusicViewModel：本地歌曲功能图标行整行不出现，元数据编辑只走列表长按入口
         if (playerOverlay) {
             PlayerScreen(
                 playerViewModel = playerViewModel,
-                localMusicViewModel = localMusicViewModel,
                 onBackClick = { playerOverlay = false },
             )
         }
