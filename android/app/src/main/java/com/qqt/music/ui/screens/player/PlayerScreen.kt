@@ -250,6 +250,13 @@ fun PlayerScreen(
     var showPlaylistSheet by remember { mutableStateOf(false) }
     var showMoreSheet by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
+    // 浮层随切歌收敛：进入本地播放即收起已打开的在线浮层（更多菜单 / 播放设置），无残留；在线期间行为不变
+    LaunchedEffect(isLocalSong) {
+        if (isLocalSong) {
+            showMoreSheet = false
+            showSettingsSheet = false
+        }
+    }
 
     // 播放模式（ADR 0008）：持久化于 PlayerSettingsManager，Service 收集后落到 ExoPlayer
     val playMode by PlayerSettingsManager.playMode.collectAsState()
