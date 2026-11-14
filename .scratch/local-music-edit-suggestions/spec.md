@@ -69,7 +69,7 @@ Status: ready-for-agent
 - 批量改其他字段、批量删除（批量管理 spec 边界不变）。
 - 写回文件标签（ADR 0020 不变）。
 - 候选跨设备 / 云端来源、候选记忆或手工维护。
-- 专辑卡片墙 / 本地专辑页的编辑模式（批量管理 spec 边界不变）。
+- 专辑卡片墙整张勾选；本地专辑页编辑模式本身（批量管理票据04 范围，本特性只为其批量面板接候选，边界以票据04 为准）。
 
 ## Further Notes
 
@@ -83,4 +83,4 @@ Status: ready-for-agent
 ## Comments
 
 - 2026-11-14 grilling 定稿：事实核查确认 admin-web 歌曲编辑表单已有专辑 / 艺术家下拉（Songs.vue el-select），本特性落点为 Android 本地音乐单首 / 批量面板（现状纯手输，批量 spec 当时明确自由文本）。Q1–Q5 全部同意。spec 入库，Status ready-for-agent，直接实现（本仓规约：AI 不编译、不跑 gradlew）。
-- 2026-11-14 实现完成（待人工编译与真机验收）：数据层 `LocalMetadataSuggestions.kt`（`MetadataSuggestion` + `albumSuggestions` / `artistSuggestions` / `albumArtistSuggestions` / `filterSuggestions`，文件夹兜底专辑排除、卡片艺术家回退口径、中文序、并集去重）；UI 层 `MetadataSuggestionField.kt`（内联候选列表、聚焦展开全量 / 打字过滤 / 失焦收起、尾部箭头旋转、50 行上限 + 溢出提示行、点选 clearFocus）；单首面板三字段接入（专辑点选联动填专辑艺术家），批量面板两字段接入 + 导航层两处调用（本地音乐页、专辑页票据04）共用整库派生候选。测试 `LocalMetadataSuggestionsTest` 17 例照写未执行。文档：`android/doc/ui.md` 四处同步；CONTEXT.md 无新增词条（术语沿用现有「艺术家」「专辑艺术家」）。**并行改动报备**：实现期间工作树有另一份在途未提交改动（专辑页批量管理 + 跟随，票据04：`AppNavigation` / `LocalMetadataEdit.kt` / `LocalAlbum.kt` / `LocalAlbumScreen.kt` 等），本特性对其只做增量接线（第二处批量面板调用补候选参数），未覆盖其任何内容；人工编译时两份改动一并验证。
+- 2026-11-14 实现完成（待人工编译与真机验收）：数据层 `LocalMetadataSuggestions.kt`（`MetadataSuggestion` + `albumSuggestions` / `artistSuggestions` / `albumArtistSuggestions` / `filterSuggestions`，文件夹兜底专辑排除、卡片艺术家回退口径、中文序、并集去重）；UI 层 `MetadataSuggestionField.kt`（内联候选列表、聚焦展开全量 / 打字过滤 / 失焦收起、尾部箭头旋转、50 行上限 + 溢出提示行、点选 clearFocus）；单首面板三字段接入（专辑点选联动填专辑艺术家），批量面板两字段接入 + 导航层两处调用（本地音乐页、专辑页票据04）共用整库派生候选。测试 `LocalMetadataSuggestionsTest` 16 例照写未执行。文档：`android/doc/ui.md` 四处同步；CONTEXT.md 无新增词条（术语沿用现有「艺术家」「专辑艺术家」）。**并行改动报备**：实现期间工作树有另一份在途未提交改动（专辑页批量管理 + 跟随，票据04：`AppNavigation` / `LocalMetadataEdit.kt` / `LocalAlbum.kt` / `LocalAlbumScreen.kt` 等），本特性对其只做增量接线（第二处批量面板调用补候选参数），未覆盖其任何内容；人工编译时两份改动一并验证。
