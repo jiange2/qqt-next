@@ -64,15 +64,18 @@ import com.qqt.music.viewmodel.PlayerViewModel
  * 没有进度条、没有取消（spec：扫描只是一次查询）。
  * 权限被系统关闭后进页面（或回前台时复查发现被关）：快照保留并整体灰显 + 重新授权横幅，
  * 不放空列表假装没歌；重新授权成功（弹窗或系统设置任一路径）自动刷新，灰显的行恢复可播。
- * 专辑视图把同一份列表按专辑归并成卡片墙，点开进本地专辑页。
+ * 进页面默认专辑视图：把同一份列表按专辑归并成卡片墙，点开进本地专辑页。
+ * 视图状态提升到导航层（以本页返回栈条目为键），不记忆上次选择：从专辑页返回、重新进入都是专辑视图。
  * 长按歌曲行打开元数据编辑面板（与全屏播放器「更多菜单 → 编辑信息」同一个面板）。
- * 顶栏菜单：「重新扫描」（完成后提示新增 / 移除数量）与「排除的文件夹」（票据 03）。
+ * 顶栏菜单：「切换视图」（第一项，文案随当前视图翻转、始终可点）、
+ * 「重新扫描」（完成后提示新增 / 移除数量）与「排除的文件夹」（票据 03）。
  * 两个视图都不发起任何网络请求。
  */
 @Composable
 fun LocalMusicScreen(
     viewModel: LocalMusicViewModel,
     playerViewModel: PlayerViewModel,
+    showAlbums: Boolean,
     onAlbumClick: (LocalAlbum) -> Unit = {},
 ) {
     val loading by viewModel.loading.collectAsState()
@@ -81,12 +84,13 @@ fun LocalMusicScreen(
     val permissionDeniedOnce by viewModel.permissionDeniedOnce.collectAsState()
     val songs by viewModel.songs.collectAsState()
     val albums by viewModel.albums.collectAsState()
-    // 视图选择只活在本页组合内：进去页面默认歌曲视图，不记忆上次的选择（spec「导航与页面」）
-    var showAlbums by remember { mutableStateOf(false) }
     // 正在编辑元数据的歌曲：非空即打开编辑面板（长按歌曲行打开）
     var editingSong by remember { mutableStateOf<LocalSong?>(null) }
     // 左滑展开互斥状态提升在页面级：LibraryArea 在 when 两个分支各调一次，放它里面会随分支切换重置
     val swipeState = remember { RowSwipeRevealState() }
+    // 视图切换在顶栏菜单（状态提升到导航层）：视图变化即收起左滑展开态——歌曲行离组合
+    // 不会清掉页面级 holder 里的展开状态，不收起的话切回歌曲视图原行仍停在展开位
+    LaunchedEffect(showAlbums) { swipeState.close() }
 
     // 一次性轻提示（重扫数量 / 刷新失败 / 删除失败）的 Toast 消费在导航层：专辑页也要能收到
     val context = LocalContext.current
@@ -171,10 +175,6 @@ fun LocalMusicScreen(
             )
             LibraryArea(
                 showAlbums = showAlbums,
-                onSelectView = {
-                    showAlbums = it
-                    swipeState.close()
-                },
                 songs = songs,
                 albums = albums,
                 playerViewModel = playerViewModel,
@@ -194,10 +194,6 @@ fun LocalMusicScreen(
         ) {
             LibraryArea(
                 showAlbums = showAlbums,
-                onSelectView = {
-                    showAlbums = it
-                    swipeState.close()
-                },
                 songs = songs,
                 albums = albums,
                 playerViewModel = playerViewModel,
@@ -220,13 +216,12 @@ fun LocalMusicScreen(
     }
 }
 
-/** 歌曲视图与专辑视图的公共区域：视图切换 + 列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
+/** 歌曲视图与专辑视图的公共区域：列表/卡片墙（歌曲视图点歌以当前完整列表为队列）。
  *  [albumsEnabled] 为 false（权限被关）时专辑卡片灰显不可点：点进去只能看到一页不可用的行；
  *  [deleteEnabled] 为 false（权限被关）时歌行不露左滑删除：整库灰显是权限问题，不是文件失效 */
 @Composable
 private fun ColumnScope.LibraryArea(
     showAlbums: Boolean,
-    onSelectView: (Boolean) -> Unit,
     songs: List<LocalSong>,
     albums: List<LocalAlbum>,
     playerViewModel: PlayerViewModel,
@@ -242,7 +237,6 @@ private fun ColumnScope.LibraryArea(
     LaunchedEffect(listState.isScrollInProgress) {
         if (listState.isScrollInProgress) swipeState.close()
     }
-    LibraryViewSwitch(albumSelected = showAlbums, onSelect = onSelectView)
     if (showAlbums) {
         AlbumGrid(
             albums = albums,
@@ -274,44 +268,6 @@ private fun ColumnScope.LibraryArea(
                 )
             }
         }
-    }
-}
-
-/**
- * 「歌曲 / 专辑」切换：分段控件，选中项白底橙字。
- * 视图选择不落盘、不记忆，进页面就是歌曲视图（spec「导航与页面」）。
- */
-@Composable
-private fun LibraryViewSwitch(albumSelected: Boolean, onSelect: (Boolean) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(PlaceholderBg)
-            .padding(3.dp),
-    ) {
-        ViewSwitchSegment("歌曲", selected = !albumSelected, onClick = { onSelect(false) }, modifier = Modifier.weight(1f))
-        ViewSwitchSegment("专辑", selected = albumSelected, onClick = { onSelect(true) }, modifier = Modifier.weight(1f))
-    }
-}
-
-@Composable
-private fun ViewSwitchSegment(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(15.dp))
-            .background(if (selected) Color.White else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) BrandOrange else InkSecondary,
-        )
     }
 }
 
@@ -514,6 +470,8 @@ private fun PermissionRevokedBanner(onRetry: () -> Unit, onOpenSettings: () -> U
 
 /**
  * 本地音乐页的顶栏菜单（替换默认搜索入口）：
+ * - 「切换到歌曲视图 / 切换到专辑视图」：文案随当前视图翻转，点击立即切换并收起菜单；
+ *   不依赖音频权限与库内容（区别于「重新扫描」），空库 / 未授权 / 加载中始终显示、始终可点
  * - 「重新扫描」：整库一次查询，完成后提示新增 / 移除数量；未授权音频权限时不可用
  * - 「排除的文件夹」：打开排除面板（票据 03）——自动列出库中含音乐的文件夹并带开关，
  *   切换即时生效、不需要重新扫描，飞行模式下照常可用（纯本地过滤），故始终可点
@@ -521,6 +479,8 @@ private fun PermissionRevokedBanner(onRetry: () -> Unit, onOpenSettings: () -> U
 @Composable
 fun LocalMusicTopBarMenu(
     viewModel: LocalMusicViewModel,
+    showAlbums: Boolean,
+    onToggleView: () -> Unit,
     rescanEnabled: Boolean,
     onRescan: () -> Unit,
 ) {
@@ -532,6 +492,13 @@ fun LocalMusicTopBarMenu(
             Icon(Icons.Default.MoreVert, contentDescription = "本地音乐菜单", tint = InkPrimary)
         }
         DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text(if (showAlbums) "切换到歌曲视图" else "切换到专辑视图") },
+                onClick = {
+                    menuExpanded = false
+                    onToggleView()
+                },
+            )
             DropdownMenuItem(
                 text = { Text("重新扫描") },
                 enabled = rescanEnabled,
