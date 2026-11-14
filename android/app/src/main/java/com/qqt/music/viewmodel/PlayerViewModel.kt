@@ -145,7 +145,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
                 _currentIndex.value = idx
                 val song = currentQueue.getOrNull(idx)
                 _currentSong.value = song
-                _duration.value = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
+                _duration.value = resolveDuration(mediaController?.duration ?: 0L, song)
                 // 伪切曲抑制（ADR 0016）：1.4.0 Controller 用 MediaItem.equals（含元数据）判切曲，
                 // CarLyricsSync 逐行写歌词均被误判。同 mediaId 且元数据有变 ⇒ 歌词行更新，跳过副作用；
                 // 基线在伪切曲时同样更新，否则真实重选同曲（元数据与基线相等）会被误吞，
@@ -230,7 +230,7 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
             while (isActive) {
                 mediaController?.let { controller ->
                     _currentPosition.value = controller.currentPosition.coerceAtLeast(0L)
-                    _duration.value = controller.duration.coerceAtLeast(0L)
+                    _duration.value = resolveDuration(controller.duration, _currentSong.value)
 
                     // 缓存可视化随轮询刷新：前缀实时生长、长满即翻金（ADR 0013）
                     refreshCacheVisual()
@@ -410,6 +410,12 @@ class PlayerViewModel(private val application: Application) : AndroidViewModel(a
     /** 已下载歌曲用本地文件 URI 离线直读，未下载走网络（ADR 0003） */
     private fun resolveUri(track: Song): Uri =
         DownloadManager.localUri(track.id) ?: Uri.parse(track.url)
+
+    // ExoPlayer 读不到时长（返回 TIME_UNSET）时回退队列自带时长：本地歌即列表同源的媒体库预抽取值
+    private fun resolveDuration(liveMs: Long, song: Song?): Long {
+        if (liveMs > 0) return liveMs
+        return (song?.duration?.toLongOrNull() ?: 0L) * 1000L
+    }
 
     /** Song 队列 → MediaItem 列表（点播与恢复共用同一构建） */
     private fun buildMediaItems(queue: List<Song>): List<MediaItem> = queue.map { track ->
