@@ -27,7 +27,7 @@ Status: ready-for-agent
 ### 默认视图与状态归属
 
 - 默认专辑视图；延续「不记忆上次选择」：每次进入本地音乐页（含从本地专辑页返回）都是专辑视图。不落盘（不加 PrefsManager 键）、不放 LocalMusicViewModel——它是导航层单例、与本地专辑页/播放器共用，放进去会变成跨进入记忆。
-- 视图状态从 LocalMusicScreen 页内 remember 提升到 AppNavigation，remember 以 local_music 目的地的 NavBackStackEntry 为键（初值 true = 专辑）：每次进入该目的地都是新 entry，状态天然重建，「不记忆」由结构保证；播放器覆盖层不切 NavHost，entry 不变，视图状态保留。
+- 视图状态从 LocalMusicScreen 页内 remember 提升到 AppNavigation，remember 以 local_music 目的地的 NavBackStackEntry 为键（初值 true = 专辑，离开本页键置空）：离开本页（含进本地专辑页，条目虽在栈上但已不是当前条目）键即置空、状态重建，返回必回专辑视图，「不记忆」由结构保证——底部导航 `navigateSingle` 带 `restoreState = true`，返回时还原的是同一 entry，重建靠键置空而非「每次都是新 entry」；播放器覆盖层不切 NavHost，entry 不变，视图状态保留。
 - 状态分别传给 LocalMusicScreen（替换页内 remember）与 LocalMusicTopBarMenu（新增 showAlbums / onToggleView 参数）。
 
 ### 分段控件移除
@@ -66,4 +66,4 @@ Status: ready-for-agent
 
 ## Comments
 
-- （待实现）
+- 2026-11-14 实现完成：票据 01（7372fb8，合并 fad377d）已合入集成分支 `feat/local-music-view-switch`（tip fad377d）；票据 02 的文档同步与本 spec 文字对齐随票据分支提交入库（待编排层合入）。落地内容（两文件：`AppNavigation.kt`、`LocalMusicScreen.kt`）：默认专辑视图；整体删除 `LibraryViewSwitch` / `ViewSwitchSegment` 胶囊分段控件，`LibraryArea` 去掉切换行与 `onSelectView` 参数；视图切换收进顶栏 ⋮ 菜单第一项（`LocalMusicTopBarMenu` 新增 `showAlbums` / `onToggleView`，文案随视图翻转「切换到歌曲视图 / 切换到专辑视图」，点击翻转并收起菜单，始终可点）；视图状态提升到 `AppNavigation`（`remember` 以 `local_music` 返回栈条目为键，初值 true = 专辑，离开本页键置空重建），替换页内 remember 并分别传给页面与顶栏菜单；视图变化收起左滑展开态（`LaunchedEffect(showAlbums)`）；页头与菜单注释更新。状态不入 ViewModel、不落盘。**spec 文字对齐代码事实（1 处）**：「默认视图与状态归属」原「每次进入该目的地都是新 entry，状态天然重建」改为实际机制——底部导航 `navigateSingle` 带 `restoreState = true`，返回还原同一 entry，「不记忆」靠离开本页键置空、返回时重建；其余文字经逐条核对与代码一致，未改。**不新增 ADR 的判定经交付代码核对成立**：可逆 UI 调整（默认视图 + 切换入口位置），无架构推翻，延续 ADR 0022；身份/权限/快照模型不动，三条门槛（难以反转 / 无上下文会让人惊讶 / 真实取舍）均不成立。CONTEXT.md「本地音乐」词条经逐条核对与最终实现一致（默认专辑视图、切换在顶栏菜单、不记忆上次选择），未改动。文档同步明细见票据 02 Comments。Status 推进与归档留待评审修复后由编排层统一执行（照 `local-music-delete` 先例），故 spec 仍 `ready-for-agent`、两票仍 `open`，全部 `- [ ]` 保持未勾——它们是设备级验收清单，待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
