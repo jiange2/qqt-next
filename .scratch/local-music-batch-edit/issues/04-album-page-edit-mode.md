@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02
 
-**Status:** open
+**Status:** resolved
 
 - [ ] 专辑页顶栏右侧出现 ⋮（与返回键共存），菜单只有「批量管理」；未授权音频权限禁用；其他带返回键页面无变化
 - [ ] 进入编辑模式：勾选框替换序号、点行 / 长按勾选不跳播不弹单首面板、左滑收起、灰显行不可选
@@ -25,3 +25,4 @@
 - 2026-11-14 grill-with-docs 定稿：Q1 专辑页 ⋮ 菜单只含「批量管理」（同本地音乐页入口形态；解除 TopBar「带返回键不渲染 actions」限制——grep 核实 `MusicTopBar` 唯一调用点在 `AppNavigation`，其余页面不传 actions、行为不变）；Q2 与本地音乐页完全同构（行交互 / 编辑顶栏 / 底栏 / 同一批量面板 / 留空 = 不改 / Toast + 即退），不加字段、不带删除；Q3 方案 A——全选改名把当前专辑键改没时页面跟随新专辑（等价自动进入新专辑），部分勾选搬出留在原页。用户「完全同意」。机制委托项：拆组多键无唯一目标时返回本地音乐页、跟随前等派生就绪防闪空态，属实现机制随答复确认。
 - 2026-11-14 实现完成（待人工编译，本仓规约 AI 不跑 gradlew；提交哈希待入库后补）。改动七文件：`LocalAlbum.kt`（`albumKey()` 委托新纯函数 `albumKeyOf(album, albumArtist)`，文件夹兜底键推导同源复用）；`LocalMetadataEdit.kt`（`batchAlbumNewKeys`：非全选或键不变 → 空集留在原页；全选按「trim 非空输入 = 新展示值、留空 = 原展示值」逐行算新键——与 `batchAlbumOverride` 提交后展示值严格一致，含同标签清覆盖不改展示值的口径）；`LocalBatchFollowTest.kt` 新增 13 例（部分勾选 / 灰显阻断 / 留空 / 改名 / 只改艺术家 / 同值不动 / 同标签清覆盖后按标签键 / 文件夹专辑拆组字面量键断言 / 空列表 / albumKeyOf 一致性）；`TopBar.kt`（actions 非空即渲染、否则无返回键才显示搜索）；`LocalAlbumScreen.kt`（`editing` / `selection` / `onToggleSelect` 参数、`LaunchedEffect(editing)` 收左滑、编辑态 `swipe = null`、`LocalAlbumTopBarMenu`）；`AppNavigation.kt`（专辑页三态 `remember(localAlbumEntry)`、`exitLocalAlbumEditMode`、权限收回双页退出、专辑页编辑 `BackHandler`、topBar / actions / 批量底栏分支、专辑面板 onSave：先算 `batchAlbumNewKeys` 再 `saveBatchMetadata` 再退出，单键跟随走 `albums.first{...}` + `withTimeoutOrNull(1000)` + 条目身份守卫 + `popUpTo(inclusive)` 替换，多键 pop；编辑候选沿用整库可见歌曲派生、两处批量面板共用同一份）；`LocalSongRow.kt`（KDoc 编辑态适用范围补专辑页）。文档同步随本票：CONTEXT.md「编辑模式」词条（两页各自状态、勾选互不相通、专辑页全选口径与跟随语义）、spec.md 入口 / Out of Scope / Testing / Comments、doc/ui.md（TopBar / LocalAlbumScreen / AppNavigation 接线 / 批量面板小节）。勾选项为设备级验收清单，待人工编译真机逐项确认，照先例保持未勾；Status 推进与归档由编排层在评审后统一执行。
 - 2026-11-15 双轴评审裁定（随编辑候选特性一并评审）：Spec 轴行为零缺陷，1 处口径裁定——「输入与当前展示值相同 → 留在原页」按键基判据执行：文件夹兜底专辑的展示名是文件夹名，输入它作专辑名会把键从 folder 换成 album，是真实换组（歌曲真的搬进一张新专辑键组），`batchAlbumNewKeys` 返回单键、页面跟随，符合 L3「键不变才留页」的机制定义；该验收行按有标签专辑理解，文件夹专辑此情形属预期跟随，真机验收时按此口径确认。Standards 轴无本票违规（弃用词修复在编辑候选侧）。
+- 2026-11-15 归档：resolved。实现提交 c0fda81，随编辑候选集成分支 `feat/local-music-edit-suggestions` 入库（两特性工作树交织，经用户确认一起提交），评审修复合并 835126c，归档提交见 main 合并记录。勾选项照先例保持未勾——设备级验收清单待人工编译真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）；「输入同值留页」行按 Comments 裁定口径验收（文件夹兜底专辑输入文件夹名属预期跟随）。

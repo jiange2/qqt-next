@@ -1,6 +1,6 @@
 # 本地音乐编辑候选（专辑 / 艺术家 / 专辑艺术家下拉）
 
-Status: ready-for-agent
+Status: resolved
 
 > 延续 ADR 0020（元数据只写 App 内覆盖层、不回写文件标签）与 ADR 0022（MediaStore 来源、行 ID 身份），不推翻任何 ADR。基线含已归档的批量管理特性（main ee4c5ee：单首 / 批量面板共用 `MetadataField` 自由文本）。本特性只给既有编辑字段加候选，不改任何保存语义。
 
@@ -84,3 +84,4 @@ Status: ready-for-agent
 
 - 2026-11-14 grilling 定稿：事实核查确认 admin-web 歌曲编辑表单已有专辑 / 艺术家下拉（Songs.vue el-select），本特性落点为 Android 本地音乐单首 / 批量面板（现状纯手输，批量 spec 当时明确自由文本）。Q1–Q5 全部同意。spec 入库，Status ready-for-agent，直接实现（本仓规约：AI 不编译、不跑 gradlew）。
 - 2026-11-14 实现完成（待人工编译与真机验收）：数据层 `LocalMetadataSuggestions.kt`（`MetadataSuggestion` + `albumSuggestions` / `artistSuggestions` / `albumArtistSuggestions` / `filterSuggestions`，文件夹兜底专辑排除、卡片艺术家回退口径、中文序、并集去重）；UI 层 `MetadataSuggestionField.kt`（内联候选列表、聚焦展开全量 / 打字过滤 / 失焦收起、尾部箭头旋转、50 行上限 + 溢出提示行、点选 clearFocus）；单首面板三字段接入（专辑点选联动填专辑艺术家），批量面板两字段接入 + 导航层两处调用（本地音乐页、专辑页票据04）共用整库派生候选。测试 `LocalMetadataSuggestionsTest` 16 例照写未执行。文档：`android/doc/ui.md` 四处同步；CONTEXT.md 无新增词条（术语沿用现有「艺术家」「专辑艺术家」）。**并行改动报备**：实现期间工作树有另一份在途未提交改动（专辑页批量管理 + 跟随，票据04：`AppNavigation` / `LocalMetadataEdit.kt` / `LocalAlbum.kt` / `LocalAlbumScreen.kt` 等），本特性对其只做增量接线（第二处批量面板调用补候选参数），未覆盖其任何内容；人工编译时两份改动一并验证。
+- 2026-11-15 归档：resolved。集成分支 `feat/local-music-edit-suggestions`（基于 main 1b5fadf）。提交链：票据04 实现 c0fda81 → 本特性实现 3eb1f00 → 评审修复 988026e（合并 835126c）→ 本次归档。两特性工作树交织（AppNavigation / LocalBatchEditSheet / ui.md 共享），经用户确认一起提交、按特性分两个提交入库，票据04 随本次一并归档。双轴评审结论：Spec 轴行为零缺陷——候选池口径（文件夹兜底排除判据首成员 displayAlbum() 非空、卡片艺术家回退、展示对去重、中文序、专辑艺术家并集）、过滤（trim / 忽略大小写 / 次文本命中）、控件交互（聚焦展开全量不按预填过滤、打字过滤、失焦收起、箭头清过滤请求焦点、点选 clearFocus、50 行上限 + 溢出提示、220dp 内滚纯 Column 非 Popup）、专辑联动两面板同规则、批量候选整库派生两处调用共用、保存语义零改动全部核对成立；2 处文字修复（测试例数 17→16 实数核对、Out of Scope 专辑页编辑模式口径对齐票据04）+ 入库前播放器入口口径对齐（编辑接线已由 e39607f 拆除，入口仅列表长按两处，Further Notes 与验收清单已改）；1 处票据04 口径裁定（文件夹兜底专辑输入文件夹名属真实换组、按键基判据跟随，见票据04 Comments）。Standards 轴 1 处硬违规已修（KDoc 弃用词「批量编辑」→「批量管理」）、1 处 smell 已修（artistSuggestions / albumArtistSuggestions 共用尾段抽 sortedDistinctSuggestions）、4 处 judgement call 经裁定保留（两页行交互同构重复——spec 要求；控件配色同款重复——spec 视觉 parity；菜单脚手架重复——小且内容不同；专辑键字符串编码——spec 定义 + 先例已否 key 类型）。不新增 ADR 判定经评审复核成立。测试 LocalMetadataSuggestionsTest 16 例 + LocalBatchFollowTest 13 例照写未执行；勾选项全部保持未勾（照先例：resolved 的设备级验收清单不勾），待人工编译后真机逐项确认（本仓规约：AI 不编译、不跑 gradlew）。
