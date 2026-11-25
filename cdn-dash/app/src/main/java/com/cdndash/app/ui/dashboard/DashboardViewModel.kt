@@ -11,15 +11,21 @@ import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
 import com.cdndash.app.data.aliyun.PackageSnapshotCodec
 import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
 import com.cdndash.app.domain.AccountCredentials
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.PackageGroup
 import com.cdndash.app.domain.ResourcePackage
 import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
+import com.cdndash.app.domain.TopSummary
+import com.cdndash.app.domain.TopSummaryAccount
 import com.cdndash.app.domain.groupPackages
+import com.cdndash.app.domain.summarizeTop
 import com.cdndash.app.domain.visibleAccounts
+import com.cdndash.app.domain.weekTotal
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -37,27 +43,38 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** 单账号的今日累计状态：成功数据、归一后的错误、是否正在取数三者互不覆盖。 */
+/**
+ * 单账号状态：今日累计、已结算 7 天、资源包余量、归一后的错误、是否正在取数互不覆盖。
+ *
+ * @property week 最近 7 个已结算日（不含今天）的日点，恒 7 个、按日升序；尚未取到或从未成功时为 null。
+ * @property packageGroups 资源包余量视图；null 表示本次还没取到（区别于「取到了但一个包都没有」的空列表）。
+ * @property packageFailure 资源包模块的失败原因；与今日/7 天共用的 [failure] 分开，互不覆盖。
+ */
 data class AccountTodayState(
     val account: Account,
     val today: TodayTraffic? = null,
+    val week: List<DayTrafficPoint>? = null,
     val failure: ApiFailureKind? = null,
-    /** 资源包余量视图；null 表示本次还没取到（区别于「取到了但一个包都没有」的空列表）。 */
     val packageGroups: List<PackageGroup>? = null,
-    /** 该账号资源包取数失败；与今日累计的 [failure] 分开，互不覆盖。 */
     val packageFailure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
 )
 
-/** 看板页状态；顺序完全来自账号手动排序（User Story 7）。 */
+/**
+ * 看板页状态；顺序完全来自账号手动排序（User Story 7）。
+ *
+ * @property topSummary 顶部两数（票据 06）：按全部账号计算，停用与失败账号的取舍在
+ * [summarizeTop] 里完成，不靠 [accounts] 已过滤启用账号这一层。
+ */
 data class DashboardUiState(
     val accounts: List<AccountTodayState> = emptyList(),
     val hasAnyAccount: Boolean = false,
     val isRefreshing: Boolean = false,
+    val topSummary: TopSummary = TopSummary(),
 )
 
 /**
- * 看板 ViewModel：刷新编排 + 今日累计取数。
+ * 看板 ViewModel：刷新编排 + 今日累计、已结算 7 天与资源包取数。
  *
  * 刷新编排（spec「刷新编排」、User Story 29/30）：
  * - 打开/回到前台（`ON_START`）→ 立即刷新一次，并启动前台定时器；
@@ -66,9 +83,9 @@ data class DashboardUiState(
  * - 退到后台（`ON_STOP`，即离开 `Lifecycle.State.STARTED`）→ 取消定时器，不再请求。
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
- * 账号内先取今日累计、再取资源包，两者各自落状态；账号间并发数有上限，避免账号多时打满接口配额。
- * 成功取数写入 [SnapshotModule.TODAY_TOTAL] / [SnapshotModule.PACKAGES] 快照（带抓取时间）；
- * 展示快照属于票据 07。
+ * 账号内串行（今日累计 → 已结算 7 天 → 资源包），账号间并发数有上限，避免账号多时打满接口配额。
+ * 成功取数分别写入 [SnapshotModule.TODAY_TOTAL]、[SnapshotModule.WEEK_TREND] 与
+ * [SnapshotModule.PACKAGES] 快照（带抓取时间）；展示快照属于票据 07。
  */
 class DashboardViewModel(
     private val accountStore: AccountStore,
@@ -78,6 +95,7 @@ class DashboardViewModel(
 
     private data class AccountFetch(
         val today: TodayTraffic? = null,
+        val week: List<DayTrafficPoint>? = null,
         val failure: ApiFailureKind? = null,
         val packageGroups: List<PackageGroup>? = null,
         val packageFailure: ApiFailureKind? = null,
@@ -96,6 +114,7 @@ class DashboardViewModel(
                     AccountTodayState(
                         account = account,
                         today = fetch.today,
+                        week = fetch.week,
                         failure = fetch.failure,
                         packageGroups = fetch.packageGroups,
                         packageFailure = fetch.packageFailure,
@@ -104,6 +123,18 @@ class DashboardViewModel(
                 },
                 hasAnyAccount = allAccounts.isNotEmpty(),
                 isRefreshing = isRefreshing,
+                // 顶部汇总走全部账号（含停用），由纯函数排除停用/失败并给出缺失数。
+                topSummary = summarizeTop(
+                    allAccounts.map { account ->
+                        val fetch = fetchMap[account.id] ?: AccountFetch()
+                        TopSummaryAccount(
+                            enabled = account.enabled,
+                            todayBytes = fetch.today?.bytes,
+                            weekBytes = fetch.week?.let(::weekTotal),
+                            failed = fetch.failure != null,
+                        )
+                    },
+                ),
             )
         }.stateIn(
             scope = viewModelScope,
@@ -166,7 +197,7 @@ class DashboardViewModel(
             null
         }
         if (credentials == null) {
-            // 解密失败或账号被删：按凭证失效降级，不影响其他账号；今日与资源包一起标记。
+            // 解密失败或账号被删：按凭证失效降级，不影响其他账号；三个模块一起标记。
             updateFetch(account.id) {
                 it.copy(
                     failure = ApiFailureKind.CREDENTIAL_INVALID,
@@ -176,8 +207,10 @@ class DashboardViewModel(
             }
             return
         }
+        // 账号内串行：今日累计 → 已结算 7 天 → 资源包，避免单个账号同时打多条接口。
         refreshToday(account, credentials, requestedAt)
-        // 资源包单独取、单独落状态：包失败不覆盖今日累计，今日失败也不覆盖包（User Story 26）。
+        refreshWeek(account, credentials, requestedAt)
+        // 资源包单独落状态：包失败不覆盖今日/7 天，反之亦然（User Story 26）；刷新收尾也在这里。
         refreshPackages(account, credentials, requestedAt)
     }
 
@@ -218,8 +251,48 @@ class DashboardViewModel(
     }
 
     /**
-     * 取资源包并写成余量视图；成功写 [SnapshotModule.PACKAGES] 快照（展示旧快照属票据 07）。
-     * 分组用本次请求时刻判定「未生效」，因此每次刷新都会重新分组。
+     * 已结算 7 天（票据 04）：成功后写 `WEEK_TREND` 快照（展示旧快照属票据 07）。
+     * 失败只记录错误、保留上次成功的 7 天数据，不抹掉已经取回的今日累计。
+     */
+    private suspend fun refreshWeek(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<List<DayTrafficPoint>> = try {
+            aliyunApi.settledDays(credentials, requestedAt)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            ApiResult.Failure(ApiFailureKind.NETWORK)
+        }
+
+        result.fold(
+            onSuccess = { days ->
+                runCatching {
+                    accountStore.saveSnapshot(
+                        accountId = account.id,
+                        module = SnapshotModule.WEEK_TREND,
+                        payloadJson = WeekTrafficSnapshotCodec.encode(days),
+                        fetchedAtMillis = now().toEpochMilli(),
+                    )
+                }
+                updateFetch(account.id) {
+                    it.copy(week = days)
+                }
+            },
+            onFailure = { failure ->
+                updateFetch(account.id) {
+                    // 不覆盖今日累计已有的更具体错误；两轮都失败时也会在 7 天这步先落一次。
+                    it.copy(failure = it.failure ?: failure.kind)
+                }
+            },
+        )
+    }
+
+    /**
+     * 取资源包并写成余量视图（票据 05）；成功写 [SnapshotModule.PACKAGES] 快照（展示旧快照属票据 07）。
+     * 分组用本次请求时刻判定「未生效」，因此每次刷新都会重新分组；账号级 `isRefreshing` 在这里收尾。
      */
     private suspend fun refreshPackages(
         account: Account,
