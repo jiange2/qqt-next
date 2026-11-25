@@ -17,7 +17,8 @@ import kotlinx.serialization.json.contentOrNull
  * - 每个账期一次请求，`BillingCycle=YYYY-MM`、`Granularity=MONTHLY`，账期由调用方给出
  *   （[com.cdndash.app.domain.recentBillingMonths] 已剔除当月）；账号内逐月串行。
  * - 不按产品过滤；主数求和 `PretaxAmount`，现金求和 `CashAmount`，
- *   代金券求和 `DeductedByCashCoupons + DeductedByCoupons`。金额全程 [BigDecimal]。
+ *   代金券只求和 `DeductedByCashCoupons`（ADR 0017 的现金/代金券拆分口径）。
+ *   金额全程 [BigDecimal]。
  * - `IsGroupByProduct=true`：BSS 只有按产品分组时才返回 `SubscriptionType` 与
  *   `ProductCode`，而这两项是预付费标注的唯一证据。
  * - 预付费标注只依据明细里的 `SubscriptionType=Subscription` 且 `ProductCode` 属于 CDN；
@@ -41,41 +42,33 @@ class BillEndpoint(private val rpc: AliyunRpcClient) {
         return ApiResult.Ok(bills)
     }
 
-    /** 取一个账期；正常账号一页（PageSize=300）就够，超限时才继续翻页，避免静默少算。 */
+    /**
+     * 取一个账期：**每月只发一次请求**（spec/ADR 0017「每账号 12 次」），不做翻页。
+     * `QueryAccountBill` 单页最多返回 300 条明细，本看板只取账号合计，正常账号一页足够；
+     * 若确有超限风险也只在此说明，不实现 PageSize/PageNum 循环。
+     */
     private suspend fun monthBill(
         account: AccountCredentials,
         month: YearMonth,
     ): ApiResult<MonthlyBill> {
-        var aggregate = Aggregate()
-        var pageNum = 1
-        while (true) {
-            val result = rpc.call(
-                account = account,
-                action = ACTION,
-                version = API_VERSION,
-                businessParams = mapOf(
-                    "BillingCycle" to month.toString(),
-                    "Granularity" to GRANULARITY_MONTHLY,
-                    // 获得 SubscriptionType/ProductCode，供预付费标注判断；不改变合计口径。
-                    "IsGroupByProduct" to "true",
-                    "PageNum" to pageNum.toString(),
-                    "PageSize" to PAGE_SIZE.toString(),
-                ),
-            )
-            val failure = result.failureOrNull()
-            if (failure != null) return failure
-            val body = requireNotNull(result.successOrNull()) { "成功分支不应为空" }
-            val items = body.billItems()
-            aggregate = aggregate.merge(items)
-            val totalCount = body.totalCount()
-            val fetchedAll = totalCount == null || aggregate.itemCount >= totalCount
-            if (items.isEmpty() || fetchedAll || pageNum >= MAX_PAGES) break
-            pageNum++
-        }
-        return ApiResult.Ok(aggregate.toMonthlyBill(month))
+        val result = rpc.call(
+            account = account,
+            action = ACTION,
+            version = API_VERSION,
+            businessParams = mapOf(
+                "BillingCycle" to month.toString(),
+                "Granularity" to GRANULARITY_MONTHLY,
+                // 获得 SubscriptionType/ProductCode，供预付费标注判断；不改变合计口径。
+                "IsGroupByProduct" to "true",
+            ),
+        )
+        val failure = result.failureOrNull()
+        if (failure != null) return failure
+        val body = requireNotNull(result.successOrNull()) { "成功分支不应为空" }
+        return ApiResult.Ok(Aggregate().merge(body.billItems()).toMonthlyBill(month))
     }
 
-    /** 一个账期多页明细的累加结果。 */
+    /** 一个账期明细的累加结果。 */
     private data class Aggregate(
         val pretaxAmount: BigDecimal = BigDecimal.ZERO,
         val cashAmount: BigDecimal = BigDecimal.ZERO,
@@ -83,7 +76,6 @@ class BillEndpoint(private val rpc: AliyunRpcClient) {
         /** 币种取明细里第一个非空值；缺失时按人民币展示。 */
         val currency: String? = null,
         val includesPrepaidPackage: Boolean = false,
-        val itemCount: Int = 0,
     ) {
 
         fun merge(items: List<JsonObject>): Aggregate {
@@ -95,8 +87,8 @@ class BillEndpoint(private val rpc: AliyunRpcClient) {
             for (item in items) {
                 pretax += item.decimal("PretaxAmount")
                 cash += item.decimal("CashAmount")
-                voucher += item.decimal("DeductedByCashCoupons") +
-                    item.decimal("DeductedByCoupons")
+                // ADR 0017：代金券只认 DeductedByCashCoupons，不并入 DeductedByCoupons。
+                voucher += item.decimal("DeductedByCashCoupons")
                 prepaid = prepaid || isPrepaidCdnBillLine(
                     subscriptionType = item.string("SubscriptionType"),
                     productCode = item.string("ProductCode"),
@@ -108,7 +100,6 @@ class BillEndpoint(private val rpc: AliyunRpcClient) {
                 voucherAmount = voucher,
                 currency = billCurrency,
                 includesPrepaidPackage = prepaid,
-                itemCount = itemCount + items.size,
             )
         }
 
@@ -133,21 +124,10 @@ class BillEndpoint(private val rpc: AliyunRpcClient) {
         }
     }
 
-    private fun JsonObject.totalCount(): Int? =
-        ((this["Data"] as? JsonObject)?.get("TotalCount") as? JsonPrimitive)
-            ?.contentOrNull
-            ?.toIntOrNull()
-
     companion object {
         const val ACTION: String = "QueryAccountBill"
         const val API_VERSION: String = "2017-12-14"
         const val GRANULARITY_MONTHLY: String = "MONTHLY"
-
-        /** 单页上限（接口允许 300）；超过时按 `TotalCount` 继续翻页。 */
-        const val PAGE_SIZE: Int = 300
-
-        /** 翻页兜底：防止接口返回异常 `TotalCount` 时无限请求。 */
-        const val MAX_PAGES: Int = 10
     }
 }
 

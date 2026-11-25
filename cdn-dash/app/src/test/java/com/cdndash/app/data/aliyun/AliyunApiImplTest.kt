@@ -166,9 +166,10 @@ class AliyunApiImplTest {
             response = errorResponse(400, "SignatureDoesNotMatch"),
             expected = ApiFailureKind.CREDENTIAL_INVALID,
         )
+        // Forbidden.*（含 Forbidden.RAM）是子账号缺权限或未开通，不是密钥失效。
         assertFailureKind(
             response = errorResponse(403, "Forbidden.RAM"),
-            expected = ApiFailureKind.CREDENTIAL_INVALID,
+            expected = ApiFailureKind.PERMISSION_DENIED,
         )
         assertFailureKind(
             response = errorResponse(403, "UnauthorizedOperation"),

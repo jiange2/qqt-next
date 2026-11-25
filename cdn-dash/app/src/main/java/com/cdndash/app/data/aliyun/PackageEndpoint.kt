@@ -87,7 +87,9 @@ class PackageEndpoint(private val rpc: AliyunRpcClient) {
     companion object {
         const val ACTION: String = "DescribeCdnUserResourcePackage"
 
-        /** spec/票据指定的 CDN OpenAPI 版本。 */
-        const val API_VERSION: String = "2017-11-10"
+        /**
+         * CDN OpenAPI 现行版本。旧值 `2017-11-10` 会返回 `InvalidVersion`，把整块资源包打空。
+         */
+        const val API_VERSION: String = "2018-05-10"
     }
 }

@@ -74,8 +74,9 @@ class BillEndpointTest {
         assertEquals("MONTHLY", url.queryParameter("Granularity"))
         // 按产品分组才会返回 SubscriptionType/ProductCode，预付费标注依赖它们。
         assertEquals("true", url.queryParameter("IsGroupByProduct"))
-        assertEquals("300", url.queryParameter("PageSize"))
-        assertEquals("1", url.queryParameter("PageNum"))
+        // 不自行分页：每月一次请求，靠接口默认单页（上限 300 条）返回全部产品分组。
+        assertNull(url.queryParameter("PageSize"))
+        assertNull(url.queryParameter("PageNum"))
         // 不按产品过滤：整个账号全部产品合计。
         assertNull(url.queryParameter("ProductCode"))
     }
@@ -118,10 +119,10 @@ class BillEndpointTest {
             api.monthlyBills(credentials, listOf(YearMonth.of(2026, 9))).successOrNull(),
         ).single()
 
-        // 主数求和 PretaxAmount；现金与两种代金券字段分列（ADR 0017）。
+        // 主数求和 PretaxAmount；现金与代金券分列，代金券只认 DeductedByCashCoupons（ADR 0017）。
         assertEquals(BigDecimal("123.95"), bill.pretaxAmount)
         assertEquals(BigDecimal("83.45"), bill.cashAmount)
-        assertEquals(BigDecimal("7.00"), bill.voucherAmount)
+        assertEquals(BigDecimal("5.00"), bill.voucherAmount)
         assertEquals("CNY", bill.currency)
         assertEquals("123.95", formatMoney(bill.pretaxAmount))
         assertFalse(bill.includesPrepaidPackage)
@@ -186,17 +187,11 @@ class BillEndpointTest {
     }
 
     @Test
-    fun `超过一页时按 TotalCount 继续翻页并累计`() = runTest {
+    fun `明细多于返回条数也只发一次请求不自行翻页`() = runTest {
         billServer.enqueue(
             jsonResponse(
                 """{"Code":"Success","Success":true,"Data":{"TotalCount":2,
                    "Items":{"Item":[${item(pretax = "10.00")}]}}}""",
-            ),
-        )
-        billServer.enqueue(
-            jsonResponse(
-                """{"Code":"Success","Success":true,"Data":{"TotalCount":2,
-                   "Items":{"Item":[${item(pretax = "20.00")}]}}}""",
             ),
         )
 
@@ -204,12 +199,10 @@ class BillEndpointTest {
             api.monthlyBills(credentials, listOf(YearMonth.of(2026, 6))).successOrNull(),
         ).single()
 
-        assertEquals(BigDecimal("30.00"), bill.pretaxAmount)
-        assertEquals(2, billServer.requestCount)
-        val secondPage = requireNotNull(billServer.takeRequest().requestUrl).queryParameter("PageNum")
-        assertEquals("1", secondPage)
-        val lastPage = requireNotNull(billServer.takeRequest().requestUrl).queryParameter("PageNum")
-        assertEquals("2", lastPage)
+        // 不循环 PageNum：账期金额只由这一次响应里的明细构成。
+        assertEquals(BigDecimal("10.00"), bill.pretaxAmount)
+        assertEquals(1, billServer.requestCount)
+        assertNull(requireNotNull(billServer.takeRequest().requestUrl).queryParameter("PageNum"))
     }
 
     @Test

@@ -29,4 +29,28 @@ class FailureTextTest {
         assertTrue(hints.getValue(ApiFailureKind.PERMISSION_DENIED).contains("权限"))
         assertTrue(hints.getValue(ApiFailureKind.NETWORK).contains("网络"))
     }
+
+    @Test
+    fun `花费页只有权限类改称费用权限`() {
+        assertEquals("费用权限未开启", ApiFailureKind.PERMISSION_DENIED.spendLabel())
+        assertEquals(
+            listOf("凭证失效", "网络错误"),
+            listOf(
+                ApiFailureKind.CREDENTIAL_INVALID.spendLabel(),
+                ApiFailureKind.NETWORK.spendLabel(),
+            ),
+        )
+    }
+
+    @Test
+    fun `花费页提示同样每类一句且带旧账单时说明数据时间`() {
+        val hints = ApiFailureKind.entries.associateWith { it.spendActionHint(cachedAtHourMinute = null) }
+
+        hints.values.forEach { hint -> assertTrue(hint.isNotBlank()) }
+        assertEquals(ApiFailureKind.entries.size, hints.values.toSet().size)
+
+        val withCache = ApiFailureKind.NETWORK.spendActionHint(cachedAtHourMinute = "10:30")
+        assertTrue(withCache.contains("10:30"))
+        assertTrue(withCache != ApiFailureKind.NETWORK.spendActionHint(cachedAtHourMinute = null))
+    }
 }

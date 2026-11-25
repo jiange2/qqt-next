@@ -104,14 +104,6 @@ class InMemoryAccountStore(
     override suspend fun snapshot(accountId: String, module: SnapshotModule): AccountSnapshot? =
         synchronized(lock) { snapshotsByAccountAndModule[accountId to module] }
 
-    override suspend fun clearSnapshots(accountId: String) {
-        synchronized(lock) {
-            SnapshotModule.entries.forEach { module ->
-                snapshotsByAccountAndModule.remove(accountId to module)
-            }
-        }
-    }
-
     override suspend fun setRefreshIntervalMinutes(minutes: Int) {
         refreshIntervalState.value = minutes
     }

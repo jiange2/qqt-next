@@ -171,15 +171,6 @@ class DataStoreAccountStore(
         )
     }
 
-    override suspend fun clearSnapshots(accountId: String) {
-        dataStore.edit { preferences ->
-            SnapshotModule.entries.forEach { module ->
-                preferences.remove(snapshotPayloadKey(accountId, module))
-                preferences.remove(snapshotFetchedAtKey(accountId, module))
-            }
-        }
-    }
-
     override suspend fun setRefreshIntervalMinutes(minutes: Int) {
         dataStore.edit { preferences ->
             preferences[REFRESH_INTERVAL_MINUTES] = minutes

@@ -38,13 +38,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
-import com.cdndash.app.domain.BEIJING_ZONE
 import com.cdndash.app.domain.MonthlyBill
+import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatMoney
 import com.cdndash.app.domain.totalBillAmount
-import java.time.Instant
+import com.cdndash.app.ui.dashboard.spendActionHint
+import com.cdndash.app.ui.dashboard.spendLabel
 import java.time.YearMonth
-import java.time.format.DateTimeFormatter
 
 /**
  * 花费页（票据 08）：账号切换 + 近 12 个已出账完整月的柱状图 + 全年合计。
@@ -174,7 +174,7 @@ private fun SpendSummary(uiState: SpendUiState, onRefresh: () -> Unit) {
             )
             uiState.fetchedAtMillis?.let { fetchedAt ->
                 Text(
-                    text = "数据时间 ${formatSnapshotTime(fetchedAt)}",
+                    text = "数据时间 ${formatBeijingHourMinute(fetchedAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -187,7 +187,8 @@ private fun SpendSummary(uiState: SpendUiState, onRefresh: () -> Unit) {
 }
 
 /**
- * 错误归一后的提示：无权限时明确是「费用权限未开启」并说明去哪里补权限；
+ * 错误归一后的提示（文案表在 `ui/dashboard/FailureText.kt`，与看板/资源包共用一套）：
+ * 无权限时明确是「费用权限未开启」并说明去哪里补权限；
  * 网络类失败若已有旧账单，只提示数据时间，图表照常展示。
  */
 @Composable
@@ -197,20 +198,10 @@ private fun SpendFailureNotice(
     fetchedAtMillis: Long?,
     onRefresh: () -> Unit,
 ) {
-    val (title, body) = when (failure) {
-        ApiFailureKind.PERMISSION_DENIED -> "费用权限未开启" to
-            "该账号的只读用户缺少 bss:QueryAccountBill 权限。在 RAM 控制台补充后点「刷新」；" +
-            "该账号的流量与资源包视图不受影响，其他账号也照常展示。"
-
-        ApiFailureKind.CREDENTIAL_INVALID -> "凭证失效" to
-            "该账号的 AccessKey 可能已失效或签名不匹配，去设置更新密钥后重试；其他账号不受影响。"
-
-        ApiFailureKind.NETWORK -> "网络错误" to if (hasBills) {
-            "刷新失败，下面显示上次成功获取的账单" +
-                (fetchedAtMillis?.let { "（数据时间 ${formatSnapshotTime(it)}）" } ?: "") + "。"
-        } else {
-            "请检查网络后点「刷新」重试。"
-        }
+    val cachedAtHourMinute = if (hasBills) {
+        fetchedAtMillis?.let { formatBeijingHourMinute(it) }
+    } else {
+        null
     }
     Surface(
         color = MaterialTheme.colorScheme.errorContainer,
@@ -219,12 +210,12 @@ private fun SpendFailureNotice(
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                text = title,
+                text = failure.spendLabel(),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
             Text(
-                text = body,
+                text = failure.spendActionHint(cachedAtHourMinute),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer,
             )
@@ -376,9 +367,3 @@ private fun SpendEmptyState(hasAnyAccount: Boolean) {
         )
     }
 }
-
-private val SNAPSHOT_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
-
-/** 快照抓取时间按北京时间展示（与日界同一时区，不随设备时区变化）。 */
-private fun formatSnapshotTime(epochMillis: Long): String =
-    SNAPSHOT_TIME_FORMAT.format(Instant.ofEpochMilli(epochMillis).atZone(BEIJING_ZONE))

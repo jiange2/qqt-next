@@ -56,7 +56,7 @@ class PackageEndpointTest {
         val url = requireNotNull(request.requestUrl)
         assertEquals("GET", request.method)
         assertEquals("DescribeCdnUserResourcePackage", url.queryParameter("Action"))
-        assertEquals("2017-11-10", url.queryParameter("Version"))
+        assertEquals("2018-05-10", url.queryParameter("Version"))
         assertEquals("JSON", url.queryParameter("Format"))
         // 不传 Status：默认只回 valid，会把已耗尽/已关闭的包藏起来，余量视图要全部列出。
         assertNull(url.queryParameter("Status"))

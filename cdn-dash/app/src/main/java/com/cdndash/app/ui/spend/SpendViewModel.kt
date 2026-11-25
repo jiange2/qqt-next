@@ -10,6 +10,7 @@ import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
 import com.cdndash.app.data.aliyun.MonthlyBillSnapshotCodec
+import com.cdndash.app.data.aliyun.SnapshotStore
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
 import com.cdndash.app.domain.MonthlyBill
@@ -53,8 +54,8 @@ data class SpendUiState(
  * 花费页 ViewModel：按需加载 + 24 小时快照缓存（ADR 0017、User Story 32）。
  *
  * - 只有进入花费页（实例化本类）才可能请求网络，不参与首屏请求路径；
- * - 选中账号先读 [SnapshotModule.MONTHLY_BILL] 快照，账期窗口未变且 24 小时内直接展示，
- *   不重复请求；过期、跨月或手动刷新才重取；
+ * - 选中账号先读 [SnapshotModule.MONTHLY_BILL] 快照（经 [SnapshotStore]，与看板同一套读写），
+ *   账期窗口未变且 24 小时内直接展示，不重复请求；过期、跨月或手动刷新才重取；
  * - 账号间并发受 [MAX_CONCURRENT_ACCOUNT_BILL_REQUESTS] 限制，账号内由
  *   `BillEndpoint` 逐月串行（每账号 12 次），避免多账号同时打满配额；
  * - 单账号失败只写回该账号状态，切换其他账号照常展示（User Story 28）。
@@ -76,6 +77,7 @@ class SpendViewModel(
     private val accountStates = MutableStateFlow<Map<String, AccountBills>>(emptyMap())
     private val fetchJobs = mutableMapOf<String, Job>()
     private val accountConcurrency = Semaphore(MAX_CONCURRENT_ACCOUNT_BILL_REQUESTS)
+    private val snapshots = SnapshotStore(accountStore)
 
     val uiState: StateFlow<SpendUiState> =
         combine(accountStore.accounts, selectedAccountId, accountStates) { all, selectedId, states ->
@@ -139,15 +141,13 @@ class SpendViewModel(
         if (fetchJobs[account.id]?.isActive == true) return
 
         val expectedMonths = recentBillingMonths(now())
-        val snapshot = try {
-            accountStore.snapshot(account.id, SnapshotModule.MONTHLY_BILL)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            null
-        }
-        val cachedBills = snapshot?.payloadJson?.let(MonthlyBillSnapshotCodec::decode)
-        val cachedFetchedAt = snapshot?.fetchedAtMillis
+        val cachedSnapshot = snapshots.load(
+            accountId = account.id,
+            module = SnapshotModule.MONTHLY_BILL,
+            decode = MonthlyBillSnapshotCodec::decode,
+        )
+        val cachedBills = cachedSnapshot?.value
+        val cachedFetchedAt = cachedSnapshot?.fetchedAtMillis
         if (cachedBills != null && isBillCacheUsable(
                 cachedMonths = cachedBills.map { it.month },
                 expectedMonths = expectedMonths,
@@ -193,14 +193,13 @@ class SpendViewModel(
             result.fold(
                 onSuccess = { bills ->
                     val fetchedAtMillis = now().toEpochMilli()
-                    runCatching {
-                        accountStore.saveSnapshot(
-                            accountId = account.id,
-                            module = SnapshotModule.MONTHLY_BILL,
-                            payloadJson = MonthlyBillSnapshotCodec.encode(bills),
-                            fetchedAtMillis = fetchedAtMillis,
-                        )
-                    }
+                    // 快照读写统一走 SnapshotStore（写盘失败不影响本次展示）。
+                    snapshots.save(
+                        accountId = account.id,
+                        module = SnapshotModule.MONTHLY_BILL,
+                        payloadJson = MonthlyBillSnapshotCodec.encode(bills),
+                        fetchedAtMillis = fetchedAtMillis,
+                    )
                     updateState(account.id) {
                         it.copy(
                             bills = bills,

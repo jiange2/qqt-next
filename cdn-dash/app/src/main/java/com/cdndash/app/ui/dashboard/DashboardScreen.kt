@@ -49,9 +49,11 @@ import com.cdndash.app.ui.packages.PackageSummarySection
  * 并接通打开 / 下拉 / 前台定时的刷新编排。
  *
  * 票据 07：卡片错误分「凭证失效 / 权限不足 / 网络错误」并各给一句可操作提示；
- * 请求失败且回落到快照时，今日累计下方标「数据时间 HH:mm（离线）」。
+ * 请求失败且回落到快照时，今日累计下方标「数据时间 HH:mm（离线）」；
+ * 资源包模块失败回落快照时，摘要同样标出快照抓取时间。
  *
- * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
+ * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）；
+ * 定时只更新今日累计（7 天 1 小时节流、资源包不随定时取，见 ViewModel）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -219,6 +221,7 @@ private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
                 failure = state.packageFailure,
                 isRefreshing = state.isRefreshing,
                 modifier = Modifier.fillMaxWidth(),
+                snapshotFetchedAtMillis = state.packageSnapshotFetchedAtMillis,
             )
             // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
             state.failure?.let { failure ->

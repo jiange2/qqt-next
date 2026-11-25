@@ -47,3 +47,22 @@ fun formatBeijingHourMinute(instant: Instant): String =
  */
 fun formatBeijingHourMinute(epochMillis: Long): String =
     formatBeijingHourMinute(Instant.ofEpochMilli(epochMillis))
+
+/**
+ * 已结算 7 天的刷新节流：前台定时每 5 分钟只更新今日累计，7 天最多每小时取一次
+ * （spec「冷启动请求量」：每账号首屏 2 次 = 今日 5 分钟 + 7 天 1 小时）。
+ */
+const val WEEK_REFRESH_INTERVAL_MILLIS: Long = 3_600_000L
+
+/**
+ * 定时刷新时是否该重取 7 天（纯函数，spec「纯函数」）。
+ *
+ * @param lastFetchedAtMillis 该账号上次成功取到 7 天的时刻；从未成功时为 null（视为到期）。
+ * @param nowMillis 本次定时刷新的时刻。
+ * @return 距上次成功已满 [intervalMillis] 或从未成功过时返回 true。
+ */
+fun isWeekRefreshDue(
+    lastFetchedAtMillis: Long?,
+    nowMillis: Long,
+    intervalMillis: Long = WEEK_REFRESH_INTERVAL_MILLIS,
+): Boolean = lastFetchedAtMillis == null || nowMillis - lastFetchedAtMillis >= intervalMillis

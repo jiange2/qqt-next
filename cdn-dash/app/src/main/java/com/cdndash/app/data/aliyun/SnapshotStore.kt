@@ -27,7 +27,7 @@ data class SnapshotValue<T>(
  * - 读失败/损坏返回 null 而不是抛出，调用方据此展示错误态。
  * - 各模块互相独立：[SnapshotModule] 决定键，一个模块取数失败不影响其他模块的快照。
  *
- * 后续票据（7 天走势、资源包、账单）复用 [load] + 各自的编解码函数即可，不必再加接口。
+ * 今日、已结算 7 天、资源包、账期账单都已复用 [load] + 各自的编解码函数（见 `*SnapshotCodec`）。
  */
 class SnapshotStore(private val accountStore: AccountStore) {
 

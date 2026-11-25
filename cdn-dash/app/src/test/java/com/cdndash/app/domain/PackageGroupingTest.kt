@@ -203,6 +203,68 @@ class PackageGroupingTest {
         )
     }
 
+    @Test
+    fun `摘要按区域轮流取组且每区至少一行`() {
+        val groups = groupPackages(
+            listOf(
+                packageInfo(instanceId = "cn-late", region = "中国内地", expiresAt = "2027-06-30T08:00:00Z"),
+                packageInfo(instanceId = "cn-soon", region = "中国内地", expiresAt = "2026-12-31T08:00:00Z"),
+                packageInfo(instanceId = "ov-late", region = "海外", expiresAt = "2027-05-31T08:00:00Z"),
+                packageInfo(instanceId = "ov-soon", region = "海外", expiresAt = "2026-11-30T08:00:00Z"),
+            ),
+            now,
+        )
+
+        val shown = selectPackageSummaryGroups(groups, limit = 1)
+
+        // 上限只有 1 行也压不掉区域：中国内地与海外各留一行。
+        assertEquals(2, shown.size)
+        assertEquals(listOf("中国内地", "海外"), shown.map { it.region })
+        assertEquals(
+            listOf(LocalDate.of(2026, 12, 31), LocalDate.of(2026, 11, 30)),
+            shown.map { it.expiresOn },
+        )
+    }
+
+    @Test
+    fun `摘要上限小于区域数时按区域数展示`() {
+        val groups = groupPackages(
+            listOf(
+                packageInfo(instanceId = "cn", region = "中国内地"),
+                packageInfo(instanceId = "ov", region = "海外"),
+                packageInfo(instanceId = "unknown", region = ResourcePackage.UNKNOWN_REGION),
+            ),
+            now,
+        )
+
+        val shown = selectPackageSummaryGroups(groups, limit = 2)
+
+        assertEquals(3, shown.size)
+        assertEquals(
+            listOf("中国内地", "海外", ResourcePackage.UNKNOWN_REGION),
+            shown.map { it.region },
+        )
+    }
+
+    @Test
+    fun `摘要单区域内按到期日只取前几行`() {
+        val groups = groupPackages(
+            listOf(
+                packageInfo(instanceId = "third", expiresAt = "2027-06-30T08:00:00Z"),
+                packageInfo(instanceId = "first", expiresAt = "2026-12-31T08:00:00Z"),
+                packageInfo(instanceId = "second", expiresAt = "2027-01-31T08:00:00Z"),
+            ),
+            now,
+        )
+
+        val shown = selectPackageSummaryGroups(groups, limit = 2)
+
+        assertEquals(
+            listOf(LocalDate.of(2026, 12, 31), LocalDate.of(2027, 1, 31)),
+            shown.map { it.expiresOn },
+        )
+    }
+
     private fun packageInfo(
         instanceId: String,
         commodityCode: String = ResourcePackage.CDN_FLOW_PACKAGE_COMMODITY_CODE,

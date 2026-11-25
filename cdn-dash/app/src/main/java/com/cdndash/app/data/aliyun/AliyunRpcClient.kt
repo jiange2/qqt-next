@@ -225,22 +225,23 @@ class AliyunRpcClient(
 /**
  * 错误码归一（spec「错误归一」）：只在这里做一次，端点与 UI 都不再关心错误码。
  *
- * - 鉴权类：`InvalidAccessKeyId*`、`SignatureDoesNotMatch`、`Forbidden.RAM`、`InvalidSecurityToken*`
+ * - 鉴权类：`InvalidAccessKeyId*`、`SignatureDoesNotMatch`、`InvalidSecurityToken*`
  *   → [ApiFailureKind.CREDENTIAL_INVALID]（GLOSSARY「凭证失效」）。
- * - 权限类：`UnauthorizedOperation`、`NoPermission*`、BSS 的 `NotAuthorized`、其他 `Forbidden.*`
+ * - 权限类：`UnauthorizedOperation`、`NoPermission*`、BSS 的 `NotAuthorized`、
+ *   **`Forbidden.RAM`**（RAM 用户对该接口无授权）与其他 `Forbidden.*`
  *   → [ApiFailureKind.PERMISSION_DENIED]。
  * - 其余（含 `Throttling` 重试耗尽、未知业务码）→ [ApiFailureKind.NETWORK]。
  */
 internal fun classifyFailure(code: String): ApiFailureKind = when {
     code == "SignatureDoesNotMatch" ||
         code.startsWith("InvalidAccessKeyId") ||
-        code.equals("Forbidden.RAM", ignoreCase = true) ||
         code.startsWith("InvalidSecurityToken") -> ApiFailureKind.CREDENTIAL_INVALID
 
     code == "UnauthorizedOperation" ||
         code.startsWith("NoPermission") ||
         // 费用中心（BSS）缺少 bss:QueryAccountBill 时返回 NotAuthorized。
         code.equals("NotAuthorized", ignoreCase = true) ||
+        // Forbidden.*（含 Forbidden.RAM）表示 RAM 主体缺少该接口授权，属权限类而非密钥失效。
         code.startsWith("Forbidden") -> ApiFailureKind.PERMISSION_DENIED
 
     else -> ApiFailureKind.NETWORK

@@ -105,20 +105,6 @@ class AccountStoreTest {
     }
 
     @Test
-    fun `清除快照只影响目标账号`() = runTest {
-        val store = InMemoryAccountStore()
-        val account = store.addAccount("A", "AK-A", "SK-A")
-        store.saveSnapshot(account.id, SnapshotModule.WEEK_TREND, "{}", 10L)
-        val other = store.addAccount("B", "AK-B", "SK-B")
-        store.saveSnapshot(other.id, SnapshotModule.WEEK_TREND, "{}", 20L)
-
-        store.clearSnapshots(account.id)
-
-        assertNull(store.snapshot(account.id, SnapshotModule.WEEK_TREND))
-        assertEquals(20L, store.snapshot(other.id, SnapshotModule.WEEK_TREND)?.fetchedAtMillis)
-    }
-
-    @Test
     fun `重排后顺序保持且新账号排在末尾`() = runTest {
         val store = InMemoryAccountStore()
         val first = store.addAccount("A", "AK-A", "SK-A")

@@ -57,9 +57,6 @@ interface AccountStore {
     /** 读取某账号某模块的快照；没有成功记录时返回 null。 */
     suspend fun snapshot(accountId: String, module: SnapshotModule): AccountSnapshot?
 
-    /** 清除某账号的全部模块快照（删除账号时也会调用）。 */
-    suspend fun clearSnapshots(accountId: String)
-
     /** 保存刷新间隔；只会由设置页传入允许的选项。 */
     suspend fun setRefreshIntervalMinutes(minutes: Int)
 

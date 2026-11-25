@@ -120,20 +120,20 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         // 定时器是无限循环，不能用 advanceUntilIdle（会一直推进虚拟时间）；
-        // runCurrent 只跑完当前时刻的初始刷新。每账号每轮三条请求（今日累计 + 已结算 7 天 + 资源包）。
+        // runCurrent 只跑完当前时刻的初始刷新。冷启动每账号三条请求（今日累计 + 已结算 7 天 + 资源包）。
         runCurrent()
         assertEquals(3, server.requestCount)
 
-        // 默认刷新间隔 5 分钟：虚拟时间前进 5 分钟后应再刷新一轮。
+        // 默认刷新间隔 5 分钟：定时轮只补今日累计一条（7 天未满 1 小时、资源包不进定时）。
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(6, server.requestCount)
+        assertEquals(4, server.requestCount)
 
         // 退到后台（ON_STOP）后定时器取消，再前进 30 分钟也不请求。
         viewModel.onForegroundStop()
         advanceTimeBy(30 * 60_000L)
         runCurrent()
-        assertEquals(6, server.requestCount)
+        assertEquals(4, server.requestCount)
     }
 
     @Test
@@ -146,18 +146,55 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        // 一次刷新 = 今日累计 + 已结算 7 天 + 资源包 3 次请求。
+        // 冷启动一次全量刷新 = 今日累计 + 已结算 7 天 + 资源包 3 次请求。
         assertEquals(3, server.requestCount)
 
         advanceTimeBy(5 * 60_000L)
         runCurrent()
         assertEquals(3, server.requestCount)
 
+        // 到 15 分钟才补一轮今日累计（只 1 次请求）。
         advanceTimeBy(10 * 60_000L)
+        runCurrent()
+        assertEquals(4, server.requestCount)
+
+        viewModel.onForegroundStop()
+    }
+
+    @Test
+    fun `前台定时只取今日，7 天满一小时才重取，资源包不重取`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(200).setBody(TRAFFIC_RESPONSE) }
+        store.addAccount("账号", "ak-ok", "secret")
+        store.setRefreshIntervalMinutes(15)
+        // 时间源跟随虚拟时钟：定时轮推进多久，now() 就前进多久，节流判定才有意义。
+        val viewModel = newViewModel { fixedNow.plusMillis(testScheduler.currentTime) }
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.onForegroundStart()
+        runCurrent()
+        assertEquals(3, server.requestCount)
+
+        // 15/30/45 分钟三轮：每轮只补今日累计，7 天未满一小时、资源包不进定时。
+        advanceTimeBy(45 * 60_000L)
         runCurrent()
         assertEquals(6, server.requestCount)
 
+        // 到 60 分钟：今日 + 已结算 7 天各一次，资源包仍不重取。
+        advanceTimeBy(15 * 60_000L)
+        runCurrent()
+        assertEquals(8, server.requestCount)
+
         viewModel.onForegroundStop()
+        val requests = (1..server.requestCount).map {
+            val url = requireNotNull(server.takeRequest().requestUrl)
+            url.queryParameter("Action") to url.queryParameter("Interval")
+        }
+        // 资源包只在冷启动取一次：定时轮不再打资源包接口。
+        assertEquals(1, requests.count { it.first == "DescribeCdnUserResourcePackage" })
+        // 7 天（Interval 3600）只在冷启动与满一小时后各取一次。
+        assertEquals(2, requests.count { it.second == "3600" })
+        // 今日累计（Interval 300）：冷启动 1 次 + 15/30/45/60 分钟 4 轮。
+        assertEquals(5, requests.count { it.second == "300" })
     }
 
     @Test
@@ -299,7 +336,7 @@ class DashboardViewModelTest {
         assertEquals(1_048_576L, TodayTrafficSnapshotCodec.decode(snapshot!!.payloadJson)?.bytes)
     }
 
-    private fun newViewModel(): DashboardViewModel {
+    private fun newViewModel(now: () -> Instant = { fixedNow }): DashboardViewModel {
         val api = AliyunApiImpl(
             cdnRpc = AliyunRpcClient(
                 baseUrl = server.url("/").toString(),
@@ -310,7 +347,7 @@ class DashboardViewModelTest {
         return DashboardViewModel(
             accountStore = store,
             aliyunApi = api,
-            now = { fixedNow },
+            now = now,
         )
     }
 

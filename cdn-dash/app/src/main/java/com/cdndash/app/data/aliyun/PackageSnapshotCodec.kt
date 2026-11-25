@@ -10,8 +10,8 @@ import kotlinx.serialization.json.Json
  * 模块时使用（票据 05）。
  *
  * 存的是接口返回的原始包事实（[ResourcePackage]）而不是已经分好组的视图：
- * 「未生效」的判定依赖当前时刻，余量视图应在展示时用当时的 `now` 重新计算。
- * 展示旧快照属于票据 07；这里只负责写入，读取侧复用 [decode]。
+ * 「未生效」的判定依赖当前时刻，余量视图应在展示时用当时的 `now` 重新计算
+ * （看板与明细页失败回落时都走 [decode] + `groupPackages`）。
  */
 object PackageSnapshotCodec {
 
