@@ -13,8 +13,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CdnDashTheme {
+                val app = application as CdnDashApplication
                 CdnDashApp(
-                    accountStore = (application as CdnDashApplication).accountStore,
+                    accountStore = app.accountStore,
+                    aliyunApi = app.aliyunApi,
                 )
             }
         }

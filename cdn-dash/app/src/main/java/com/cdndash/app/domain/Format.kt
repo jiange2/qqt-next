@@ -24,6 +24,11 @@ fun formatBytes(bytes: Long): String {
 /**
  * 金额保留两位小数（spec「工程与依赖」），四舍五入，不带货币符号与千分位，
  * 由界面决定前缀（如「¥」）。
+ *
+ * 领域金额一律是 [BigDecimal]（spec：金额不用 Double）；Double 重载只为兼容既有调用。
  */
-fun formatMoney(amount: Double): String =
-    BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP).toPlainString()
+fun formatMoney(amount: BigDecimal): String =
+    amount.setScale(2, RoundingMode.HALF_UP).toPlainString()
+
+/** Double 入参的兼容入口，转 BigDecimal 后再格式化，避免二进制浮点误差。 */
+fun formatMoney(amount: Double): String = formatMoney(BigDecimal.valueOf(amount))

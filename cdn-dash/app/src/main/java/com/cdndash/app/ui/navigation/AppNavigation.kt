@@ -25,6 +25,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.cdndash.app.data.AccountStore
+import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.ui.dashboard.DashboardScreen
 import com.cdndash.app.ui.settings.SettingsScreen
 import com.cdndash.app.ui.spend.SpendScreen
@@ -42,7 +43,7 @@ enum class TopLevelDestination(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CdnDashApp(accountStore: AccountStore) {
+fun CdnDashApp(accountStore: AccountStore, aliyunApi: AliyunApi) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
@@ -79,6 +80,7 @@ fun CdnDashApp(accountStore: AccountStore) {
             composable(TopLevelDestination.Dashboard.route) {
                 DashboardScreen(
                     accountStore = accountStore,
+                    aliyunApi = aliyunApi,
                     onOpenSettings = {
                         navController.navigateToTopLevel(TopLevelDestination.Settings)
                     },
