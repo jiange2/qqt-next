@@ -1,5 +1,6 @@
 package com.cdndash.app.ui.dashboard
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,12 +36,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
+import com.cdndash.app.domain.Account
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
+import com.cdndash.app.ui.packages.PackageSummarySection
 
 /**
- * 看板页。票据 03 显示每张账号卡片的今日累计与「截至 HH:mm」（北京时间、未结算），
- * 并接通打开 / 下拉 / 前台定时的刷新编排；7 天走势与资源包余量仍为占位，由后续票据填充。
+ * 看板页。票据 03 显示每张账号卡片的今日累计与「截至 HH:mm」（北京时间、未结算）；
+ * 票据 05 加上按区域展示的资源包余量摘要，点卡片进入该账号的明细页。
+ * 7 天走势仍为占位，由后续票据填充。
  *
  * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
  */
@@ -50,6 +54,7 @@ fun DashboardScreen(
     accountStore: AccountStore,
     aliyunApi: AliyunApi,
     onOpenSettings: () -> Unit,
+    onOpenPackages: (Account) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = viewModel(
         factory = DashboardViewModel.factory(accountStore, aliyunApi),
@@ -92,7 +97,10 @@ fun DashboardScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(uiState.accounts, key = { it.account.id }) { state ->
-                    AccountCard(state = state)
+                    AccountCard(
+                        state = state,
+                        onClick = { onOpenPackages(state.account) },
+                    )
                 }
             }
         }
@@ -100,8 +108,12 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun AccountCard(state: AccountTodayState) {
-    Card(Modifier.fillMaxWidth()) {
+private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -129,8 +141,10 @@ private fun AccountCard(state: AccountTodayState) {
                     modifier = Modifier.weight(1f),
                 )
             }
-            MetricPlaceholder(
-                label = "资源包余量",
+            PackageSummarySection(
+                groups = state.packageGroups,
+                failure = state.packageFailure,
+                isRefreshing = state.isRefreshing,
                 modifier = Modifier.fillMaxWidth(),
             )
         }

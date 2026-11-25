@@ -3,11 +3,13 @@ package com.cdndash.app.ui.navigation
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -20,13 +22,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.ui.dashboard.DashboardScreen
+import com.cdndash.app.ui.packages.PackageDetailScreen
 import com.cdndash.app.ui.settings.SettingsScreen
 import com.cdndash.app.ui.spend.SpendScreen
 
@@ -50,11 +55,31 @@ fun CdnDashApp(accountStore: AccountStore, aliyunApi: AliyunApi) {
     val selectedDestination = TopLevelDestination.entries.firstOrNull { candidate ->
         currentDestination?.hierarchy?.any { it.route == candidate.route } == true
     }
+    // 资源包明细是看板的下钻页，不属于底部导航的三个顶层；顶栏换成返回 + 固定标题。
+    val isPackageDetail = currentDestination?.route == PACKAGE_DETAIL_ROUTE
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(selectedDestination?.label ?: TopLevelDestination.Dashboard.label) },
+                title = {
+                    Text(
+                        if (isPackageDetail) {
+                            "资源包明细"
+                        } else {
+                            selectedDestination?.label ?: TopLevelDestination.Dashboard.label
+                        },
+                    )
+                },
+                navigationIcon = {
+                    if (isPackageDetail) {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "返回看板",
+                            )
+                        }
+                    }
+                },
             )
         },
         bottomBar = {
@@ -84,6 +109,21 @@ fun CdnDashApp(accountStore: AccountStore, aliyunApi: AliyunApi) {
                     onOpenSettings = {
                         navController.navigateToTopLevel(TopLevelDestination.Settings)
                     },
+                    onOpenPackages = { account ->
+                        navController.navigate(packageDetailRoute(account.id))
+                    },
+                )
+            }
+            composable(
+                route = PACKAGE_DETAIL_ROUTE,
+                arguments = listOf(
+                    navArgument(PACKAGE_DETAIL_ACCOUNT_ARG) { type = NavType.StringType },
+                ),
+            ) { entry ->
+                PackageDetailScreen(
+                    accountStore = accountStore,
+                    aliyunApi = aliyunApi,
+                    accountId = entry.arguments?.getString(PACKAGE_DETAIL_ACCOUNT_ARG).orEmpty(),
                 )
             }
             composable(TopLevelDestination.Spend.route) {

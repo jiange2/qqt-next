@@ -9,11 +9,16 @@ import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
+import com.cdndash.app.data.aliyun.PackageSnapshotCodec
 import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
+import com.cdndash.app.domain.AccountCredentials
+import com.cdndash.app.domain.PackageGroup
+import com.cdndash.app.domain.ResourcePackage
 import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
+import com.cdndash.app.domain.groupPackages
 import com.cdndash.app.domain.visibleAccounts
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
@@ -37,6 +42,10 @@ data class AccountTodayState(
     val account: Account,
     val today: TodayTraffic? = null,
     val failure: ApiFailureKind? = null,
+    /** 资源包余量视图；null 表示本次还没取到（区别于「取到了但一个包都没有」的空列表）。 */
+    val packageGroups: List<PackageGroup>? = null,
+    /** 该账号资源包取数失败；与今日累计的 [failure] 分开，互不覆盖。 */
+    val packageFailure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
 )
 
@@ -57,8 +66,9 @@ data class DashboardUiState(
  * - 退到后台（`ON_STOP`，即离开 `Lifecycle.State.STARTED`）→ 取消定时器，不再请求。
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
- * 账号内串行（先读凭据再请求），账号间并发数有上限，避免账号多时打满接口配额。
- * 成功取数写入 [SnapshotModule.TODAY_TOTAL] 快照（带抓取时间）；展示快照属于票据 07。
+ * 账号内先取今日累计、再取资源包，两者各自落状态；账号间并发数有上限，避免账号多时打满接口配额。
+ * 成功取数写入 [SnapshotModule.TODAY_TOTAL] / [SnapshotModule.PACKAGES] 快照（带抓取时间）；
+ * 展示快照属于票据 07。
  */
 class DashboardViewModel(
     private val accountStore: AccountStore,
@@ -69,6 +79,8 @@ class DashboardViewModel(
     private data class AccountFetch(
         val today: TodayTraffic? = null,
         val failure: ApiFailureKind? = null,
+        val packageGroups: List<PackageGroup>? = null,
+        val packageFailure: ApiFailureKind? = null,
         val isRefreshing: Boolean = false,
     )
 
@@ -85,6 +97,8 @@ class DashboardViewModel(
                         account = account,
                         today = fetch.today,
                         failure = fetch.failure,
+                        packageGroups = fetch.packageGroups,
+                        packageFailure = fetch.packageFailure,
                         isRefreshing = fetch.isRefreshing,
                     )
                 },
@@ -144,14 +158,36 @@ class DashboardViewModel(
     private suspend fun refreshAccount(account: Account) {
         updateFetch(account.id) { it.copy(isRefreshing = true) }
         val requestedAt = now()
-        val result: ApiResult<TodayTraffic> = try {
-            val credentials = accountStore.credentials(account.id)
-            if (credentials == null) {
-                // 解密失败或账号被删：按凭证失效降级，不影响其他账号。
-                ApiResult.Failure(ApiFailureKind.CREDENTIAL_INVALID)
-            } else {
-                aliyunApi.todayTraffic(credentials, requestedAt)
+        val credentials = try {
+            accountStore.credentials(account.id)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            null
+        }
+        if (credentials == null) {
+            // 解密失败或账号被删：按凭证失效降级，不影响其他账号；今日与资源包一起标记。
+            updateFetch(account.id) {
+                it.copy(
+                    failure = ApiFailureKind.CREDENTIAL_INVALID,
+                    packageFailure = ApiFailureKind.CREDENTIAL_INVALID,
+                    isRefreshing = false,
+                )
             }
+            return
+        }
+        refreshToday(account, credentials, requestedAt)
+        // 资源包单独取、单独落状态：包失败不覆盖今日累计，今日失败也不覆盖包（User Story 26）。
+        refreshPackages(account, credentials, requestedAt)
+    }
+
+    private suspend fun refreshToday(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<TodayTraffic> = try {
+            aliyunApi.todayTraffic(credentials, requestedAt)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
@@ -169,13 +205,54 @@ class DashboardViewModel(
                     )
                 }
                 updateFetch(account.id) {
-                    it.copy(today = today, failure = null, isRefreshing = false)
+                    it.copy(today = today, failure = null)
                 }
             },
             onFailure = { failure ->
                 // 失败不清除旧数据（票据 07 的「失败保留旧值」从这里起步）。
                 updateFetch(account.id) {
-                    it.copy(failure = failure.kind, isRefreshing = false)
+                    it.copy(failure = failure.kind)
+                }
+            },
+        )
+    }
+
+    /**
+     * 取资源包并写成余量视图；成功写 [SnapshotModule.PACKAGES] 快照（展示旧快照属票据 07）。
+     * 分组用本次请求时刻判定「未生效」，因此每次刷新都会重新分组。
+     */
+    private suspend fun refreshPackages(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<List<ResourcePackage>> = try {
+            aliyunApi.resourcePackages(credentials, requestedAt)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            ApiResult.Failure(ApiFailureKind.NETWORK)
+        }
+
+        result.fold(
+            onSuccess = { packages ->
+                runCatching {
+                    accountStore.saveSnapshot(
+                        accountId = account.id,
+                        module = SnapshotModule.PACKAGES,
+                        payloadJson = PackageSnapshotCodec.encode(packages),
+                        fetchedAtMillis = now().toEpochMilli(),
+                    )
+                }
+                val groups = groupPackages(packages, requestedAt)
+                updateFetch(account.id) {
+                    it.copy(packageGroups = groups, packageFailure = null, isRefreshing = false)
+                }
+            },
+            onFailure = { failure ->
+                // 失败保留上次的余量视图，只标记本模块错误；账号级刷新结束由这里收尾。
+                updateFetch(account.id) {
+                    it.copy(packageFailure = failure.kind, isRefreshing = false)
                 }
             },
         )

@@ -24,4 +24,12 @@ data class ResourcePackage(
     val remainingBytes: Long,
     val effectiveAt: Instant,
     val expiresAt: Instant,
-)
+) {
+    companion object {
+        /** CDN 流量包的商品码（spec「资源包余量」）；全站加速、OSS 等其他商品码一律排除。 */
+        const val CDN_FLOW_PACKAGE_COMMODITY_CODE: String = "cdnflowbag"
+
+        /** 接口没有返回区域时的兜底文案：宁可显示未知，也不把不同区域混成一组。 */
+        const val UNKNOWN_REGION: String = "未知区域"
+    }
+}
