@@ -31,6 +31,13 @@ class SettingsViewModel(private val accountStore: AccountStore) : ViewModel() {
         initialValue = AccountStore.DEFAULT_REFRESH_INTERVAL_MINUTES,
     )
 
+    /** 生物识别解锁开关；默认关闭。是否展示开关由设备可用性决定（见设置页）。 */
+    val biometricEnabled: StateFlow<Boolean> = accountStore.biometricEnabled.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = AccountStore.DEFAULT_BIOMETRIC_ENABLED,
+    )
+
     private val _formError = MutableStateFlow<String?>(null)
     val formError: StateFlow<String?> = _formError.asStateFlow()
 
@@ -85,6 +92,10 @@ class SettingsViewModel(private val accountStore: AccountStore) : ViewModel() {
 
     fun setRefreshInterval(minutes: Int) {
         viewModelScope.launch { accountStore.setRefreshIntervalMinutes(minutes) }
+    }
+
+    fun setBiometricEnabled(enabled: Boolean) {
+        viewModelScope.launch { accountStore.setBiometricEnabled(enabled) }
     }
 
     companion object {

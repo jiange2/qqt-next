@@ -63,6 +63,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.biometric)
+    // BiometricPrompt 要求宿主是 FragmentActivity（票据 09）
+    implementation(libs.androidx.fragment)
     implementation(libs.kotlinx.coroutines.android)
 
     testImplementation(libs.junit)
