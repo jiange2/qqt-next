@@ -5,8 +5,12 @@ import com.cdndash.app.data.aliyun.AliyunApiImpl
 import com.cdndash.app.data.aliyun.AliyunRpcClient
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.SnapshotModule
+import com.cdndash.app.domain.TodayTraffic
 import java.time.Instant
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
@@ -32,6 +36,9 @@ import org.junit.Test
 /**
  * 看板刷新编排的 JVM 测试（票据 03）：账号间错误隔离、成功写快照、
  * 「打开 / 前台定时 / 退后台停止」三种触发。HTTP 仍走 MockWebServer，测试不碰 Android 框架。
+ *
+ * 票据 07 增补：失败回落到快照并带抓取时间、刷新失败保留已展示数据、无快照时仍是错误态、
+ * 成功后覆盖快照并清除离线标注。
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DashboardViewModelTest {
@@ -151,6 +158,145 @@ class DashboardViewModelTest {
         assertEquals(6, server.requestCount)
 
         viewModel.onForegroundStop()
+    }
+
+    @Test
+    fun `请求失败时回落到上次快照并给出抓取时间`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(500) }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val snapshotAt = fixedNow.minusSeconds(3_600L).toEpochMilli()
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.TODAY_TOTAL,
+            payloadJson = TodayTrafficSnapshotCodec.encode(
+                TodayTraffic(bytes = 777L, dataThrough = fixedNow.minusSeconds(7_200L)),
+            ),
+            fetchedAtMillis = snapshotAt,
+        )
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertEquals(777L, state.today?.bytes)
+        assertEquals(snapshotAt, state.snapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, state.failure)
+        // 失败绝不写、不清快照：旧快照的抓取时间与内容原样留着。
+        val snapshot = store.snapshot(account.id, SnapshotModule.TODAY_TOTAL)
+        assertEquals(snapshotAt, snapshot?.fetchedAtMillis)
+        assertEquals(777L, TodayTrafficSnapshotCodec.decode(snapshot!!.payloadJson)?.bytes)
+    }
+
+    @Test
+    fun `7 天请求失败回落到 7 天快照并保留今日错误`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(500) }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val snapshotAt = fixedNow.minusSeconds(3_600L).toEpochMilli()
+        val days = listOf(
+            DayTrafficPoint(date = LocalDate.parse("2026-11-19"), bytes = 10L),
+            DayTrafficPoint(date = LocalDate.parse("2026-11-20"), bytes = 20L),
+        )
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.WEEK_TREND,
+            payloadJson = WeekTrafficSnapshotCodec.encode(days),
+            fetchedAtMillis = snapshotAt,
+        )
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertEquals(days, state.week)
+        assertEquals(snapshotAt, state.weekSnapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, state.failure)
+        // 7 天模块的旧快照同样不被失败覆盖。
+        assertEquals(
+            snapshotAt,
+            store.snapshot(account.id, SnapshotModule.WEEK_TREND)?.fetchedAtMillis,
+        )
+    }
+
+    @Test
+    fun `刷新失败保留已展示的数据与旧快照`() = runTest(dispatcher) {
+        var failing = false
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                if (failing) {
+                    MockResponse().setResponseCode(500)
+                } else {
+                    MockResponse().setResponseCode(200).setBody(TRAFFIC_RESPONSE)
+                }
+        }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+        assertEquals(1_048_576L, viewModel.uiState.value.accounts.single().today?.bytes)
+
+        failing = true
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertEquals(1_048_576L, state.today?.bytes)
+        assertEquals(fixedNow.toEpochMilli(), state.snapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, state.failure)
+        assertEquals(false, state.isRefreshing)
+        assertEquals(
+            fixedNow.toEpochMilli(),
+            store.snapshot(account.id, SnapshotModule.TODAY_TOTAL)?.fetchedAtMillis,
+        )
+    }
+
+    @Test
+    fun `没有快照时失败不展示数据也不空白成功`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(500) }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertNull(state.today)
+        assertNull(state.snapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, state.failure)
+        assertNull(store.snapshot(account.id, SnapshotModule.TODAY_TOTAL))
+    }
+
+    @Test
+    fun `成功取数后用新数据覆盖快照并清除离线标注`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(200).setBody(TRAFFIC_RESPONSE) }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.TODAY_TOTAL,
+            payloadJson = TodayTrafficSnapshotCodec.encode(
+                TodayTraffic(bytes = 777L, dataThrough = fixedNow.minusSeconds(7_200L)),
+            ),
+            fetchedAtMillis = fixedNow.minusSeconds(3_600L).toEpochMilli(),
+        )
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertEquals(1_048_576L, state.today?.bytes)
+        assertNull(state.snapshotFetchedAtMillis)
+        assertNull(state.failure)
+        val snapshot = store.snapshot(account.id, SnapshotModule.TODAY_TOTAL)
+        assertEquals(fixedNow.toEpochMilli(), snapshot?.fetchedAtMillis)
+        assertEquals(1_048_576L, TodayTrafficSnapshotCodec.decode(snapshot!!.payloadJson)?.bytes)
     }
 
     private fun newViewModel(): DashboardViewModel {

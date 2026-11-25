@@ -20,7 +20,8 @@
 - 卡片摘要 `ui/packages/PackageSummary.kt`：每行带区域名、到期日、剩余/总量，最多 2 组，其余显示「还有 N 组」；未生效组显示「未生效」且剩余按 0 呈现。卡片整卡可点，进入明细页。明细页 `PackageDetailScreen` 改为真列表 + 顶栏返回，区域分区、每行到期日/包数/剩余/总量/未生效标注；失败给重试。
 - 导航：新增 `ui/navigation/PackageRoutes.kt`（`packages/{accountId}` + `packageDetailRoute`），`AppNavigation` 只做最小追加（顶栏在明细页显示返回箭头与固定标题）。
 - `DashboardViewModel`：每次刷新在今日累计之后串行取 `resourcePackages`（账号间仍并发且限 4；spec 规定账号内串行），资源包与今日累计的错误/旧值互不覆盖；成功后写 `SnapshotModule.PACKAGES` 快照，内容为原始包事实（`PackageSnapshotCodec`），「未生效」在展示时按当时时刻重算。展示旧快照属票据 07。
-- 测试（只写未运行）：`PackageGroupingTest`（空列表、合并计数、到期日升序、未生效/可用余量、区域不相加、排除非 cdnflowbag、北京日切分、区域分区排序）、`PackageEndpointTest`（Action/Version/不传 Status、cdnflowbag 过滤、解析、字段缺失、空/缺节点、单对象）、`PackageRefreshTest`（刷新取包并写 PACKAGES 快照、包失败不污染今日与其他账号）。原 `DashboardViewModelTest` 的请求计数从每次刷新 1 改为 2（今日 + 资源包）。
+- 测试（只写未运行）：`PackageGroupingTest`（空列表、合并计数、到期日升序、未生效/可用余量、区域不相加、排除非 cdnflowbag、北京日切分、区域分区排序）、`PackageEndpointTest`（Action/Version/不传 Status、cdnflowbag 过滤、解析、字段缺失、空/缺节点、单对象）、`PackageRefreshTest`（刷新取包并写 PACKAGES 快照、包失败不污染今日与其他账号）。`DashboardViewModelTest` 的请求计数改为每次刷新 3（今日 + 7 天 + 资源包）。
+- 第二次 merge `feat/cdn-dash`（票据 07/08）：与票据 07 的 `SnapshotStore` 合并——今日/7 天沿用其快照回落、「数据时间」与失败收尾，资源包作为账号内最后一步复用 `SnapshotStore` 写 `PACKAGES` 快照并统一结束 `isRefreshing`；卡片同时保留票据 07 的离线标注/错误提示与票据 05 的资源包摘要、点击下钻；删除与 `FailureText.kt` 重复的本地 `label()` 及未使用的 `MetricPlaceholder`。
 - 本机 JDK 8、无 Android SDK 与 gradle：**未编译、未跑测试**；也**未对真实 OpenAPI 验证**（无真实只读 AK）。
 
 ## 人工验收（真机，未执行）

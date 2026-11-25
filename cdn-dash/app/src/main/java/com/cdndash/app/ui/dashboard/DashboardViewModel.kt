@@ -10,7 +10,7 @@ import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
 import com.cdndash.app.data.aliyun.PackageSnapshotCodec
-import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.SnapshotStore
 import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
@@ -58,6 +58,13 @@ data class AccountTodayState(
     val packageGroups: List<PackageGroup>? = null,
     val packageFailure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
+    /**
+     * 非 null 表示 [today] 来自上次成功快照（离线展示），值是快照的抓取时刻（epoch millis）；
+     * 卡片据此标注「数据时间 HH:mm（离线）」。本次实时取数成功时为 null。
+     */
+    val snapshotFetchedAtMillis: Long? = null,
+    /** 同 [snapshotFetchedAtMillis]，对应 [week] 模块；7 天请求失败回落到快照时非 null。 */
+    val weekSnapshotFetchedAtMillis: Long? = null,
 )
 
 /**
@@ -84,8 +91,11 @@ data class DashboardUiState(
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
  * 账号内串行（今日累计 → 已结算 7 天 → 资源包），账号间并发数有上限，避免账号多时打满接口配额。
- * 成功取数分别写入 [SnapshotModule.TODAY_TOTAL]、[SnapshotModule.WEEK_TREND] 与
- * [SnapshotModule.PACKAGES] 快照（带抓取时间）；展示快照属于票据 07。
+ *
+ * 快照与离线（User Stories 31/34，票据 07）：成功取数经 [SnapshotStore] 写今日/7 天/资源包快照（带抓取时间）；
+ * 失败时保留已展示的数据，没有则回落到该模块上次快照，并把抓取时间交给卡片标「数据时间」；
+ * 两者都没有才展示错误态。失败路径不写、不清任何快照。
+ * 资源包快照（票据 05）目前只写；读取并展示旧快照属票据 07 的后续范围。
  */
 class DashboardViewModel(
     private val accountStore: AccountStore,
@@ -100,11 +110,14 @@ class DashboardViewModel(
         val packageGroups: List<PackageGroup>? = null,
         val packageFailure: ApiFailureKind? = null,
         val isRefreshing: Boolean = false,
+        val snapshotFetchedAtMillis: Long? = null,
+        val weekSnapshotFetchedAtMillis: Long? = null,
     )
 
     private val fetches = MutableStateFlow<Map<String, AccountFetch>>(emptyMap())
     private val refreshing = MutableStateFlow(false)
     private val accountConcurrency = Semaphore(MAX_CONCURRENT_ACCOUNT_REQUESTS)
+    private val snapshots = SnapshotStore(accountStore)
 
     val uiState: StateFlow<DashboardUiState> =
         combine(accountStore.accounts, fetches, refreshing) { allAccounts, fetchMap, isRefreshing ->
@@ -119,6 +132,8 @@ class DashboardViewModel(
                         packageGroups = fetch.packageGroups,
                         packageFailure = fetch.packageFailure,
                         isRefreshing = fetch.isRefreshing,
+                        snapshotFetchedAtMillis = fetch.snapshotFetchedAtMillis,
+                        weekSnapshotFetchedAtMillis = fetch.weekSnapshotFetchedAtMillis,
                     )
                 },
                 hasAnyAccount = allAccounts.isNotEmpty(),
@@ -188,6 +203,8 @@ class DashboardViewModel(
 
     private suspend fun refreshAccount(account: Account) {
         updateFetch(account.id) { it.copy(isRefreshing = true) }
+        // 先亮出上次成功快照：弱网/断网时卡片不会从空白开始，后面失败分支再兜一次。
+        showSnapshotIfNothingToShow(account.id)
         val requestedAt = now()
         val credentials = try {
             accountStore.credentials(account.id)
@@ -197,10 +214,11 @@ class DashboardViewModel(
             null
         }
         if (credentials == null) {
-            // 解密失败或账号被删：按凭证失效降级，不影响其他账号；三个模块一起标记。
+            // 解密失败或账号被删：按凭证失效降级，旧数据/快照照留，不影响其他账号。
+            showTodayFailure(account.id, ApiFailureKind.CREDENTIAL_INVALID)
+            // 没有后续步骤了：资源包模块同样标凭证失效，并由这里结束该账号本轮刷新。
             updateFetch(account.id) {
                 it.copy(
-                    failure = ApiFailureKind.CREDENTIAL_INVALID,
                     packageFailure = ApiFailureKind.CREDENTIAL_INVALID,
                     isRefreshing = false,
                 )
@@ -229,30 +247,28 @@ class DashboardViewModel(
 
         result.fold(
             onSuccess = { today ->
-                runCatching {
-                    accountStore.saveSnapshot(
-                        accountId = account.id,
-                        module = SnapshotModule.TODAY_TOTAL,
-                        payloadJson = TodayTrafficSnapshotCodec.encode(today),
-                        fetchedAtMillis = now().toEpochMilli(),
-                    )
-                }
+                // 成功才覆盖快照；写盘失败不影响本次展示（下次离线会旧一些）。
+                snapshots.saveToday(
+                    accountId = account.id,
+                    today = today,
+                    fetchedAtMillis = now().toEpochMilli(),
+                )
                 updateFetch(account.id) {
-                    it.copy(today = today, failure = null)
+                    // 不清 isRefreshing：7 天那一步结束后统一收尾。
+                    it.copy(today = today, failure = null, snapshotFetchedAtMillis = null)
                 }
             },
             onFailure = { failure ->
-                // 失败不清除旧数据（票据 07 的「失败保留旧值」从这里起步）。
-                updateFetch(account.id) {
-                    it.copy(failure = failure.kind)
-                }
+                // 失败绝不清除旧数据与旧快照：优先保留本次已展示的数据，
+                // 没有则回落到快照，两者都没有才是纯错误态（票据 07）。
+                showTodayFailure(account.id, failure.kind)
             },
         )
     }
 
     /**
-     * 已结算 7 天（票据 04）：成功后写 `WEEK_TREND` 快照（展示旧快照属票据 07）。
-     * 失败只记录错误、保留上次成功的 7 天数据，不抹掉已经取回的今日累计。
+     * 已结算 7 天（票据 04）：成功后写 `WEEK_TREND` 快照（带抓取时间）。
+     * 失败保留上次成功的 7 天数据与旧快照，不抹掉已经取回的今日累计。
      */
     private suspend fun refreshWeek(
         account: Account,
@@ -269,29 +285,26 @@ class DashboardViewModel(
 
         result.fold(
             onSuccess = { days ->
-                runCatching {
-                    accountStore.saveSnapshot(
-                        accountId = account.id,
-                        module = SnapshotModule.WEEK_TREND,
-                        payloadJson = WeekTrafficSnapshotCodec.encode(days),
-                        fetchedAtMillis = now().toEpochMilli(),
-                    )
-                }
+                // 成功才覆盖快照；失败分支不写也不清，旧快照留给离线展示。
+                snapshots.save(
+                    accountId = account.id,
+                    module = SnapshotModule.WEEK_TREND,
+                    payloadJson = WeekTrafficSnapshotCodec.encode(days),
+                    fetchedAtMillis = now().toEpochMilli(),
+                )
                 updateFetch(account.id) {
-                    it.copy(week = days)
+                    // 不清 isRefreshing：资源包那一步结束后统一收尾。
+                    it.copy(week = days, weekSnapshotFetchedAtMillis = null)
                 }
             },
             onFailure = { failure ->
-                updateFetch(account.id) {
-                    // 不覆盖今日累计已有的更具体错误；两轮都失败时也会在 7 天这步先落一次。
-                    it.copy(failure = it.failure ?: failure.kind)
-                }
+                showWeekFailure(account.id, failure.kind)
             },
         )
     }
 
     /**
-     * 取资源包并写成余量视图（票据 05）；成功写 [SnapshotModule.PACKAGES] 快照（展示旧快照属票据 07）。
+     * 取资源包并写成余量视图（票据 05）；成功写 [SnapshotModule.PACKAGES] 快照（展示旧快照属票据 07 后续）。
      * 分组用本次请求时刻判定「未生效」，因此每次刷新都会重新分组；账号级 `isRefreshing` 在这里收尾。
      */
     private suspend fun refreshPackages(
@@ -309,14 +322,13 @@ class DashboardViewModel(
 
         result.fold(
             onSuccess = { packages ->
-                runCatching {
-                    accountStore.saveSnapshot(
-                        accountId = account.id,
-                        module = SnapshotModule.PACKAGES,
-                        payloadJson = PackageSnapshotCodec.encode(packages),
-                        fetchedAtMillis = now().toEpochMilli(),
-                    )
-                }
+                // 与今日/7 天共用 SnapshotStore；写盘失败不影响本次展示（下次离线会旧一些）。
+                snapshots.save(
+                    accountId = account.id,
+                    module = SnapshotModule.PACKAGES,
+                    payloadJson = PackageSnapshotCodec.encode(packages),
+                    fetchedAtMillis = now().toEpochMilli(),
+                )
                 val groups = groupPackages(packages, requestedAt)
                 updateFetch(account.id) {
                     it.copy(packageGroups = groups, packageFailure = null, isRefreshing = false)
@@ -329,6 +341,75 @@ class DashboardViewModel(
                 }
             },
         )
+    }
+
+    /**
+     * 今日累计失败的统一收尾：保留已展示数据，没有则回落今日快照；都没有就是错误态。
+     * 凭证失效（解密失败/账号被删）也走这里，保证旧数据不被抹掉。
+     * 不清 `isRefreshing`：账号内固定以资源包为最后一步，由它统一收尾。
+     */
+    private suspend fun showTodayFailure(accountId: String, kind: ApiFailureKind) {
+        val cached = snapshots.loadToday(accountId)
+        updateFetch(accountId) { current ->
+            val shown = current.today ?: cached?.value
+            current.copy(
+                today = shown,
+                snapshotFetchedAtMillis = if (shown != null) {
+                    cached?.fetchedAtMillis ?: current.snapshotFetchedAtMillis
+                } else {
+                    null
+                },
+                failure = kind,
+            )
+        }
+    }
+
+    /**
+     * 7 天失败的统一收尾：保留已展示的 7 天数据，没有则回落 7 天快照。
+     * 同样不清 `isRefreshing`，交给最后一步的资源包请求收尾。
+     */
+    private suspend fun showWeekFailure(accountId: String, kind: ApiFailureKind) {
+        val cached = snapshots.load(
+            accountId = accountId,
+            module = SnapshotModule.WEEK_TREND,
+            decode = WeekTrafficSnapshotCodec::decode,
+        )
+        updateFetch(accountId) { current ->
+            val shown = current.week ?: cached?.value
+            current.copy(
+                week = shown,
+                weekSnapshotFetchedAtMillis = if (shown != null) {
+                    cached?.fetchedAtMillis ?: current.weekSnapshotFetchedAtMillis
+                } else {
+                    null
+                },
+                // 不覆盖今日累计已有的更具体错误（今日失败时它已落过 kind）。
+                failure = current.failure ?: kind,
+            )
+        }
+    }
+
+    /** 尚无任何数据可展示时（首次进入/切换账号），先读各模块上次成功快照顶上，避免空白。 */
+    private suspend fun showSnapshotIfNothingToShow(accountId: String) {
+        val current = fetches.value[accountId]
+        if (current?.today == null) {
+            snapshots.loadToday(accountId)?.let { cached ->
+                updateFetch(accountId) {
+                    it.copy(today = cached.value, snapshotFetchedAtMillis = cached.fetchedAtMillis)
+                }
+            }
+        }
+        if (current?.week == null) {
+            snapshots.load(
+                accountId = accountId,
+                module = SnapshotModule.WEEK_TREND,
+                decode = WeekTrafficSnapshotCodec::decode,
+            )?.let { cached ->
+                updateFetch(accountId) {
+                    it.copy(week = cached.value, weekSnapshotFetchedAtMillis = cached.fetchedAtMillis)
+                }
+            }
+        }
     }
 
     private fun updateFetch(accountId: String, transform: (AccountFetch) -> AccountFetch) {
