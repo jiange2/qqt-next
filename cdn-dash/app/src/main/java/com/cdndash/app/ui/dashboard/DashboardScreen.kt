@@ -1,5 +1,6 @@
 package com.cdndash.app.ui.dashboard
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -34,16 +35,18 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
+import com.cdndash.app.domain.Account
 import com.cdndash.app.domain.TopSummary
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.weekTotal
+import com.cdndash.app.ui.packages.PackageSummarySection
 
 /**
  * 看板页。顶部两数（所有账号今日累计 / 最近 7 天总量，票据 06）后接账号卡片列表；
  * 卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
- * （已结算日、不含今天）；并接通打开 / 下拉 / 前台定时的刷新编排。
- * 资源包余量仍为占位，由票据 05 填充。
+ * （已结算日、不含今天），下方是按区域展示的资源包余量摘要（票据 05），点卡片进入明细页。
+ * 并接通打开 / 下拉 / 前台定时的刷新编排。
  *
  * 票据 07：卡片错误分「凭证失效 / 权限不足 / 网络错误」并各给一句可操作提示；
  * 请求失败且回落到快照时，今日累计下方标「数据时间 HH:mm（离线）」。
@@ -56,6 +59,7 @@ fun DashboardScreen(
     accountStore: AccountStore,
     aliyunApi: AliyunApi,
     onOpenSettings: () -> Unit,
+    onOpenPackages: (Account) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: DashboardViewModel = viewModel(
         factory = DashboardViewModel.factory(accountStore, aliyunApi),
@@ -101,7 +105,10 @@ fun DashboardScreen(
                     TopSummaryHeader(summary = uiState.topSummary)
                 }
                 items(uiState.accounts, key = { it.account.id }) { state ->
-                    AccountCard(state = state)
+                    AccountCard(
+                        state = state,
+                        onClick = { onOpenPackages(state.account) },
+                    )
                 }
             }
         }
@@ -177,8 +184,12 @@ private fun SummaryMetric(
 }
 
 @Composable
-private fun AccountCard(state: AccountTodayState) {
-    Card(Modifier.fillMaxWidth()) {
+private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -203,8 +214,10 @@ private fun AccountCard(state: AccountTodayState) {
                 TodayMetric(state = state, modifier = Modifier.weight(1f))
                 WeekMetric(state = state, modifier = Modifier.weight(1f))
             }
-            MetricPlaceholder(
-                label = "资源包余量",
+            PackageSummarySection(
+                groups = state.packageGroups,
+                failure = state.packageFailure,
+                isRefreshing = state.isRefreshing,
                 modifier = Modifier.fillMaxWidth(),
             )
             // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
@@ -308,23 +321,7 @@ private fun WeekMetric(state: AccountTodayState, modifier: Modifier = Modifier) 
     }
 }
 
-@Composable
-private fun MetricPlaceholder(label: String, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "—",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-/** 三类错误的标签与可操作提示见 [label] / [actionHint]（票据 07）。 */
+/** 三类错误的标签与可操作提示见 [label] / [actionHint]（票据 07，实现在 FailureText.kt）。 */
 @Composable
 private fun DashboardEmptyState(
     hasAnyAccount: Boolean,
