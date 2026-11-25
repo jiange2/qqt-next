@@ -13,7 +13,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             CdnDashTheme {
-                CdnDashApp()
+                CdnDashApp(
+                    accountStore = (application as CdnDashApplication).accountStore,
+                )
             }
         }
     }
