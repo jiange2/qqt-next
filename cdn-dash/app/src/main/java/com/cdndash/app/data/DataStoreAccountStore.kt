@@ -2,6 +2,7 @@ package com.cdndash.app.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -48,6 +49,10 @@ class DataStoreAccountStore(
     override val refreshIntervalMinutes: Flow<Int> = readableData.map { preferences ->
         preferences[REFRESH_INTERVAL_MINUTES]
             ?: AccountStore.DEFAULT_REFRESH_INTERVAL_MINUTES
+    }
+
+    override val biometricEnabled: Flow<Boolean> = readableData.map { preferences ->
+        preferences[BIOMETRIC_ENABLED] ?: AccountStore.DEFAULT_BIOMETRIC_ENABLED
     }
 
     override suspend fun credentials(accountId: String): AccountCredentials? {
@@ -181,6 +186,12 @@ class DataStoreAccountStore(
         }
     }
 
+    override suspend fun setBiometricEnabled(enabled: Boolean) {
+        dataStore.edit { preferences ->
+            preferences[BIOMETRIC_ENABLED] = enabled
+        }
+    }
+
     private fun Preferences.readAccounts(): List<StoredAccount> {
         val raw = this[ACCOUNTS_JSON] ?: return emptyList()
         return try {
@@ -195,6 +206,7 @@ class DataStoreAccountStore(
     private companion object {
         val ACCOUNTS_JSON = stringPreferencesKey("accounts_json")
         val REFRESH_INTERVAL_MINUTES = intPreferencesKey("refresh_interval_minutes")
+        val BIOMETRIC_ENABLED = booleanPreferencesKey("biometric_enabled")
         val ACCOUNTS_SERIALIZER = ListSerializer(StoredAccount.serializer())
 
         fun credentialCiphertextKey(accountId: String) =

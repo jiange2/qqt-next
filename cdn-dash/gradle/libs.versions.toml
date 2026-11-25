@@ -12,6 +12,8 @@ okhttp = "4.12.0"
 kotlinxSerialization = "1.7.3"
 datastore = "1.1.1"
 biometric = "1.1.0"
+# BiometricPrompt 宿主是 FragmentActivity；biometric 自带的 fragment 传递依赖很旧，显式钉新版本
+fragment = "1.8.5"
 # 与 lifecycle 2.8.7 / okhttp 4.12 的运行时可解析版本对齐，避免双份 coroutines-core
 coroutines = "1.8.1"
 
@@ -33,6 +35,7 @@ mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", versio
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+androidx-fragment = { group = "androidx.fragment", name = "fragment", version.ref = "fragment" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

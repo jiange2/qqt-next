@@ -24,6 +24,8 @@ class InMemoryAccountStore(
     private val accountState = MutableStateFlow<List<Account>>(emptyList())
     private val refreshIntervalState =
         MutableStateFlow(AccountStore.DEFAULT_REFRESH_INTERVAL_MINUTES)
+    private val biometricEnabledState =
+        MutableStateFlow(AccountStore.DEFAULT_BIOMETRIC_ENABLED)
     private val credentialsById = mutableMapOf<String, AccountCredentials>()
     private val snapshotsByAccountAndModule =
         mutableMapOf<Pair<String, SnapshotModule>, AccountSnapshot>()
@@ -31,6 +33,8 @@ class InMemoryAccountStore(
     override val accounts: Flow<List<Account>> = accountState.asStateFlow()
 
     override val refreshIntervalMinutes: Flow<Int> = refreshIntervalState.asStateFlow()
+
+    override val biometricEnabled: Flow<Boolean> = biometricEnabledState.asStateFlow()
 
     override suspend fun credentials(accountId: String): AccountCredentials? =
         synchronized(lock) { credentialsById[accountId] }
@@ -110,5 +114,9 @@ class InMemoryAccountStore(
 
     override suspend fun setRefreshIntervalMinutes(minutes: Int) {
         refreshIntervalState.value = minutes
+    }
+
+    override suspend fun setBiometricEnabled(enabled: Boolean) {
+        biometricEnabledState.value = enabled
     }
 }
