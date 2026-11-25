@@ -14,33 +14,65 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
-import com.cdndash.app.domain.Account
+import com.cdndash.app.data.aliyun.AliyunApi
+import com.cdndash.app.data.aliyun.ApiFailureKind
+import com.cdndash.app.domain.formatBeijingHourMinute
+import com.cdndash.app.domain.formatBytes
 
 /**
- * 看板页。票据 02 只渲染启用账号的名称卡片壳，卡片内数据字段留「—」占位，
- * 具体数字由票据 03–06 填充。顺序完全来自手动排序（User Story 7）。
+ * 看板页。票据 03 显示每张账号卡片的今日累计与「截至 HH:mm」（北京时间、未结算），
+ * 并接通打开 / 下拉 / 前台定时的刷新编排；7 天走势与资源包余量仍为占位，由后续票据填充。
+ *
+ * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     accountStore: AccountStore,
+    aliyunApi: AliyunApi,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
-    viewModel: DashboardViewModel = viewModel(factory = DashboardViewModel.factory(accountStore)),
+    viewModel: DashboardViewModel = viewModel(
+        factory = DashboardViewModel.factory(accountStore, aliyunApi),
+    ),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> viewModel.onForegroundStart()
+                Lifecycle.Event.ON_STOP -> viewModel.onForegroundStop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // 切到其它标签/离开页面时组件先被销毁，兜底停掉定时器（ON_STOP 未必来得及派发）。
+            viewModel.onForegroundStop()
+        }
+    }
 
     if (uiState.accounts.isEmpty()) {
         DashboardEmptyState(
@@ -49,36 +81,49 @@ fun DashboardScreen(
             modifier = modifier,
         )
     } else {
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = viewModel::refresh,
             modifier = modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(uiState.accounts, key = { it.id }) { account ->
-                AccountCardShell(account = account)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(uiState.accounts, key = { it.account.id }) { state ->
+                    AccountCard(state = state)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun AccountCardShell(account: Account) {
+private fun AccountCard(state: AccountTodayState) {
     Card(Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = account.name,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                MetricPlaceholder(
-                    label = "今日累计",
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = state.account.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                state.failure?.let { failure ->
+                    Text(
+                        text = failure.label(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                TodayMetric(state = state, modifier = Modifier.weight(1f))
                 MetricPlaceholder(
                     label = "最近 7 天",
                     modifier = Modifier.weight(1f),
@@ -89,6 +134,38 @@ private fun AccountCardShell(account: Account) {
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/** 今日累计：数值 + 「截至 HH:mm」（北京时间，取最后一个数据点时刻；未结算）。 */
+@Composable
+private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            text = "今日累计",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = state.today?.let { formatBytes(it.bytes) } ?: "—",
+            style = MaterialTheme.typography.headlineSmall,
+            color = if (state.today != null) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        val caption = when {
+            state.today != null ->
+                "截至 ${formatBeijingHourMinute(state.today.dataThrough)} · 未结算"
+            state.isRefreshing -> "加载中…"
+            else -> "暂无数据"
+        }
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -106,6 +183,13 @@ private fun MetricPlaceholder(label: String, modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** 三类错误文案可区分（User Story 34）：凭证失效 / 权限不足 / 网络错误。 */
+private fun ApiFailureKind.label(): String = when (this) {
+    ApiFailureKind.CREDENTIAL_INVALID -> "凭证失效"
+    ApiFailureKind.PERMISSION_DENIED -> "权限不足"
+    ApiFailureKind.NETWORK -> "网络错误"
 }
 
 @Composable

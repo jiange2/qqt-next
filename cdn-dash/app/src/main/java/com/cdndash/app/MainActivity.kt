@@ -20,9 +20,12 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         setContent {
             CdnDashTheme {
-                val accountStore = (application as CdnDashApplication).accountStore
-                AppLockGate(accountStore = accountStore) {
-                    CdnDashApp(accountStore = accountStore)
+                val app = application as CdnDashApplication
+                AppLockGate(accountStore = app.accountStore) {
+                    CdnDashApp(
+                        accountStore = app.accountStore,
+                        aliyunApi = app.aliyunApi,
+                    )
                 }
             }
         }

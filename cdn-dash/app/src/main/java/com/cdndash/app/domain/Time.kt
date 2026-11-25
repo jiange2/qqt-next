@@ -3,6 +3,7 @@ package com.cdndash.app.domain
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * 全应用唯一时区：北京自然日。不读取设备时区（spec「数据口径与接口契约」），
@@ -20,3 +21,22 @@ fun beijingDayStart(date: LocalDate): Instant =
  */
 fun beijingTodayStart(now: Instant = Instant.now()): Instant =
     beijingDayStart(now.atZone(BEIJING_ZONE).toLocalDate())
+
+/** 半开查询窗口 `[start, end]`；今日累计的 end 是请求时刻（未结算）。 */
+data class TimeWindow(
+    val start: Instant,
+    val end: Instant,
+)
+
+/**
+ * 「今日累计」的时间窗：北京时间今天 00:00 至 [now]。
+ * 只按 [BEIJING_ZONE] 计算，设备时区怎么改都得到同一结果。
+ */
+fun todayTrafficWindow(now: Instant): TimeWindow =
+    TimeWindow(start = beijingTodayStart(now), end = now)
+
+private val BEIJING_HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+/** 北京时间 `HH:mm`，用于卡片上的「截至 HH:mm」；不随设备时区变化。 */
+fun formatBeijingHourMinute(instant: Instant): String =
+    BEIJING_HOUR_MINUTE.format(instant.atZone(BEIJING_ZONE))
