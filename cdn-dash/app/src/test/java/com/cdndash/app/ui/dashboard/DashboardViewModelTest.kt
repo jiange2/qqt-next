@@ -113,20 +113,20 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         // 定时器是无限循环，不能用 advanceUntilIdle（会一直推进虚拟时间）；
-        // runCurrent 只跑完当前时刻的初始刷新。
-        runCurrent()
-        assertEquals(1, server.requestCount)
-
-        // 默认刷新间隔 5 分钟：虚拟时间前进 5 分钟后应再请求一次。
-        advanceTimeBy(5 * 60_000L)
+        // runCurrent 只跑完当前时刻的初始刷新。每账号每轮两条请求（今日累计 + 已结算 7 天）。
         runCurrent()
         assertEquals(2, server.requestCount)
+
+        // 默认刷新间隔 5 分钟：虚拟时间前进 5 分钟后应再刷新一轮。
+        advanceTimeBy(5 * 60_000L)
+        runCurrent()
+        assertEquals(4, server.requestCount)
 
         // 退到后台（ON_STOP）后定时器取消，再前进 30 分钟也不请求。
         viewModel.onForegroundStop()
         advanceTimeBy(30 * 60_000L)
         runCurrent()
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
     }
 
     @Test
@@ -139,15 +139,15 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        assertEquals(1, server.requestCount)
+        assertEquals(2, server.requestCount)
 
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(1, server.requestCount)
+        assertEquals(2, server.requestCount)
 
         advanceTimeBy(10 * 60_000L)
         runCurrent()
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
 
         viewModel.onForegroundStop()
     }
