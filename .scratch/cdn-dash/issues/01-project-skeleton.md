@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `cdn-dash/` 是独立 Gradle 工程：`settings.gradle.kts` / 根构建脚本 / `app` 模块，不引用 `<root>/android` 或 `backend-next` 任何代码
-- [ ] 依赖清单与 spec「工程与依赖」一致：Compose M3、Navigation Compose、kotlinx.serialization、OkHttp、DataStore；测试源集含 JUnit4 与 MockWebServer
-- [ ] 应用启动直接进入看板页；底栏或等价入口可切到花费页、设置页，返回键行为正确
-- [ ] 无账号时看板显示引导空态，文案指向设置页，点击可直接跳转
-- [ ] 三页均为可识别的空壳，不出现占位崩溃；`Asia/Shanghai` 时区常量与字节/金额格式化工具已有落点（可为空实现）
-- [ ] 包名、`minSdk`、`targetSdk`、版本号按 spec 默认值写入
-- [ ] 本机无 Android SDK，未做编译验证；构建可在装有 SDK 的机器上直接 `./gradlew assembleDebug`
+- [x] `cdn-dash/` 是独立 Gradle 工程：`settings.gradle.kts` / 根构建脚本 / `app` 模块，不引用 `<root>/android` 或 `backend-next` 任何代码
+- [x] 依赖清单与 spec「工程与依赖」一致：Compose M3、Navigation Compose、kotlinx.serialization、OkHttp、DataStore；测试源集含 JUnit4 与 MockWebServer
+- [x] 应用启动直接进入看板页；底栏或等价入口可切到花费页、设置页，返回键行为正确
+- [x] 无账号时看板显示引导空态，文案指向设置页，点击可直接跳转
+- [x] 三页均为可识别的空壳，不出现占位崩溃；`Asia/Shanghai` 时区常量与字节/金额格式化工具已有落点（可为空实现）
+- [x] 包名、`minSdk`、`targetSdk`、版本号按 spec 默认值写入
+- [x] 本机无 Android SDK，未做编译验证；构建可在装有 SDK 的机器上直接 `./gradlew assembleDebug`
