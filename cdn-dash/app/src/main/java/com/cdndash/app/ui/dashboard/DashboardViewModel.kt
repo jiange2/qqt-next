@@ -17,7 +17,11 @@ import com.cdndash.app.domain.AccountCredentials
 import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
+import com.cdndash.app.domain.TopSummary
+import com.cdndash.app.domain.TopSummaryAccount
+import com.cdndash.app.domain.summarizeTop
 import com.cdndash.app.domain.visibleAccounts
+import com.cdndash.app.domain.weekTotal
 import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -48,11 +52,17 @@ data class AccountTodayState(
     val isRefreshing: Boolean = false,
 )
 
-/** 看板页状态；顺序完全来自账号手动排序（User Story 7）。 */
+/**
+ * 看板页状态；顺序完全来自账号手动排序（User Story 7）。
+ *
+ * @property topSummary 顶部两数（票据 06）：按全部账号计算，停用与失败账号的取舍在
+ * [summarizeTop] 里完成，不靠 [accounts] 已过滤启用账号这一层。
+ */
 data class DashboardUiState(
     val accounts: List<AccountTodayState> = emptyList(),
     val hasAnyAccount: Boolean = false,
     val isRefreshing: Boolean = false,
+    val topSummary: TopSummary = TopSummary(),
 )
 
 /**
@@ -101,6 +111,18 @@ class DashboardViewModel(
                 },
                 hasAnyAccount = allAccounts.isNotEmpty(),
                 isRefreshing = isRefreshing,
+                // 顶部汇总走全部账号（含停用），由纯函数排除停用/失败并给出缺失数。
+                topSummary = summarizeTop(
+                    allAccounts.map { account ->
+                        val fetch = fetchMap[account.id] ?: AccountFetch()
+                        TopSummaryAccount(
+                            enabled = account.enabled,
+                            todayBytes = fetch.today?.bytes,
+                            weekBytes = fetch.week?.let(::weekTotal),
+                            failed = fetch.failure != null,
+                        )
+                    },
+                ),
             )
         }.stateIn(
             scope = viewModelScope,
