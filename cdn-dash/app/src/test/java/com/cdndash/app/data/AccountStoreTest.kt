@@ -165,4 +165,22 @@ class AccountStoreTest {
         store.setRefreshIntervalMinutes(15)
         assertEquals(15, store.refreshIntervalMinutes.first())
     }
+
+    @Test
+    fun `生物识别开关默认关闭`() = runTest {
+        val store = InMemoryAccountStore()
+
+        assertEquals(false, store.biometricEnabled.first())
+    }
+
+    @Test
+    fun `生物识别开关保存后读回一致并可关回`() = runTest {
+        val store = InMemoryAccountStore()
+
+        store.setBiometricEnabled(true)
+        assertEquals(true, store.biometricEnabled.first())
+
+        store.setBiometricEnabled(false)
+        assertEquals(false, store.biometricEnabled.first())
+    }
 }

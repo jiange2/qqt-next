@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.domain.Account
+import com.cdndash.app.ui.lock.rememberBiometricAvailability
 import kotlinx.coroutines.launch
 
 /**
@@ -51,7 +52,7 @@ import kotlinx.coroutines.launch
  * - 账号列表：名称、启用开关、拖拽把手、删除（带确认）
  * - 新增账号表单：名称可自定义，空值/重名拒绝并提示
  * - 刷新间隔：5/10/15/30 分钟，默认 5，供票据 03 读取
- * - 生物识别开关：仅保留条目占位（实现归票据 09）
+ * - 生物识别解锁：默认关闭；设备验不了时隐藏开关并说明原因（票据 09）
  * - 关于：版本与「密钥只在本机」说明
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -63,6 +64,8 @@ fun SettingsScreen(
 ) {
     val accounts by viewModel.accounts.collectAsState()
     val refreshInterval by viewModel.refreshIntervalMinutes.collectAsState()
+    val biometricEnabled by viewModel.biometricEnabled.collectAsState()
+    val availability = rememberBiometricAvailability()
     val formError by viewModel.formError.collectAsState()
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Account?>(null) }
@@ -144,16 +147,22 @@ fun SettingsScreen(
             Column(Modifier.weight(1f)) {
                 Text("生物识别解锁", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    text = "默认关闭（暂未开放，后续版本提供）。",
+                    text = if (availability.canShowSwitch) {
+                        "开启后每次打开应用需验证一次指纹或面容，验证失败可回退到锁屏密码。"
+                    } else {
+                        // 设备验不了就不给开关，并说明为什么没有（spec「设备不支持时隐藏并说明」）。
+                        availability.explanation ?: "本机不支持生物识别解锁。"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(
-                checked = false,
-                onCheckedChange = null,
-                enabled = false,
-            )
+            if (availability.canShowSwitch) {
+                Switch(
+                    checked = biometricEnabled,
+                    onCheckedChange = viewModel::setBiometricEnabled,
+                )
+            }
         }
 
         HorizontalDivider(Modifier.padding(vertical = 16.dp))
