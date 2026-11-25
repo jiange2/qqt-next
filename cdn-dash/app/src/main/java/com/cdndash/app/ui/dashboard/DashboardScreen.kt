@@ -34,13 +34,15 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
-import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 
 /**
  * 看板页。票据 03 显示每张账号卡片的今日累计与「截至 HH:mm」（北京时间、未结算），
  * 并接通打开 / 下拉 / 前台定时的刷新编排；7 天走势与资源包余量仍为占位，由后续票据填充。
+ *
+ * 票据 07：卡片错误分「凭证失效 / 权限不足 / 网络错误」并各给一句可操作提示；
+ * 请求失败且回落到快照时，今日累计下方标「数据时间 HH:mm（离线）」。
  *
  * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
  */
@@ -133,6 +135,14 @@ private fun AccountCard(state: AccountTodayState) {
                 label = "资源包余量",
                 modifier = Modifier.fillMaxWidth(),
             )
+            // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
+            state.failure?.let { failure ->
+                Text(
+                    text = failure.actionHint(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
@@ -156,9 +166,18 @@ private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier)
             },
         )
         val caption = when {
+            // 失败回落的旧数据：标快照自己的抓取时间，不能拿「现在」冒充新数（User Story 31）。
+            state.snapshotFetchedAtMillis != null ->
+                "数据时间 ${formatBeijingHourMinute(state.snapshotFetchedAtMillis)}（离线）"
+
             state.today != null ->
                 "截至 ${formatBeijingHourMinute(state.today.dataThrough)} · 未结算"
+
+            // 无数据又失败：错误态而不是一句「暂无数据」，具体原因见卡片下方提示。
+            state.failure != null -> "本次未取到数据"
+
             state.isRefreshing -> "加载中…"
+
             else -> "暂无数据"
         }
         Text(
@@ -185,13 +204,7 @@ private fun MetricPlaceholder(label: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 三类错误文案可区分（User Story 34）：凭证失效 / 权限不足 / 网络错误。 */
-private fun ApiFailureKind.label(): String = when (this) {
-    ApiFailureKind.CREDENTIAL_INVALID -> "凭证失效"
-    ApiFailureKind.PERMISSION_DENIED -> "权限不足"
-    ApiFailureKind.NETWORK -> "网络错误"
-}
-
+/** 三类错误的标签与可操作提示见 [label] / [actionHint]（票据 07）。 */
 @Composable
 private fun DashboardEmptyState(
     hasAnyAccount: Boolean,

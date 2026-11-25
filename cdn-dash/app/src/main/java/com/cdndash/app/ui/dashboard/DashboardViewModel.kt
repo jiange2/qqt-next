@@ -9,10 +9,9 @@ import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
-import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.SnapshotStore
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
-import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
 import com.cdndash.app.domain.visibleAccounts
 import java.time.Instant
@@ -38,6 +37,11 @@ data class AccountTodayState(
     val today: TodayTraffic? = null,
     val failure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
+    /**
+     * 非 null 表示 [today] 来自上次成功快照（离线展示），值是快照的抓取时刻（epoch millis）；
+     * 卡片据此标注「数据时间 HH:mm（离线）」。本次实时取数成功时为 null。
+     */
+    val snapshotFetchedAtMillis: Long? = null,
 )
 
 /** 看板页状态；顺序完全来自账号手动排序（User Story 7）。 */
@@ -58,7 +62,10 @@ data class DashboardUiState(
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
  * 账号内串行（先读凭据再请求），账号间并发数有上限，避免账号多时打满接口配额。
- * 成功取数写入 [SnapshotModule.TODAY_TOTAL] 快照（带抓取时间）；展示快照属于票据 07。
+ *
+ * 快照与离线（User Stories 31/34，票据 07）：成功取数经 [SnapshotStore] 写入今日快照（带抓取时间）；
+ * 失败时保留已展示的数据，没有则回落到上次快照并把 `snapshotFetchedAtMillis` 交给卡片标「数据时间」，
+ * 两者都没有才展示错误态。失败路径不写、不清任何快照。
  */
 class DashboardViewModel(
     private val accountStore: AccountStore,
@@ -70,11 +77,13 @@ class DashboardViewModel(
         val today: TodayTraffic? = null,
         val failure: ApiFailureKind? = null,
         val isRefreshing: Boolean = false,
+        val snapshotFetchedAtMillis: Long? = null,
     )
 
     private val fetches = MutableStateFlow<Map<String, AccountFetch>>(emptyMap())
     private val refreshing = MutableStateFlow(false)
     private val accountConcurrency = Semaphore(MAX_CONCURRENT_ACCOUNT_REQUESTS)
+    private val snapshots = SnapshotStore(accountStore)
 
     val uiState: StateFlow<DashboardUiState> =
         combine(accountStore.accounts, fetches, refreshing) { allAccounts, fetchMap, isRefreshing ->
@@ -86,6 +95,7 @@ class DashboardViewModel(
                         today = fetch.today,
                         failure = fetch.failure,
                         isRefreshing = fetch.isRefreshing,
+                        snapshotFetchedAtMillis = fetch.snapshotFetchedAtMillis,
                     )
                 },
                 hasAnyAccount = allAccounts.isNotEmpty(),
@@ -143,6 +153,8 @@ class DashboardViewModel(
 
     private suspend fun refreshAccount(account: Account) {
         updateFetch(account.id) { it.copy(isRefreshing = true) }
+        // 先亮出上次成功快照：弱网/断网时卡片不会从空白开始，后面失败分支再兜一次。
+        showSnapshotIfNothingToShow(account.id)
         val requestedAt = now()
         val result: ApiResult<TodayTraffic> = try {
             val credentials = accountStore.credentials(account.id)
@@ -160,25 +172,49 @@ class DashboardViewModel(
 
         result.fold(
             onSuccess = { today ->
-                runCatching {
-                    accountStore.saveSnapshot(
-                        accountId = account.id,
-                        module = SnapshotModule.TODAY_TOTAL,
-                        payloadJson = TodayTrafficSnapshotCodec.encode(today),
-                        fetchedAtMillis = now().toEpochMilli(),
-                    )
-                }
+                // 成功才覆盖快照；写盘失败不影响本次展示（下次离线会旧一些）。
+                snapshots.saveToday(
+                    accountId = account.id,
+                    today = today,
+                    fetchedAtMillis = now().toEpochMilli(),
+                )
                 updateFetch(account.id) {
-                    it.copy(today = today, failure = null, isRefreshing = false)
+                    it.copy(
+                        today = today,
+                        failure = null,
+                        isRefreshing = false,
+                        snapshotFetchedAtMillis = null,
+                    )
                 }
             },
             onFailure = { failure ->
-                // 失败不清除旧数据（票据 07 的「失败保留旧值」从这里起步）。
-                updateFetch(account.id) {
-                    it.copy(failure = failure.kind, isRefreshing = false)
+                // 失败绝不清除旧数据与旧快照：优先保留本次已展示的数据，
+                // 没有则回落到快照，两者都没有才是纯错误态（票据 07）。
+                val cached = snapshots.loadToday(account.id)
+                updateFetch(account.id) { current ->
+                    val shown = current.today ?: cached?.value
+                    current.copy(
+                        today = shown,
+                        snapshotFetchedAtMillis = if (shown != null) {
+                            cached?.fetchedAtMillis ?: current.snapshotFetchedAtMillis
+                        } else {
+                            null
+                        },
+                        failure = failure.kind,
+                        isRefreshing = false,
+                    )
                 }
             },
         )
+    }
+
+    /** 尚无任何数据可展示时（首次进入/切换账号），先读一次快照顶上，避免空白。 */
+    private suspend fun showSnapshotIfNothingToShow(accountId: String) {
+        if (fetches.value[accountId]?.today != null) return
+        val cached = snapshots.loadToday(accountId) ?: return
+        updateFetch(accountId) {
+            it.copy(today = cached.value, snapshotFetchedAtMillis = cached.fetchedAtMillis)
+        }
     }
 
     private fun updateFetch(accountId: String, transform: (AccountFetch) -> AccountFetch) {
