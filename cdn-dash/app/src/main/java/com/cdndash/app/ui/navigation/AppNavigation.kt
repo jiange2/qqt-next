@@ -87,7 +87,7 @@ fun CdnDashApp(accountStore: AccountStore, aliyunApi: AliyunApi) {
                 )
             }
             composable(TopLevelDestination.Spend.route) {
-                SpendScreen()
+                SpendScreen(accountStore = accountStore, aliyunApi = aliyunApi)
             }
             composable(TopLevelDestination.Settings.route) {
                 SettingsScreen(accountStore = accountStore)

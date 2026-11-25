@@ -126,7 +126,9 @@ class AliyunRpcClient(
         val code = (body?.get("Code") as? JsonPrimitive)
             ?.contentOrNull
             ?.takeIf { it.isNotBlank() }
-        if (code != null) {
+        // BSS（QueryAccountBill）的成功响应也带 `Code: "Success"`，不能当成错误码；
+        // CDN 的成功响应没有 `Code`，两种形态都要接受。
+        if (code != null && !code.equals(SUCCESS_CODE, ignoreCase = true)) {
             return RpcOutcome.Error(
                 kind = classifyFailure(code),
                 code = code,
@@ -187,6 +189,9 @@ class AliyunRpcClient(
 
         private const val THROTTLING_CODE_PREFIX = "Throttling"
 
+        /** BSS OpenAPI 成功响应里的 `Code` 值（CDN 成功响应不带 `Code`）。 */
+        private const val SUCCESS_CODE = "Success"
+
         /** 连接/读写/整体调用都有上限；单账号一次请求最多 30 秒。 */
         fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -222,7 +227,7 @@ class AliyunRpcClient(
  *
  * - 鉴权类：`InvalidAccessKeyId*`、`SignatureDoesNotMatch`、`Forbidden.RAM`、`InvalidSecurityToken*`
  *   → [ApiFailureKind.CREDENTIAL_INVALID]（GLOSSARY「凭证失效」）。
- * - 权限类：`UnauthorizedOperation`、`NoPermission*`、其他 `Forbidden.*`
+ * - 权限类：`UnauthorizedOperation`、`NoPermission*`、BSS 的 `NotAuthorized`、其他 `Forbidden.*`
  *   → [ApiFailureKind.PERMISSION_DENIED]。
  * - 其余（含 `Throttling` 重试耗尽、未知业务码）→ [ApiFailureKind.NETWORK]。
  */
@@ -234,6 +239,8 @@ internal fun classifyFailure(code: String): ApiFailureKind = when {
 
     code == "UnauthorizedOperation" ||
         code.startsWith("NoPermission") ||
+        // 费用中心（BSS）缺少 bss:QueryAccountBill 时返回 NotAuthorized。
+        code.equals("NotAuthorized", ignoreCase = true) ||
         code.startsWith("Forbidden") -> ApiFailureKind.PERMISSION_DENIED
 
     else -> ApiFailureKind.NETWORK
