@@ -24,14 +24,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.currentStateFlow
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.lifecycle.withResumed
 import com.cdndash.app.data.AccountStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -164,8 +163,7 @@ fun AppLockGate(
             LaunchedEffect(current) {
                 // 系统验证弹窗要求宿主已 RESUMED；冷启动首帧可能还停在 STARTED，等一下就绪再弹，
                 // 免得 BiometricPrompt 在未就绪时直接报错。
-                activity.lifecycle.currentStateFlow
-                    .first { it.isAtLeast(Lifecycle.State.RESUMED) }
+                activity.lifecycle.withResumed { }
                 unlock.authenticate { result ->
                     viewModel.onAuthenticationResult(current.attempt, result)
                 }
