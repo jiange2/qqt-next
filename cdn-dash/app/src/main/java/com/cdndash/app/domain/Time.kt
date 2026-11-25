@@ -40,3 +40,10 @@ private val BEIJING_HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern
 /** 北京时间 `HH:mm`，用于卡片上的「截至 HH:mm」；不随设备时区变化。 */
 fun formatBeijingHourMinute(instant: Instant): String =
     BEIJING_HOUR_MINUTE.format(instant.atZone(BEIJING_ZONE))
+
+/**
+ * 快照抓取时刻（epoch millis）的北京时间 `HH:mm`，用于离线标注「数据时间 HH:mm（离线）」。
+ * 只格式化快照自己记录的抓取时刻，不读取当前时间。
+ */
+fun formatBeijingHourMinute(epochMillis: Long): String =
+    formatBeijingHourMinute(Instant.ofEpochMilli(epochMillis))

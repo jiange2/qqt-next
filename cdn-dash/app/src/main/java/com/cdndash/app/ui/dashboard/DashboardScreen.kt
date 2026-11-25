@@ -34,7 +34,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
-import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.domain.TopSummary
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
@@ -45,6 +44,9 @@ import com.cdndash.app.domain.weekTotal
  * 卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
  * （已结算日、不含今天）；并接通打开 / 下拉 / 前台定时的刷新编排。
  * 资源包余量仍为占位，由票据 05 填充。
+ *
+ * 票据 07：卡片错误分「凭证失效 / 权限不足 / 网络错误」并各给一句可操作提示；
+ * 请求失败且回落到快照时，今日累计下方标「数据时间 HH:mm（离线）」。
  *
  * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
  */
@@ -205,6 +207,14 @@ private fun AccountCard(state: AccountTodayState) {
                 label = "资源包余量",
                 modifier = Modifier.fillMaxWidth(),
             )
+            // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
+            state.failure?.let { failure ->
+                Text(
+                    text = failure.actionHint(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
@@ -228,9 +238,18 @@ private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier)
             },
         )
         val caption = when {
+            // 失败回落的旧数据：标快照自己的抓取时间，不能拿「现在」冒充新数（User Story 31）。
+            state.snapshotFetchedAtMillis != null ->
+                "数据时间 ${formatBeijingHourMinute(state.snapshotFetchedAtMillis)}（离线）"
+
             state.today != null ->
                 "截至 ${formatBeijingHourMinute(state.today.dataThrough)} · 未结算"
+
+            // 无数据又失败：错误态而不是一句「暂无数据」，具体原因见卡片下方提示。
+            state.failure != null -> "本次未取到数据"
+
             state.isRefreshing -> "加载中…"
+
             else -> "暂无数据"
         }
         Text(
@@ -264,9 +283,17 @@ private fun WeekMetric(state: AccountTodayState, modifier: Modifier = Modifier) 
             },
         )
         val caption = when {
+            // 7 天请求失败回落到快照：同样只标快照自己的抓取时间。
+            state.weekSnapshotFetchedAtMillis != null ->
+                "数据时间 ${formatBeijingHourMinute(state.weekSnapshotFetchedAtMillis)}（离线）"
+
             // GLOSSARY「已结算日」：只统计已结束的北京自然日，今天未结算不参与。
             state.week != null -> "7 天合计 · 已结算，不含今天"
+
+            state.failure != null -> "本次未取到数据"
+
             state.isRefreshing -> "加载中…"
+
             else -> "暂无数据"
         }
         Text(
@@ -297,13 +324,7 @@ private fun MetricPlaceholder(label: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** 三类错误文案可区分（User Story 34）：凭证失效 / 权限不足 / 网络错误。 */
-private fun ApiFailureKind.label(): String = when (this) {
-    ApiFailureKind.CREDENTIAL_INVALID -> "凭证失效"
-    ApiFailureKind.PERMISSION_DENIED -> "权限不足"
-    ApiFailureKind.NETWORK -> "网络错误"
-}
-
+/** 三类错误的标签与可操作提示见 [label] / [actionHint]（票据 07）。 */
 @Composable
 private fun DashboardEmptyState(
     hasAnyAccount: Boolean,
