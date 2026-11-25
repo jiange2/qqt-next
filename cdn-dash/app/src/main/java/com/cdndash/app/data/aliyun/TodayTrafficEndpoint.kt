@@ -4,9 +4,6 @@ import com.cdndash.app.domain.AccountCredentials
 import com.cdndash.app.domain.TodayTraffic
 import com.cdndash.app.domain.todayTrafficWindow
 import java.time.Instant
-import kotlin.math.roundToLong
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -19,6 +16,9 @@ import kotlinx.serialization.json.contentOrNull
  * - 时间窗：北京时间今天 00:00 → 请求时刻 [now]（ISO 8601 UTC，见 [formatRpcTimestamp]）。
  * - 结果：各数据点 `Value` 字节数之和；数据截止时刻取最后一个数据点的 `TimeStamp`，
  *   无数据点时退化为 [now]（口径说明见 `TodayTraffic.dataThrough`）。
+ *
+ * 签名、HTTP、错误归一全部在 [AliyunRpcClient]；Action/Version 与载荷展开复用 [TrafficPayload]，
+ * 本类只负责时间窗、业务参数与聚合。
  */
 class TodayTrafficEndpoint(private val rpc: AliyunRpcClient) {
 
@@ -26,8 +26,8 @@ class TodayTrafficEndpoint(private val rpc: AliyunRpcClient) {
         val window = todayTrafficWindow(now)
         return rpc.call(
             account = account,
-            action = ACTION,
-            version = API_VERSION,
+            action = TRAFFIC_ACTION,
+            version = TRAFFIC_API_VERSION,
             businessParams = mapOf(
                 "StartTime" to formatRpcTimestamp(window.start),
                 "EndTime" to formatRpcTimestamp(window.end),
@@ -37,12 +37,12 @@ class TodayTrafficEndpoint(private val rpc: AliyunRpcClient) {
     }
 
     private fun parse(body: JsonObject, now: Instant): TodayTraffic {
-        val modules = body.dataModules()
+        val modules = body.trafficDataModules()
         var total = 0L
         var latest: Instant? = null
         for (module in modules) {
             val dataPoint = module as? JsonObject ?: continue
-            total += dataPoint["Value"].bytesValue()
+            total += dataPoint["Value"].trafficBytesValue()
             val timestamp = (dataPoint["TimeStamp"] as? JsonPrimitive)
                 ?.contentOrNull
                 ?.let(::parseAliyunTimestamp)
@@ -53,23 +53,7 @@ class TodayTrafficEndpoint(private val rpc: AliyunRpcClient) {
         return TodayTraffic(bytes = total, dataThrough = latest ?: now)
     }
 
-    private fun JsonObject.dataModules(): List<JsonElement> {
-        val node = (this["TrafficDataPerInterval"] as? JsonObject)?.get("DataModule")
-        return when (node) {
-            is JsonArray -> node
-            // 单点时阿里云历史上可能返回对象而不是数组，两种都接受，避免崩溃。
-            is JsonObject -> listOf(node)
-            else -> emptyList()
-        }
-    }
-
-    /** `Value` 可能是字符串或数字；缺失/非法一律按 0，空数据不崩溃。 */
-    private fun JsonElement?.bytesValue(): Long =
-        (this as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.roundToLong() ?: 0L
-
     companion object {
-        const val ACTION: String = "DescribeDomainTrafficData"
-        const val API_VERSION: String = "2018-05-10"
         const val INTERVAL_SECONDS: String = "300"
     }
 }

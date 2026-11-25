@@ -25,16 +25,13 @@ data class TopSummaryAccount(
  * 全部失败或无账号时两数为 0，不崩溃。
  *
  * @property missingAccountCount 失败且启用的账号数；停用账号的失败不算缺失。
- * @property hasMissingAccounts 有缺失才显示「N 个账号数据缺失」。
+ * 界面按「大于 0」决定是否显示「N 个账号数据缺失」。
  */
 data class TopSummary(
     val todayTotalBytes: Long = 0L,
     val weekTotalBytes: Long = 0L,
     val missingAccountCount: Int = 0,
-) {
-    val hasMissingAccounts: Boolean
-        get() = missingAccountCount > 0
-}
+)
 
 /**
  * 汇总所有账号的今日累计与 7 天总量（无状态纯函数，不读时钟、不读设备时区）。

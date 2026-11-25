@@ -84,6 +84,39 @@ fun packageGroupsByRegion(groups: List<PackageGroup>): List<RegionPackageGroups>
             )
         }
 
+/**
+ * 看板卡片摘要挑出要显示的组（纯函数）：**每个区域至少出现一组**，再按到期日轮转补足到
+ * [limit] 组。不能只对全局列表取前 N 组，否则另一个区域会被整块隐藏（GLOSSARY「区域」）。
+ *
+ * - 区域数超过 [limit] 时以区域数为准（宁可多一行，也不隐藏某个区域）；
+ * - 区域之间不合并、不相加，挑出来的行仍各自带着区域名；
+ * - 每轮每个区域取一组（区域内按到期日升序），直到没有可取的组或已满额。
+ *
+ * @return 要展示的组；未展示的组数由调用方按 `总组数 - 返回值大小` 显示「还有 N 组」。
+ */
+fun selectPackageSummaryGroups(
+    groups: List<PackageGroup>,
+    limit: Int,
+): List<PackageGroup> {
+    val byRegion = packageGroupsByRegion(groups)
+    if (byRegion.isEmpty()) return emptyList()
+    val maxRows = maxOf(limit, byRegion.size)
+    val selected = ArrayList<PackageGroup>(maxRows)
+    var index = 0
+    while (selected.size < maxRows) {
+        var added = false
+        for (section in byRegion) {
+            if (selected.size >= maxRows) break
+            val group = section.groups.getOrNull(index) ?: continue
+            selected += group
+            added = true
+        }
+        if (!added) break
+        index++
+    }
+    return selected
+}
+
 private val PACKAGE_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 
 /** 北京自然日 `yyyy-MM-dd`，明细页的「到期日」列。 */

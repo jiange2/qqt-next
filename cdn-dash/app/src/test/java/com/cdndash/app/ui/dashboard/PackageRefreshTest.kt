@@ -5,6 +5,7 @@ import com.cdndash.app.data.aliyun.AliyunApiImpl
 import com.cdndash.app.data.aliyun.AliyunRpcClient
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.PackageSnapshotCodec
+import com.cdndash.app.domain.ResourcePackage
 import com.cdndash.app.domain.SnapshotModule
 import java.time.Instant
 import kotlinx.coroutines.Dispatchers
@@ -12,8 +13,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import okhttp3.mockwebserver.Dispatcher
@@ -124,6 +127,81 @@ class PackageRefreshTest {
         assertNull(badState.failure)
         assertNull(badState.packageGroups)
         assertEquals(ApiFailureKind.PERMISSION_DENIED, badState.packageFailure)
+    }
+
+    @Test
+    fun `资源包失败回落到 PACKAGES 快照并标出抓取时间`() = runTest(dispatcher) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                when (request.requestUrl?.queryParameter("Action")) {
+                    "DescribeCdnUserResourcePackage" -> MockResponse().setResponseCode(500)
+                    else -> okResponse(TRAFFIC_RESPONSE)
+                }
+        }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val snapshotAt = fixedNow.minusSeconds(3_600L).toEpochMilli()
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.PACKAGES,
+            payloadJson = PackageSnapshotCodec.encode(
+                listOf(
+                    ResourcePackage(
+                        instanceId = "cn-1",
+                        commodityCode = ResourcePackage.CDN_FLOW_PACKAGE_COMMODITY_CODE,
+                        region = "中国内地",
+                        totalBytes = 1_073_741_824L,
+                        remainingBytes = 536_870_912L,
+                        effectiveAt = Instant.parse("2026-11-01T00:00:00Z"),
+                        expiresAt = Instant.parse("2026-12-31T16:00:00Z"),
+                    ),
+                ),
+            ),
+            fetchedAtMillis = snapshotAt,
+        )
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val accountState = viewModel.uiState.value.accounts.first { it.account.id == account.id }
+        // 资源包接口失败不影响今日累计；余量视图回落快照并按区域分组。
+        assertEquals(1_048_576L, accountState.today?.bytes)
+        assertEquals(listOf("中国内地"), requireNotNull(accountState.packageGroups).map { it.region })
+        assertEquals(snapshotAt, accountState.packageSnapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, accountState.packageFailure)
+    }
+
+    @Test
+    fun `前台定时刷新不重取资源包`() = runTest(dispatcher) {
+        var packageRequests = 0
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val action = request.requestUrl?.queryParameter("Action")
+                if (action == "DescribeCdnUserResourcePackage") {
+                    packageRequests++
+                    return okResponse(PACKAGE_RESPONSE)
+                }
+                return okResponse(TRAFFIC_RESPONSE)
+            }
+        }
+        store.addAccount("账号", "ak-ok", "secret")
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.onForegroundStart()
+        runCurrent()
+        // 冷启动取一次资源包，其余两条是今日累计与 7 天。
+        assertEquals(1, packageRequests)
+        assertEquals(3, server.requestCount)
+
+        // 定时轮只补今日累计：资源包不随定时器重取。
+        advanceTimeBy(5 * 60_000L)
+        runCurrent()
+        assertEquals(1, packageRequests)
+        assertEquals(4, server.requestCount)
+
+        viewModel.onForegroundStop()
     }
 
     private fun newViewModel(): DashboardViewModel {

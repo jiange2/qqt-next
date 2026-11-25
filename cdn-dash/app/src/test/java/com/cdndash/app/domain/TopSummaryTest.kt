@@ -1,8 +1,6 @@
 package com.cdndash.app.domain
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -35,7 +33,6 @@ class TopSummaryTest {
         assertEquals(1_000L, summary.todayTotalBytes)
         assertEquals(7_000L, summary.weekTotalBytes)
         assertEquals(0, summary.missingAccountCount)
-        assertFalse(summary.hasMissingAccounts)
     }
 
     @Test
@@ -52,7 +49,6 @@ class TopSummaryTest {
         assertEquals(2_048L, summary.todayTotalBytes)
         assertEquals(14_336L, summary.weekTotalBytes)
         assertEquals(2, summary.missingAccountCount)
-        assertTrue(summary.hasMissingAccounts)
     }
 
     @Test
@@ -67,7 +63,6 @@ class TopSummaryTest {
         assertEquals(0L, summary.todayTotalBytes)
         assertEquals(0L, summary.weekTotalBytes)
         assertEquals(2, summary.missingAccountCount)
-        assertTrue(summary.hasMissingAccounts)
     }
 
     @Test
@@ -77,7 +72,6 @@ class TopSummaryTest {
         assertEquals(0L, summary.todayTotalBytes)
         assertEquals(0L, summary.weekTotalBytes)
         assertEquals(0, summary.missingAccountCount)
-        assertFalse(summary.hasMissingAccounts)
     }
 
     @Test
@@ -93,7 +87,6 @@ class TopSummaryTest {
         assertEquals(4_096L, summary.todayTotalBytes)
         assertEquals(24_576L, summary.weekTotalBytes)
         assertEquals(1, summary.missingAccountCount)
-        assertTrue(summary.hasMissingAccounts)
     }
 
     @Test
@@ -108,6 +101,5 @@ class TopSummaryTest {
         assertEquals(512L, summary.todayTotalBytes)
         assertEquals(4_096L, summary.weekTotalBytes)
         assertEquals(0, summary.missingAccountCount)
-        assertFalse(summary.hasMissingAccounts)
     }
 }

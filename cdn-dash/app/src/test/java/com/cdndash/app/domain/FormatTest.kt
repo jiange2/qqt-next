@@ -1,5 +1,6 @@
 package com.cdndash.app.domain
 
+import java.math.BigDecimal
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -28,9 +29,9 @@ class FormatTest {
 
     @Test
     fun `金额保留两位小数并四舍五入`() {
-        assertEquals("0.00", formatMoney(0.0))
-        assertEquals("12.30", formatMoney(12.3))
-        assertEquals("1234.57", formatMoney(1234.567))
-        assertEquals("0.01", formatMoney(0.005))
+        assertEquals("0.00", formatMoney(BigDecimal("0.00")))
+        assertEquals("12.30", formatMoney(BigDecimal("12.3")))
+        assertEquals("1234.57", formatMoney(BigDecimal("1234.567")))
+        assertEquals("0.01", formatMoney(BigDecimal("0.005")))
     }
 }

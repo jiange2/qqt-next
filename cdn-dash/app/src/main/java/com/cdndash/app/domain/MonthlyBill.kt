@@ -12,7 +12,7 @@ import java.time.YearMonth
  * @property month 账期（自然月）。
  * @property pretaxAmount 应付金额（`PretaxAmount`），柱状图主数。
  * @property cashAmount 现金支付部分（`CashAmount`）。
- * @property voucherAmount 代金券抵扣部分（`DeductedByCashCoupons` + `DeductedByCoupons`）。
+ * @property voucherAmount 代金券抵扣部分（`DeductedByCashCoupons`，ADR 0017 只认这一项）。
  * @property currency 币种代码，默认人民币。
  * @property includesPrepaidPackage 该账期明细里是否存在预付费 CDN 证据
  *   （`SubscriptionType=Subscription` 且 `ProductCode` 为 CDN）；字段缺失一律 false，

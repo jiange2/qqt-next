@@ -25,16 +25,21 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
+import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.domain.PackageGroup
+import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.formatPackageDate
 import com.cdndash.app.domain.packageGroupsByRegion
+import com.cdndash.app.ui.dashboard.actionHint
+import com.cdndash.app.ui.dashboard.label
 
 /**
- * 资源包明细页（票据 05）：按区域分区、区域内按到期日升序，每行显示到期日、包数、
+ * 资源包明细页（票据 05、票据 07）：按区域分区、区域内按到期日升序，每行显示到期日、包数、
  * 剩余/总量与「未生效」标注（User Story 16–20）。
  *
  * 数据只从 [AliyunApi] 取；区域之间只分区展示，不合计余量（GLOSSARY「区域」）。
+ * 取数失败时展示上次成功的包快照并标出抓取时间（「数据时间 HH:mm（离线）」）。
  */
 @Composable
 fun PackageDetailScreen(
@@ -65,7 +70,7 @@ private fun PackageDetailContent(
     when {
         // 一次都没取到且失败：整页错误 + 重试。
         groups == null && state.failure != null -> PackageDetailError(
-            failureLabel = requireNotNull(state.failure).packageFailureLabel(),
+            failure = requireNotNull(state.failure),
             onRetry = onRetry,
             modifier = modifier,
         )
@@ -80,7 +85,8 @@ private fun PackageDetailContent(
         else -> PackageDetailList(
             accountName = state.accountName,
             groups = groups,
-            failureLabel = state.failure?.packageFailureLabel(),
+            failure = state.failure,
+            snapshotFetchedAtMillis = state.snapshotFetchedAtMillis,
             onRetry = onRetry,
             modifier = modifier,
         )
@@ -91,7 +97,8 @@ private fun PackageDetailContent(
 private fun PackageDetailList(
     accountName: String,
     groups: List<PackageGroup>,
-    failureLabel: String?,
+    failure: ApiFailureKind?,
+    snapshotFetchedAtMillis: Long?,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -111,14 +118,21 @@ private fun PackageDetailList(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (snapshotFetchedAtMillis != null) {
+                    Text(
+                        text = "数据时间 ${formatBeijingHourMinute(snapshotFetchedAtMillis)}（离线）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
-        if (failureLabel != null) {
+        if (failure != null) {
             item(key = "refresh-failure") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "刷新失败：$failureLabel，以下为上次结果",
+                        text = "刷新失败：${failure.label()}，以下为上次结果",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.weight(1f),
@@ -219,7 +233,7 @@ private fun PackageGroupRow(group: PackageGroup) {
 
 @Composable
 private fun PackageDetailError(
-    failureLabel: String,
+    failure: ApiFailureKind,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -231,14 +245,21 @@ private fun PackageDetailError(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "资源包数据取不到：$failureLabel",
+            text = "资源包数据取不到：${failure.label()}",
             style = MaterialTheme.typography.titleMedium,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "其他账号不受影响；可稍后重试。",
+            text = failure.actionHint(),
             modifier = Modifier.padding(top = 8.dp),
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "其他账号不受影响；可稍后重试。",
+            modifier = Modifier.padding(top = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
