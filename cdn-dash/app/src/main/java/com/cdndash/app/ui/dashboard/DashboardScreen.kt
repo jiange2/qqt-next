@@ -37,10 +37,12 @@ import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
+import com.cdndash.app.domain.weekTotal
 
 /**
- * 看板页。票据 03 显示每张账号卡片的今日累计与「截至 HH:mm」（北京时间、未结算），
- * 并接通打开 / 下拉 / 前台定时的刷新编排；7 天走势与资源包余量仍为占位，由后续票据填充。
+ * 看板页。卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
+ * （已结算日、不含今天）；并接通打开 / 下拉 / 前台定时的刷新编排。
+ * 资源包余量仍为占位，由票据 05 填充。
  *
  * 生命周期观察只做一件事：`ON_START` 启动定时刷新、`ON_STOP` 取消（User Story 30）。
  */
@@ -124,10 +126,7 @@ private fun AccountCard(state: AccountTodayState) {
             }
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 TodayMetric(state = state, modifier = Modifier.weight(1f))
-                MetricPlaceholder(
-                    label = "最近 7 天",
-                    modifier = Modifier.weight(1f),
-                )
+                WeekMetric(state = state, modifier = Modifier.weight(1f))
             }
             MetricPlaceholder(
                 label = "资源包余量",
@@ -165,6 +164,46 @@ private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier)
             text = caption,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * 最近 7 天：合计 + 7 点折线 + 口径小字（已结算日、不含今天）。
+ *
+ * 今日累计的「截至 HH:mm · 未结算」保持独立一列，两者并列而不是互相替换。
+ */
+@Composable
+private fun WeekMetric(state: AccountTodayState, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            text = "最近 7 天",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = state.week?.let { formatBytes(weekTotal(it)) } ?: "—",
+            style = MaterialTheme.typography.headlineSmall,
+            color = if (state.week != null) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        val caption = when {
+            // GLOSSARY「已结算日」：只统计已结束的北京自然日，今天未结算不参与。
+            state.week != null -> "7 天合计 · 已结算，不含今天"
+            state.isRefreshing -> "加载中…"
+            else -> "暂无数据"
+        }
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        WeekSparkline(
+            days = state.week.orEmpty(),
+            modifier = Modifier.padding(top = 4.dp),
         )
     }
 }

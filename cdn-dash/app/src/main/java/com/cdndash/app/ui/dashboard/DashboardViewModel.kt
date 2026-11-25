@@ -10,8 +10,11 @@ import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
 import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
+import com.cdndash.app.domain.AccountCredentials
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
 import com.cdndash.app.domain.visibleAccounts
@@ -32,10 +35,15 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** 单账号的今日累计状态：成功数据、归一后的错误、是否正在取数三者互不覆盖。 */
+/**
+ * 单账号状态：今日累计、已结算 7 天、归一后的错误、是否正在取数互不覆盖。
+ *
+ * @property week 最近 7 个已结算日（不含今天）的日点，恒 7 个、按日升序；尚未取到或从未成功时为 null。
+ */
 data class AccountTodayState(
     val account: Account,
     val today: TodayTraffic? = null,
+    val week: List<DayTrafficPoint>? = null,
     val failure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
 )
@@ -57,8 +65,9 @@ data class DashboardUiState(
  * - 退到后台（`ON_STOP`，即离开 `Lifecycle.State.STARTED`）→ 取消定时器，不再请求。
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
- * 账号内串行（先读凭据再请求），账号间并发数有上限，避免账号多时打满接口配额。
- * 成功取数写入 [SnapshotModule.TODAY_TOTAL] 快照（带抓取时间）；展示快照属于票据 07。
+ * 账号内串行（今日累计 → 已结算 7 天），账号间并发数有上限，避免账号多时打满接口配额。
+ * 成功取数分别写入 [SnapshotModule.TODAY_TOTAL] 与 [SnapshotModule.WEEK_TREND] 快照（带抓取时间）；
+ * 展示快照属于票据 07。
  */
 class DashboardViewModel(
     private val accountStore: AccountStore,
@@ -68,6 +77,7 @@ class DashboardViewModel(
 
     private data class AccountFetch(
         val today: TodayTraffic? = null,
+        val week: List<DayTrafficPoint>? = null,
         val failure: ApiFailureKind? = null,
         val isRefreshing: Boolean = false,
     )
@@ -84,6 +94,7 @@ class DashboardViewModel(
                     AccountTodayState(
                         account = account,
                         today = fetch.today,
+                        week = fetch.week,
                         failure = fetch.failure,
                         isRefreshing = fetch.isRefreshing,
                     )
@@ -144,14 +155,32 @@ class DashboardViewModel(
     private suspend fun refreshAccount(account: Account) {
         updateFetch(account.id) { it.copy(isRefreshing = true) }
         val requestedAt = now()
-        val result: ApiResult<TodayTraffic> = try {
-            val credentials = accountStore.credentials(account.id)
-            if (credentials == null) {
-                // 解密失败或账号被删：按凭证失效降级，不影响其他账号。
-                ApiResult.Failure(ApiFailureKind.CREDENTIAL_INVALID)
-            } else {
-                aliyunApi.todayTraffic(credentials, requestedAt)
+        val credentials = try {
+            accountStore.credentials(account.id)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            null
+        }
+        if (credentials == null) {
+            // 解密失败或账号被删：按凭证失效降级，不影响其他账号。
+            updateFetch(account.id) {
+                it.copy(failure = ApiFailureKind.CREDENTIAL_INVALID, isRefreshing = false)
             }
+            return
+        }
+        // 账号内串行：先今日累计、再已结算 7 天，避免单个账号同时打两条 CDN 接口。
+        refreshToday(account, credentials, requestedAt)
+        refreshWeek(account, credentials, requestedAt)
+    }
+
+    private suspend fun refreshToday(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<TodayTraffic> = try {
+            aliyunApi.todayTraffic(credentials, requestedAt)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
@@ -169,13 +198,53 @@ class DashboardViewModel(
                     )
                 }
                 updateFetch(account.id) {
-                    it.copy(today = today, failure = null, isRefreshing = false)
+                    it.copy(today = today, failure = null)
                 }
             },
             onFailure = { failure ->
                 // 失败不清除旧数据（票据 07 的「失败保留旧值」从这里起步）。
                 updateFetch(account.id) {
-                    it.copy(failure = failure.kind, isRefreshing = false)
+                    it.copy(failure = failure.kind)
+                }
+            },
+        )
+    }
+
+    /**
+     * 已结算 7 天（票据 04）：成功后写 `WEEK_TREND` 快照（展示旧快照属票据 07）。
+     * 失败只记录错误、保留上次成功的 7 天数据，不抹掉已经取回的今日累计。
+     */
+    private suspend fun refreshWeek(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<List<DayTrafficPoint>> = try {
+            aliyunApi.settledDays(credentials, requestedAt)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            ApiResult.Failure(ApiFailureKind.NETWORK)
+        }
+
+        result.fold(
+            onSuccess = { days ->
+                runCatching {
+                    accountStore.saveSnapshot(
+                        accountId = account.id,
+                        module = SnapshotModule.WEEK_TREND,
+                        payloadJson = WeekTrafficSnapshotCodec.encode(days),
+                        fetchedAtMillis = now().toEpochMilli(),
+                    )
+                }
+                updateFetch(account.id) {
+                    it.copy(week = days, isRefreshing = false)
+                }
+            },
+            onFailure = { failure ->
+                updateFetch(account.id) {
+                    // 不覆盖今日累计已有的更具体错误；两轮都失败时也会在 7 天这步先落一次。
+                    it.copy(failure = it.failure ?: failure.kind, isRefreshing = false)
                 }
             },
         )
