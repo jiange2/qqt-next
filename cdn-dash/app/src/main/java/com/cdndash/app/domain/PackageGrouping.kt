@@ -42,8 +42,8 @@ data class RegionPackageGroups(
 /**
  * 把接口返回的资源包条目整理成余量视图（纯函数，spec「纯函数」）。
  *
- * - 只接受 [ResourcePackage.CDN_FLOW_PACKAGE_COMMODITY_CODE]（`cdnflowbag`），
- *   不混入全站加速或 OSS 的包；端点已过滤，这里再过滤一次，纯函数自身也是安全的。
+ * - 只接受 [ResourcePackage.FLOW_PACKAGE_COMMODITY_CODES]（`cdnflowbag`/`dcdnpaybag`），
+ *   不混入全站加速专用或 OSS 的包；端点已过滤，这里再过滤一次，纯函数自身也是安全的。
  * - 按（区域，北京自然日到期日）分组：组内剩余量/总量求和、计数包数。
  * - 排序：到期日升序；同日不同区域以区域名兜底，保证输出稳定。
  * - 空列表返回空列表，不抛异常。
@@ -52,7 +52,7 @@ data class RegionPackageGroups(
  */
 fun groupPackages(packages: List<ResourcePackage>, now: Instant): List<PackageGroup> =
     packages
-        .filter { it.commodityCode == ResourcePackage.CDN_FLOW_PACKAGE_COMMODITY_CODE }
+        .filter { it.commodityCode in ResourcePackage.FLOW_PACKAGE_COMMODITY_CODES }
         .groupBy { packageInfo -> packageInfo.region to packageInfo.expiresAt.beijingDate() }
         .map { (key, group) ->
             val earliestEffective = group.minOf { it.effectiveAt }

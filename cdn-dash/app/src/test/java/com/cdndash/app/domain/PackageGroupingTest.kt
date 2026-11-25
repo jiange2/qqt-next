@@ -10,7 +10,7 @@ import org.junit.Test
 /**
  * 资源包余量视图的纯函数测试（票据 05，spec「Testing Decisions」）。
  *
- * 全部用字面量断言：分组、排序、计数、未生效标注、区域不相加、非 cdnflowbag 排除、空列表。
+ * 全部用字面量断言：分组、排序、计数、未生效标注、区域不相加、非流量包商品码排除、空列表。
  * 「未生效」的参照时刻固定为 [NOW]，不依赖运行时刻。
  */
 class PackageGroupingTest {
@@ -138,7 +138,7 @@ class PackageGroupingTest {
     }
 
     @Test
-    fun `非 cdnflowbag 条目被排除`() {
+    fun `非 CDN 流量包商品码被排除而共享商品 dcdnpaybag 保留`() {
         val groups = groupPackages(
             listOf(
                 packageInfo(
@@ -146,6 +146,13 @@ class PackageGroupingTest {
                     commodityCode = "cdnflowbag",
                     totalBytes = 1000,
                     remainingBytes = 600,
+                    expiresAt = "2026-12-31T08:00:00Z",
+                ),
+                packageInfo(
+                    instanceId = "shared",
+                    commodityCode = "dcdnpaybag",
+                    totalBytes = 500,
+                    remainingBytes = 200,
                     expiresAt = "2026-12-31T08:00:00Z",
                 ),
                 packageInfo(
@@ -167,9 +174,9 @@ class PackageGroupingTest {
         )
 
         assertEquals(1, groups.size)
-        assertEquals(1, groups.single().packageCount)
-        assertEquals(1000L, groups.single().totalBytes)
-        assertEquals(600L, groups.single().remainingBytes)
+        assertEquals(2, groups.single().packageCount)
+        assertEquals(1500L, groups.single().totalBytes)
+        assertEquals(800L, groups.single().remainingBytes)
     }
 
     @Test
@@ -240,8 +247,9 @@ class PackageGroupingTest {
         val shown = selectPackageSummaryGroups(groups, limit = 2)
 
         assertEquals(3, shown.size)
+        // 区域按名称升序是 Unicode 码点序：「未」(U+672A) 排在「海」(U+6D77) 之前。
         assertEquals(
-            listOf("中国内地", "海外", ResourcePackage.UNKNOWN_REGION),
+            listOf("中国内地", ResourcePackage.UNKNOWN_REGION, "海外"),
             shown.map { it.region },
         )
     }

@@ -23,6 +23,9 @@
 - 测试（只写未运行）：`PackageGroupingTest`（空列表、合并计数、到期日升序、未生效/可用余量、区域不相加、排除非 cdnflowbag、北京日切分、区域分区排序）、`PackageEndpointTest`（Action/Version/不传 Status、cdnflowbag 过滤、解析、字段缺失、空/缺节点、单对象）、`PackageRefreshTest`（刷新取包并写 PACKAGES 快照、包失败不污染今日与其他账号）。`DashboardViewModelTest` 的请求计数改为每次刷新 3（今日 + 7 天 + 资源包）。
 - 第二次 merge `feat/cdn-dash`（票据 07/08）：与票据 07 的 `SnapshotStore` 合并——今日/7 天沿用其快照回落、「数据时间」与失败收尾，资源包作为账号内最后一步复用 `SnapshotStore` 写 `PACKAGES` 快照并统一结束 `isRefreshing`；卡片同时保留票据 07 的离线标注/错误提示与票据 05 的资源包摘要、点击下钻；删除与 `FailureText.kt` 重复的本地 `label()` 及未使用的 `MetricPlaceholder`。
 - 本机 JDK 8、无 Android SDK 与 gradle：**未编译、未跑测试**；也**未对真实 OpenAPI 验证**（无真实只读 AK）。
+- 2026-11-25 真机实测修正（用户反馈资源包提取不到，官方文档求证）：新版 CDN 资源包购买入口商品码已是 `dcdnpaybag`（CDN/全站加速共享），只过滤 `cdnflowbag` 会把新包全部丢掉。改为双端点合并：CDN `DescribeCdnUserResourcePackage`（2018-05-10，主端点，失败即整体失败）+ DCDN `DescribeDcdnUserResourcePackage`（2018-01-15，补充端点，失败容忍），按 `InstanceId` 去重；每端点按 `Status=valid/exhaust/closed` 各查一次（原「不传 Status」实际只回 valid，与备注意图不符，此次一并修正）；接受 `cdnflowbag`/`dcdnpaybag`，`dcdnpaybag` 按 `InitCapacityBaseUnit`/`CurrCapacityBaseUnit` 非 Byte 排除 HTTPS 请求数包（单位字段缺失容忍放行）。冷启动资源包请求数 1 → 6，相关测试计数已同步。
+
+- 2026-11-25 用户裁定：已用完的流量包不展示。三态查询改回只查 `Status=valid`（已耗尽/已关闭不再列出），并在解析时排除剩余量 ≤ 0 的条目（valid 状态可能滞后于余量归零）。冷启动资源包请求数 6 → 2（双端点各 1 条），相关测试计数已同步；字段缺失兜底测试的 sparse 条目补 `CurrCapacity` 以免被新排除规则丢弃。
 
 ## 人工验收（真机，未执行）
 

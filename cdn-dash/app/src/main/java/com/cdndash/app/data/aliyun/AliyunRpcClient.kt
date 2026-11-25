@@ -184,6 +184,9 @@ class AliyunRpcClient(
         /** CDN OpenAPI（今日累计、7 天走势、资源包）。 */
         const val DEFAULT_CDN_BASE_URL: String = "https://cdn.aliyuncs.com/"
 
+        /** DCDN OpenAPI（新版 CDN/全站加速共享资源包，票据 05）。 */
+        const val DEFAULT_DCDN_BASE_URL: String = "https://dcdn.aliyuncs.com/"
+
         /** 费用中心 OpenAPI（账号账单，票据 08）。 */
         const val DEFAULT_BSS_BASE_URL: String = "https://business.aliyuncs.com/"
 

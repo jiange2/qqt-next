@@ -13,6 +13,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -42,7 +43,7 @@ class PackageRefreshTest {
 
     private lateinit var server: MockWebServer
     private lateinit var store: InMemoryAccountStore
-    private lateinit var dispatcher: StandardTestDispatcher
+    private lateinit var dispatcher: TestDispatcher
 
     private val fixedNow: Instant = Instant.parse("2026-11-26T02:30:00Z")
 
@@ -191,15 +192,15 @@ class PackageRefreshTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        // 冷启动取一次资源包，其余两条是今日累计与 7 天。
+        // 冷启动取一次资源包（CDN + DCDN 端点各 1 条 valid），另两条是今日累计与 7 天。
         assertEquals(1, packageRequests)
-        assertEquals(3, server.requestCount)
+        assertEquals(4, server.requestCount)
 
         // 定时轮只补今日累计：资源包不随定时器重取。
         advanceTimeBy(5 * 60_000L)
         runCurrent()
         assertEquals(1, packageRequests)
-        assertEquals(4, server.requestCount)
+        assertEquals(5, server.requestCount)
 
         viewModel.onForegroundStop()
     }

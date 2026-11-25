@@ -13,6 +13,10 @@ object AliyunApiProvider {
                 baseUrl = AliyunRpcClient.DEFAULT_CDN_BASE_URL,
                 httpClient = httpClient,
             ),
+            dcdnRpc = AliyunRpcClient(
+                baseUrl = AliyunRpcClient.DEFAULT_DCDN_BASE_URL,
+                httpClient = httpClient,
+            ),
             bssRpc = AliyunRpcClient(
                 baseUrl = AliyunRpcClient.DEFAULT_BSS_BASE_URL,
                 httpClient = httpClient,

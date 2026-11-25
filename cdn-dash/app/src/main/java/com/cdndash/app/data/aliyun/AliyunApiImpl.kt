@@ -16,16 +16,18 @@ import java.time.YearMonth
  * 本类尽量不被后续票据改动，减少合并冲突。
  *
  * @param cdnRpc CDN OpenAPI（`cdn.aliyuncs.com`）的 RPC 客户端。
+ * @param dcdnRpc DCDN OpenAPI（`dcdn.aliyuncs.com`）的 RPC 客户端，默认与 [cdnRpc] 相同。
  * @param bssRpc 费用中心（`business.aliyuncs.com`）的 RPC 客户端，默认与 [cdnRpc] 相同。
  */
 class AliyunApiImpl(
     cdnRpc: AliyunRpcClient,
+    dcdnRpc: AliyunRpcClient = cdnRpc,
     bssRpc: AliyunRpcClient = cdnRpc,
 ) : AliyunApi {
 
     private val todayEndpoint = TodayTrafficEndpoint(cdnRpc)
     private val weekEndpoint = TrafficWeekEndpoint(cdnRpc)
-    private val packageEndpoint = PackageEndpoint(cdnRpc)
+    private val packageEndpoint = PackageEndpoint(cdnRpc, dcdnRpc)
     private val billEndpoint = BillEndpoint(bssRpc)
 
     override suspend fun todayTraffic(

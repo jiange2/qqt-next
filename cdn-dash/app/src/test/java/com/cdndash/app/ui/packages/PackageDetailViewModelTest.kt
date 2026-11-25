@@ -11,6 +11,7 @@ import java.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -36,7 +37,7 @@ class PackageDetailViewModelTest {
 
     private lateinit var server: MockWebServer
     private lateinit var store: InMemoryAccountStore
-    private lateinit var dispatcher: StandardTestDispatcher
+    private lateinit var dispatcher: TestDispatcher
 
     private val fixedNow: Instant = Instant.parse("2026-11-26T02:30:00Z")
 
