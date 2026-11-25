@@ -35,12 +35,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
+import com.cdndash.app.domain.TopSummary
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.weekTotal
 
 /**
- * 看板页。卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
+ * 看板页。顶部两数（所有账号今日累计 / 最近 7 天总量，票据 06）后接账号卡片列表；
+ * 卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
  * （已结算日、不含今天）；并接通打开 / 下拉 / 前台定时的刷新编排。
  * 资源包余量仍为占位，由票据 05 填充。
  *
@@ -93,10 +95,81 @@ fun DashboardScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                item(key = "top-summary") {
+                    TopSummaryHeader(summary = uiState.topSummary)
+                }
                 items(uiState.accounts, key = { it.account.id }) { state ->
                     AccountCard(state = state)
                 }
             }
+        }
+    }
+}
+
+/**
+ * 顶部两数（票据 06）：所有账号今日累计与最近 7 天总量，各带口径小字。
+ *
+ * 有缺失时两张卡都标注「N 个账号数据缺失」：ViewModel 把今日与 7 天两路的失败合并成
+ * 一个账号级状态，缺失数是按账号的并集，无法拆成「今日缺几个、7 天缺几个」而不改刷新编排。
+ * 放在 LazyColumn 的第一个 item 而不是覆盖层，因此不遮挡下拉刷新，并随列表滚动。
+ */
+@Composable
+private fun TopSummaryHeader(summary: TopSummary, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SummaryMetric(
+            label = "所有账号今日累计",
+            value = formatBytes(summary.todayTotalBytes),
+            caption = "未结算",
+            missingAccountCount = summary.missingAccountCount,
+            modifier = Modifier.weight(1f),
+        )
+        SummaryMetric(
+            label = "所有账号最近 7 天总量",
+            value = formatBytes(summary.weekTotalBytes),
+            caption = "已结算日 · 不含今天",
+            missingAccountCount = summary.missingAccountCount,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun SummaryMetric(
+    label: String,
+    value: String,
+    caption: String,
+    missingAccountCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    Card(modifier) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            if (missingAccountCount > 0) {
+                Text(
+                    text = "$missingAccountCount 个账号数据缺失",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
