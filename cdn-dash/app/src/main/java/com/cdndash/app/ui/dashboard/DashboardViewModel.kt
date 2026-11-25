@@ -10,8 +10,12 @@ import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.ApiResult
 import com.cdndash.app.data.aliyun.SnapshotStore
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
 import com.cdndash.app.data.aliyun.fold
 import com.cdndash.app.domain.Account
+import com.cdndash.app.domain.AccountCredentials
+import com.cdndash.app.domain.DayTrafficPoint
+import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
 import com.cdndash.app.domain.visibleAccounts
 import java.time.Instant
@@ -31,10 +35,15 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** 单账号的今日累计状态：成功数据、归一后的错误、是否正在取数三者互不覆盖。 */
+/**
+ * 单账号状态：今日累计、已结算 7 天、归一后的错误、是否正在取数互不覆盖。
+ *
+ * @property week 最近 7 个已结算日（不含今天）的日点，恒 7 个、按日升序；尚未取到或从未成功时为 null。
+ */
 data class AccountTodayState(
     val account: Account,
     val today: TodayTraffic? = null,
+    val week: List<DayTrafficPoint>? = null,
     val failure: ApiFailureKind? = null,
     val isRefreshing: Boolean = false,
     /**
@@ -42,6 +51,8 @@ data class AccountTodayState(
      * 卡片据此标注「数据时间 HH:mm（离线）」。本次实时取数成功时为 null。
      */
     val snapshotFetchedAtMillis: Long? = null,
+    /** 同 [snapshotFetchedAtMillis]，对应 [week] 模块；7 天请求失败回落到快照时非 null。 */
+    val weekSnapshotFetchedAtMillis: Long? = null,
 )
 
 /** 看板页状态；顺序完全来自账号手动排序（User Story 7）。 */
@@ -61,10 +72,10 @@ data class DashboardUiState(
  * - 退到后台（`ON_STOP`，即离开 `Lifecycle.State.STARTED`）→ 取消定时器，不再请求。
  *
  * 错误隔离（User Story 26）：账号间用 `supervisorScope` 并发，单账号的失败只写回该账号；
- * 账号内串行（先读凭据再请求），账号间并发数有上限，避免账号多时打满接口配额。
+ * 账号内串行（今日累计 → 已结算 7 天），账号间并发数有上限，避免账号多时打满接口配额。
  *
- * 快照与离线（User Stories 31/34，票据 07）：成功取数经 [SnapshotStore] 写入今日快照（带抓取时间）；
- * 失败时保留已展示的数据，没有则回落到上次快照并把 `snapshotFetchedAtMillis` 交给卡片标「数据时间」，
+ * 快照与离线（User Stories 31/34，票据 07）：成功取数经 [SnapshotStore] 写今日/7 天快照（带抓取时间）；
+ * 失败时保留已展示的数据，没有则回落到该模块上次快照，并把抓取时间交给卡片标「数据时间」；
  * 两者都没有才展示错误态。失败路径不写、不清任何快照。
  */
 class DashboardViewModel(
@@ -75,9 +86,11 @@ class DashboardViewModel(
 
     private data class AccountFetch(
         val today: TodayTraffic? = null,
+        val week: List<DayTrafficPoint>? = null,
         val failure: ApiFailureKind? = null,
         val isRefreshing: Boolean = false,
         val snapshotFetchedAtMillis: Long? = null,
+        val weekSnapshotFetchedAtMillis: Long? = null,
     )
 
     private val fetches = MutableStateFlow<Map<String, AccountFetch>>(emptyMap())
@@ -93,9 +106,11 @@ class DashboardViewModel(
                     AccountTodayState(
                         account = account,
                         today = fetch.today,
+                        week = fetch.week,
                         failure = fetch.failure,
                         isRefreshing = fetch.isRefreshing,
                         snapshotFetchedAtMillis = fetch.snapshotFetchedAtMillis,
+                        weekSnapshotFetchedAtMillis = fetch.weekSnapshotFetchedAtMillis,
                     )
                 },
                 hasAnyAccount = allAccounts.isNotEmpty(),
@@ -156,14 +171,30 @@ class DashboardViewModel(
         // 先亮出上次成功快照：弱网/断网时卡片不会从空白开始，后面失败分支再兜一次。
         showSnapshotIfNothingToShow(account.id)
         val requestedAt = now()
+        val credentials = try {
+            accountStore.credentials(account.id)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            null
+        }
+        if (credentials == null) {
+            // 解密失败或账号被删：按凭证失效降级，旧数据/快照照留，不影响其他账号。
+            showTodayFailure(account.id, ApiFailureKind.CREDENTIAL_INVALID)
+            return
+        }
+        // 账号内串行：先今日累计、再已结算 7 天，避免单个账号同时打两条 CDN 接口。
+        refreshToday(account, credentials, requestedAt)
+        refreshWeek(account, credentials, requestedAt)
+    }
+
+    private suspend fun refreshToday(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
         val result: ApiResult<TodayTraffic> = try {
-            val credentials = accountStore.credentials(account.id)
-            if (credentials == null) {
-                // 解密失败或账号被删：按凭证失效降级，不影响其他账号。
-                ApiResult.Failure(ApiFailureKind.CREDENTIAL_INVALID)
-            } else {
-                aliyunApi.todayTraffic(credentials, requestedAt)
-            }
+            aliyunApi.todayTraffic(credentials, requestedAt)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
@@ -179,41 +210,122 @@ class DashboardViewModel(
                     fetchedAtMillis = now().toEpochMilli(),
                 )
                 updateFetch(account.id) {
-                    it.copy(
-                        today = today,
-                        failure = null,
-                        isRefreshing = false,
-                        snapshotFetchedAtMillis = null,
-                    )
+                    // 不清 isRefreshing：7 天那一步结束后统一收尾。
+                    it.copy(today = today, failure = null, snapshotFetchedAtMillis = null)
                 }
             },
             onFailure = { failure ->
                 // 失败绝不清除旧数据与旧快照：优先保留本次已展示的数据，
                 // 没有则回落到快照，两者都没有才是纯错误态（票据 07）。
-                val cached = snapshots.loadToday(account.id)
-                updateFetch(account.id) { current ->
-                    val shown = current.today ?: cached?.value
-                    current.copy(
-                        today = shown,
-                        snapshotFetchedAtMillis = if (shown != null) {
-                            cached?.fetchedAtMillis ?: current.snapshotFetchedAtMillis
-                        } else {
-                            null
-                        },
-                        failure = failure.kind,
-                        isRefreshing = false,
-                    )
-                }
+                showTodayFailure(account.id, failure.kind)
             },
         )
     }
 
-    /** 尚无任何数据可展示时（首次进入/切换账号），先读一次快照顶上，避免空白。 */
+    /**
+     * 已结算 7 天（票据 04）：成功后写 `WEEK_TREND` 快照（带抓取时间）。
+     * 失败保留上次成功的 7 天数据与旧快照，不抹掉已经取回的今日累计。
+     */
+    private suspend fun refreshWeek(
+        account: Account,
+        credentials: AccountCredentials,
+        requestedAt: Instant,
+    ) {
+        val result: ApiResult<List<DayTrafficPoint>> = try {
+            aliyunApi.settledDays(credentials, requestedAt)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            ApiResult.Failure(ApiFailureKind.NETWORK)
+        }
+
+        result.fold(
+            onSuccess = { days ->
+                // 成功才覆盖快照；失败分支不写也不清，旧快照留给离线展示。
+                snapshots.save(
+                    accountId = account.id,
+                    module = SnapshotModule.WEEK_TREND,
+                    payloadJson = WeekTrafficSnapshotCodec.encode(days),
+                    fetchedAtMillis = now().toEpochMilli(),
+                )
+                updateFetch(account.id) {
+                    it.copy(
+                        week = days,
+                        weekSnapshotFetchedAtMillis = null,
+                        isRefreshing = false,
+                    )
+                }
+            },
+            onFailure = { failure ->
+                showWeekFailure(account.id, failure.kind)
+            },
+        )
+    }
+
+    /**
+     * 今日累计失败的统一收尾：保留已展示数据，没有则回落今日快照；都没有就是错误态。
+     * 凭证失效（解密失败/账号被删）也走这里，保证旧数据不被抹掉。
+     */
+    private suspend fun showTodayFailure(accountId: String, kind: ApiFailureKind) {
+        val cached = snapshots.loadToday(accountId)
+        updateFetch(accountId) { current ->
+            val shown = current.today ?: cached?.value
+            current.copy(
+                today = shown,
+                snapshotFetchedAtMillis = if (shown != null) {
+                    cached?.fetchedAtMillis ?: current.snapshotFetchedAtMillis
+                } else {
+                    null
+                },
+                failure = kind,
+                isRefreshing = false,
+            )
+        }
+    }
+
+    /** 7 天失败的统一收尾：保留已展示的 7 天数据，没有则回落 7 天快照。 */
+    private suspend fun showWeekFailure(accountId: String, kind: ApiFailureKind) {
+        val cached = snapshots.load(
+            accountId = accountId,
+            module = SnapshotModule.WEEK_TREND,
+            decode = WeekTrafficSnapshotCodec::decode,
+        )
+        updateFetch(accountId) { current ->
+            val shown = current.week ?: cached?.value
+            current.copy(
+                week = shown,
+                weekSnapshotFetchedAtMillis = if (shown != null) {
+                    cached?.fetchedAtMillis ?: current.weekSnapshotFetchedAtMillis
+                } else {
+                    null
+                },
+                // 不覆盖今日累计已有的更具体错误（今日失败时它已落过 kind）。
+                failure = current.failure ?: kind,
+                isRefreshing = false,
+            )
+        }
+    }
+
+    /** 尚无任何数据可展示时（首次进入/切换账号），先读各模块上次成功快照顶上，避免空白。 */
     private suspend fun showSnapshotIfNothingToShow(accountId: String) {
-        if (fetches.value[accountId]?.today != null) return
-        val cached = snapshots.loadToday(accountId) ?: return
-        updateFetch(accountId) {
-            it.copy(today = cached.value, snapshotFetchedAtMillis = cached.fetchedAtMillis)
+        val current = fetches.value[accountId]
+        if (current?.today == null) {
+            snapshots.loadToday(accountId)?.let { cached ->
+                updateFetch(accountId) {
+                    it.copy(today = cached.value, snapshotFetchedAtMillis = cached.fetchedAtMillis)
+                }
+            }
+        }
+        if (current?.week == null) {
+            snapshots.load(
+                accountId = accountId,
+                module = SnapshotModule.WEEK_TREND,
+                decode = WeekTrafficSnapshotCodec::decode,
+            )?.let { cached ->
+                updateFetch(accountId) {
+                    it.copy(week = cached.value, weekSnapshotFetchedAtMillis = cached.fetchedAtMillis)
+                }
+            }
         }
     }
 

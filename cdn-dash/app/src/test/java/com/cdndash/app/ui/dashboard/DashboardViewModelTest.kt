@@ -5,9 +5,12 @@ import com.cdndash.app.data.aliyun.AliyunApiImpl
 import com.cdndash.app.data.aliyun.AliyunRpcClient
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.TodayTrafficSnapshotCodec
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.SnapshotModule
 import com.cdndash.app.domain.TodayTraffic
 import java.time.Instant
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.collect
@@ -117,20 +120,20 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         // 定时器是无限循环，不能用 advanceUntilIdle（会一直推进虚拟时间）；
-        // runCurrent 只跑完当前时刻的初始刷新。
-        runCurrent()
-        assertEquals(1, server.requestCount)
-
-        // 默认刷新间隔 5 分钟：虚拟时间前进 5 分钟后应再请求一次。
-        advanceTimeBy(5 * 60_000L)
+        // runCurrent 只跑完当前时刻的初始刷新。每账号每轮两条请求（今日累计 + 已结算 7 天）。
         runCurrent()
         assertEquals(2, server.requestCount)
+
+        // 默认刷新间隔 5 分钟：虚拟时间前进 5 分钟后应再刷新一轮。
+        advanceTimeBy(5 * 60_000L)
+        runCurrent()
+        assertEquals(4, server.requestCount)
 
         // 退到后台（ON_STOP）后定时器取消，再前进 30 分钟也不请求。
         viewModel.onForegroundStop()
         advanceTimeBy(30 * 60_000L)
         runCurrent()
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
     }
 
     @Test
@@ -143,15 +146,15 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        assertEquals(1, server.requestCount)
+        assertEquals(2, server.requestCount)
 
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(1, server.requestCount)
+        assertEquals(2, server.requestCount)
 
         advanceTimeBy(10 * 60_000L)
         runCurrent()
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
 
         viewModel.onForegroundStop()
     }
@@ -183,6 +186,38 @@ class DashboardViewModelTest {
         val snapshot = store.snapshot(account.id, SnapshotModule.TODAY_TOTAL)
         assertEquals(snapshotAt, snapshot?.fetchedAtMillis)
         assertEquals(777L, TodayTrafficSnapshotCodec.decode(snapshot!!.payloadJson)?.bytes)
+    }
+
+    @Test
+    fun `7 天请求失败回落到 7 天快照并保留今日错误`() = runTest(dispatcher) {
+        server.dispatcher = staticDispatcher { MockResponse().setResponseCode(500) }
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val snapshotAt = fixedNow.minusSeconds(3_600L).toEpochMilli()
+        val days = listOf(
+            DayTrafficPoint(date = LocalDate.parse("2026-11-19"), bytes = 10L),
+            DayTrafficPoint(date = LocalDate.parse("2026-11-20"), bytes = 20L),
+        )
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.WEEK_TREND,
+            payloadJson = WeekTrafficSnapshotCodec.encode(days),
+            fetchedAtMillis = snapshotAt,
+        )
+        val viewModel = newViewModel()
+
+        backgroundScope.launch { viewModel.uiState.collect {} }
+        viewModel.refresh()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value.accounts.single()
+        assertEquals(days, state.week)
+        assertEquals(snapshotAt, state.weekSnapshotFetchedAtMillis)
+        assertEquals(ApiFailureKind.NETWORK, state.failure)
+        // 7 天模块的旧快照同样不被失败覆盖。
+        assertEquals(
+            snapshotAt,
+            store.snapshot(account.id, SnapshotModule.WEEK_TREND)?.fetchedAtMillis,
+        )
     }
 
     @Test
