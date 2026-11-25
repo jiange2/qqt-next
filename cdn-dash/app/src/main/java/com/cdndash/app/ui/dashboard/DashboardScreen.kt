@@ -67,7 +67,11 @@ fun DashboardScreen(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            // 切到其它标签/离开页面时组件先被销毁，兜底停掉定时器（ON_STOP 未必来得及派发）。
+            viewModel.onForegroundStop()
+        }
     }
 
     if (uiState.accounts.isEmpty()) {
