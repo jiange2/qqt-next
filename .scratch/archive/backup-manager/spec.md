@@ -160,3 +160,4 @@ qqt 的线上数据只落在生产服务器（MySQL 库 `qqt_next`）和阿里�
 - 代码评审：两轴（Standards/Spec）**零硬违规**；唯一实质修复 = db-dump 远程命令加 `set -o pipefail`（部分 dump 不再误判成功）+ 删死代码 `notImplementedTask` + DRY 抽取（format / queue / scanArchiveDir）。
 - qqt 仓库零改动（仅只读消费 `sync-oss.ps1` / `backup/` / android keystore 源 / 两份手册；本 tracker 更新为 spec 发布地约定）。
 - 待人工确认（各票勾选项保留未勾）：真实 SSH 凭据下服务器 dump/.env 取回、真实 OSS 完整增量/首次全量走查、portable exe 双击黄金路径。运维依赖（`/root/.my.cnf`、SSH 可达、backend-next `.env` 含 OSS AK）用户自理。
+- 2026-11-25 归档：目录移至 `.scratch/archive/backup-manager/`。spec 与票据 01–07 均 resolved；实现仓库 `D:\Project\backup-manager` 的 `main` tip `f8d1234`（含评审修复）。未完成项：各票真实环境验收待人工（真实 SSH 凭据下服务器 dump/`.env` 取回、真实 OSS 完整增量/首次全量走查、portable exe 双击黄金路径）。

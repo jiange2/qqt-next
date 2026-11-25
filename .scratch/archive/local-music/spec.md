@@ -1,6 +1,6 @@
 # 本地音乐（本地文件夹扫描）
 
-Status: ready-for-agent
+Status: resolved
 
 ## Problem Statement
 
@@ -160,3 +160,7 @@ Status: ready-for-agent
 - 队列快照里会出现 content URI；只要持久化授权还在，冷启动恢复即可正常播放。
 - 本地音乐与「下载列表」是两个互不包含的集合：前者是用户设备上的文件，后者是 App 自己下载到私有目录的内容。
 - 本次改造不动「响应快照」「服务器不可达」等网络降级机制；本地音乐页根本不发起网络请求。
+
+## Comments
+
+- 2026-11-25 归档：Status ready-for-agent → resolved，目录移至 `.scratch/archive/local-music/`。集成分支 `feat/local-music`（tip `5301a6b`，main 合并 `c738b0a`），票据 01–11 全部 resolved。本 spec 是本地音乐基线：扫描与索引部分已由 `local-music-rescan` 取代，其余决策由导入 / 删除 / 视图切换 / 批量管理 / 编辑候选 / 播放器图标行移除等后续特性叠加。未完成项：本 spec 无代码评审记录入库，票据无设备级验收复选框，真机验收未单独登记。

@@ -127,3 +127,4 @@ Status: resolved
 ## Comments
 
 - 2026-11-10 实现完成：票据 01–05 全部合入集成分支 `feat/local-music-rescan`（tip ff80782，含评审修复）。通过双轴 code review（Standards/Spec），修复查询失败清空快照、重扫计数含排除行、文档口径矛盾等全部硬伤。各票勾选项为设备级验收清单，待人工编译后逐项确认（本仓规约：AI 不编译）。
+- 2026-11-25 归档：目录移至 `.scratch/archive/local-music-rescan/`。spec 与票据 01–05 均 resolved；集成分支 `feat/local-music-rescan` tip `ff80782`，main 合并 `cde23d4`；双轴评审结论见 2026-11-10 条目。未完成项：设备级验收复选框待人工真机确认。

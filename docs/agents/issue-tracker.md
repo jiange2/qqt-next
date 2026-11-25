@@ -18,6 +18,16 @@ Create a new file under `.scratch/<feature-slug>/` (creating the directory if ne
 
 Read the file at the referenced path. The user will normally pass the path or the issue number directly.
 
+## Archive operations
+
+Used by `/archive-spec` once a spec and its tickets are finished.
+
+- **Location**: `.scratch/archive/<feature-slug>/`, moved with `git mv` so history follows the rename. Active work stays directly under `.scratch/`.
+- **Status**: spec and ticket files keep the `Status:` vocabulary; archiving sets `resolved` and does not invent a new status string. The `archive/` location is the archive marker.
+- **Record**: append one dated bullet under the spec's `## Comments` with the integration branch, base commit, commit chain, review verdict, and any remaining unverified items.
+- **Frontier scans** look under `.scratch/<effort>/issues/`, so `.scratch/archive/` is never picked up as active work.
+- **References**: update `.scratch/<slug>` paths in active specs and docs to the new location; never rewrite archived specs or commit messages.
+
 ## Wayfinding operations
 
 Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
