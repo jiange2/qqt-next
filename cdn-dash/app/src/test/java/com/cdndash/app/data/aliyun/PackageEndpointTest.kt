@@ -16,10 +16,11 @@ import org.junit.Test
 
 /**
  * 资源包端点的 HTTP 层测试（票据 05）：经 [AliyunApi] 接缝验证双端点
- * （CDN `DescribeCdnUserResourcePackage` + DCDN `DescribeDcdnUserResourcePackage`）、
- * 只查 valid 状态、商品码/容量单位过滤、用完排除、InstanceId 去重、响应解析与字段缺失容忍。
+ * （CDN `DescribeCdnUserResourcePackage` + DCDN `DescribeDcdnUserResourcePackage`）
+ * 各查 valid 与 exhaust 两轮、按到期时间过滤、商品码/容量单位过滤、InstanceId 去重、
+ * 响应解析与字段缺失容忍。
  *
- * 单 MockWebServer 承载两个端点，按 `Action` 区分派发。
+ * 单 MockWebServer 承载两个端点，按 `Action` 与 `Status` 区分派发。
  */
 class PackageEndpointTest {
 
@@ -52,10 +53,10 @@ class PackageEndpointTest {
     }
 
     @Test
-    fun `双端点只查 valid 状态且携带正确的 Action 与 Version`() = runTest {
+    fun `每端点先查默认 valid 再补查 Status=exhaust`() = runTest {
         api.resourcePackages(credentials, now)
 
-        assertEquals(2, server.requestCount)
+        assertEquals(4, server.requestCount)
         val requests = (1..server.requestCount).map {
             val url = requireNotNull(server.takeRequest().requestUrl)
             Triple(
@@ -66,13 +67,47 @@ class PackageEndpointTest {
         }
         val cdn = requests.filter { it.first == "DescribeCdnUserResourcePackage" }
         val dcdn = requests.filter { it.first == "DescribeDcdnUserResourcePackage" }
-        assertEquals(1, cdn.size)
-        assertEquals(1, dcdn.size)
+        // 默认轮不传 Status（=valid），第二轮回查已耗尽包。
+        assertEquals(listOf(null, "exhaust"), cdn.map { it.third })
+        assertEquals(listOf(null, "exhaust"), dcdn.map { it.third })
         assertTrue(cdn.all { it.second == "2018-05-10" })
         assertTrue(dcdn.all { it.second == "2018-01-15" })
-        // 已耗尽/已关闭的包不展示，只查 valid。
-        assertEquals("valid", cdn.single().third)
-        assertEquals("valid", dcdn.single().third)
+    }
+
+    @Test
+    fun `补查的已耗尽包并入结果供组内总量求和`() = runTest {
+        server.dispatcher = packageDispatcher(
+            dcdnBody = """{"ResourcePackageInfos":{"ResourcePackageInfo":[$SHARED_PACKAGE]}}""",
+            dcdnExhaustBody = """{"ResourcePackageInfos":{"ResourcePackageInfo":[$EXHAUSTED_PACKAGE]}}""",
+        )
+
+        val packages = requireNotNull(api.resourcePackages(credentials, now).successOrNull())
+
+        // 已耗尽的包不返回会让同组总量少算（「2T 组合只显示 1T」），必须并入。
+        assertEquals(listOf("shared-1", "shared-exhausted"), packages.map { it.instanceId })
+        assertEquals(0L, packages.last().remainingBytes)
+    }
+
+    @Test
+    fun `exhaust 补查失败时整端点失败`() = runTest {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val url = request.requestUrl
+                return when {
+                    url?.queryParameter("Status") == PackageEndpoint.EXHAUST_STATUS ->
+                        MockResponse().setResponseCode(500)
+
+                    url?.queryParameter("Action") == "DescribeCdnUserResourcePackage" ->
+                        jsonResponse(PACKAGE_RESPONSE)
+
+                    else -> jsonResponse(EMPTY_RESPONSE)
+                }
+            }
+        }
+
+        val failure = requireNotNull(api.resourcePackages(credentials, now).failureOrNull())
+
+        assertEquals(ApiFailureKind.NETWORK, failure.kind)
     }
 
     @Test
@@ -132,7 +167,8 @@ class PackageEndpointTest {
         server.dispatcher = packageDispatcher(
             cdnBody = """
                 {"ResourcePackageInfos":{"ResourcePackageInfo":[
-                  {"CommodityCode":"cdnflowbag","InstanceId":"sparse","InitCapacity":"100","CurrCapacity":"50"}
+                  {"CommodityCode":"cdnflowbag","InstanceId":"sparse","InitCapacity":"1,000","CurrCapacity":"500",
+                   "EndTime":"2027-12-31T16:00:00Z"}
                 ]}}
             """.trimIndent(),
         )
@@ -141,23 +177,42 @@ class PackageEndpointTest {
 
         assertEquals("sparse", packageInfo.instanceId)
         assertEquals(ResourcePackage.UNKNOWN_REGION, packageInfo.region)
-        assertEquals(100L, packageInfo.totalBytes)
-        assertEquals(50L, packageInfo.remainingBytes)
+        // 千分位逗号容错。
+        assertEquals(1000L, packageInfo.totalBytes)
+        assertEquals(500L, packageInfo.remainingBytes)
         assertEquals(Instant.EPOCH, packageInfo.effectiveAt)
-        assertEquals(Instant.EPOCH, packageInfo.expiresAt)
+        assertEquals(Instant.parse("2027-12-31T16:00:00Z"), packageInfo.expiresAt)
     }
 
     @Test
-    fun `剩余量为 0 或负数的包不展示`() = runTest {
+    fun `到期时间已过的包不展示而缺失到期时间按未知保留`() = runTest {
+        server.dispatcher = packageDispatcher(
+            cdnBody = """
+                {"ResourcePackageInfos":{"ResourcePackageInfo":[
+                  $CDN_PACKAGE,
+                  {"CommodityCode":"cdnflowbag","InstanceId":"expired","Region":"中国内地",
+                   "InitCapacity":"1073741824","CurrCapacity":"536870912",
+                   "StartTime":"2025-11-01T00:00:00Z","EndTime":"2026-11-01T00:00:00Z"},
+                  {"CommodityCode":"cdnflowbag","InstanceId":"no-expiry","Region":"中国内地",
+                   "InitCapacity":"1073741824","CurrCapacity":"536870912"}
+                ]}}
+            """.trimIndent(),
+        )
+
+        val packages = requireNotNull(api.resourcePackages(credentials, now).successOrNull())
+
+        // 到期时间解析失败不能当成「已过期」误丢真实资源包。
+        assertEquals(listOf("pkg-1", "no-expiry"), packages.map { it.instanceId })
+    }
+
+    @Test
+    fun `剩余量为 0 的包照常返回由分组层判断整组是否用尽`() = runTest {
         server.dispatcher = packageDispatcher(
             cdnBody = """
                 {"ResourcePackageInfos":{"ResourcePackageInfo":[
                   $CDN_PACKAGE,
                   {"CommodityCode":"cdnflowbag","InstanceId":"used-up","Region":"中国内地",
                    "InitCapacity":"1073741824","CurrCapacity":"0",
-                   "StartTime":"2026-11-01T00:00:00Z","EndTime":"2027-12-31T16:00:00Z"},
-                  {"CommodityCode":"cdnflowbag","InstanceId":"no-remaining","Region":"中国内地",
-                   "InitCapacity":"1073741824",
                    "StartTime":"2026-11-01T00:00:00Z","EndTime":"2027-12-31T16:00:00Z"}
                 ]}}
             """.trimIndent(),
@@ -165,7 +220,9 @@ class PackageEndpointTest {
 
         val packages = requireNotNull(api.resourcePackages(credentials, now).successOrNull())
 
-        assertEquals(listOf("pkg-1"), packages.map { it.instanceId })
+        // 用完的单包不剔除：同组还有其他余量时要保留包数，是否隐藏由合并后的组剩余量决定。
+        assertEquals(listOf("pkg-1", "used-up"), packages.map { it.instanceId })
+        assertEquals(0L, packages.last().remainingBytes)
     }
 
     @Test
@@ -234,17 +291,26 @@ class PackageEndpointTest {
         assertEquals(ApiFailureKind.NETWORK, failure.kind)
     }
 
-    /** 默认两端点都回空；可按 Action 覆盖响应体。 */
+    /** 默认都回空；valid（无 Status）与 exhaust 可分别按端点覆盖响应体。 */
     private fun packageDispatcher(
         cdnBody: String = EMPTY_RESPONSE,
         dcdnBody: String = EMPTY_RESPONSE,
+        cdnExhaustBody: String = EMPTY_RESPONSE,
+        dcdnExhaustBody: String = EMPTY_RESPONSE,
     ): Dispatcher = object : Dispatcher() {
-        override fun dispatch(request: RecordedRequest): MockResponse =
-            when (request.requestUrl?.queryParameter("Action")) {
-                "DescribeCdnUserResourcePackage" -> jsonResponse(cdnBody)
-                "DescribeDcdnUserResourcePackage" -> jsonResponse(dcdnBody)
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            val url = request.requestUrl ?: return MockResponse().setResponseCode(404)
+            val exhaust = url.queryParameter("Status") == PackageEndpoint.EXHAUST_STATUS
+            return when (url.queryParameter("Action")) {
+                "DescribeCdnUserResourcePackage" ->
+                    jsonResponse(if (exhaust) cdnExhaustBody else cdnBody)
+
+                "DescribeDcdnUserResourcePackage" ->
+                    jsonResponse(if (exhaust) dcdnExhaustBody else dcdnBody)
+
                 else -> MockResponse().setResponseCode(404)
             }
+        }
     }
 
     private fun jsonResponse(body: String): MockResponse =
@@ -262,6 +328,13 @@ class PackageEndpointTest {
         const val SHARED_PACKAGE: String =
             """{"CommodityCode":"dcdnpaybag","InstanceId":"shared-1","Region":"中国内地",
                "InitCapacity":"107374182400","CurrCapacity":"53661095687",
+               "InitCapacityBaseUnit":"Byte","CurrCapacityBaseUnit":"Byte",
+               "StartTime":"2026-11-01T00:00:00Z","EndTime":"2027-12-31T16:00:00Z"}"""
+
+        const val EXHAUSTED_PACKAGE: String =
+            """{"CommodityCode":"dcdnpaybag","InstanceId":"shared-exhausted","Region":"中国内地",
+               "Status":"exhaust",
+               "InitCapacity":"1073741824","CurrCapacity":"0",
                "InitCapacityBaseUnit":"Byte","CurrCapacityBaseUnit":"Byte",
                "StartTime":"2026-11-01T00:00:00Z","EndTime":"2027-12-31T16:00:00Z"}"""
 

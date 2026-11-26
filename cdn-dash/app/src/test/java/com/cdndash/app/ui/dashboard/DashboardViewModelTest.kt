@@ -121,21 +121,21 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         // 定时器是无限循环，不能用 advanceUntilIdle（会一直推进虚拟时间）；
-        // runCurrent 只跑完当前时刻的初始刷新。冷启动每账号 4 条请求
-        // （今日累计 + 已结算 7 天 + 资源包双端点各 1 条）。
+        // runCurrent 只跑完当前时刻的初始刷新。冷启动每账号 6 条请求
+        // （今日累计 + 已结算 7 天 + 资源包 4 条：双端点 × valid/exhaust）。
         runCurrent()
-        assertEquals(4, server.requestCount)
+        assertEquals(6, server.requestCount)
 
         // 默认刷新间隔 5 分钟：定时轮只补今日累计一条（7 天未满 1 小时、资源包不进定时）。
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(5, server.requestCount)
+        assertEquals(7, server.requestCount)
 
         // 退到后台（ON_STOP）后定时器取消，再前进 30 分钟也不请求。
         viewModel.onForegroundStop()
         advanceTimeBy(30 * 60_000L)
         runCurrent()
-        assertEquals(5, server.requestCount)
+        assertEquals(7, server.requestCount)
     }
 
     @Test
@@ -148,17 +148,17 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        // 冷启动一次全量刷新 = 今日累计 + 已结算 7 天 + 资源包 2 次请求，共 4 次。
-        assertEquals(4, server.requestCount)
+        // 冷启动一次全量刷新 = 今日累计 + 已结算 7 天 + 资源包 4 次请求，共 6 次。
+        assertEquals(6, server.requestCount)
 
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(4, server.requestCount)
+        assertEquals(6, server.requestCount)
 
         // 到 15 分钟才补一轮今日累计（只 1 次请求）。
         advanceTimeBy(10 * 60_000L)
         runCurrent()
-        assertEquals(5, server.requestCount)
+        assertEquals(7, server.requestCount)
 
         viewModel.onForegroundStop()
     }
@@ -174,26 +174,26 @@ class DashboardViewModelTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        assertEquals(4, server.requestCount)
+        assertEquals(6, server.requestCount)
 
         // 15/30/45 分钟三轮：每轮只补今日累计，7 天未满一小时、资源包不进定时。
         advanceTimeBy(45 * 60_000L)
         runCurrent()
-        assertEquals(7, server.requestCount)
+        assertEquals(9, server.requestCount)
 
         // 到 60 分钟：今日 + 已结算 7 天各一次，资源包仍不重取。
         advanceTimeBy(15 * 60_000L)
         runCurrent()
-        assertEquals(9, server.requestCount)
+        assertEquals(11, server.requestCount)
 
         viewModel.onForegroundStop()
         val requests = (1..server.requestCount).map {
             val url = requireNotNull(server.takeRequest().requestUrl)
             url.queryParameter("Action") to url.queryParameter("Interval")
         }
-        // 资源包只在冷启动取一次（双端点各一条 valid）：定时轮不再打资源包接口。
-        assertEquals(1, requests.count { it.first == "DescribeCdnUserResourcePackage" })
-        assertEquals(1, requests.count { it.first == "DescribeDcdnUserResourcePackage" })
+        // 资源包只在冷启动取一次（双端点 × valid/exhaust 共 4 条）：定时轮不再打资源包接口。
+        assertEquals(2, requests.count { it.first == "DescribeCdnUserResourcePackage" })
+        assertEquals(2, requests.count { it.first == "DescribeDcdnUserResourcePackage" })
         // 7 天（Interval 3600）只在冷启动与满一小时后各取一次。
         assertEquals(2, requests.count { it.second == "3600" })
         // 今日累计（Interval 300）：冷启动 1 次 + 15/30/45/60 分钟 4 轮。

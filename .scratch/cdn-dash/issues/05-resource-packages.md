@@ -26,6 +26,10 @@
 - 2026-11-25 真机实测修正（用户反馈资源包提取不到，官方文档求证）：新版 CDN 资源包购买入口商品码已是 `dcdnpaybag`（CDN/全站加速共享），只过滤 `cdnflowbag` 会把新包全部丢掉。改为双端点合并：CDN `DescribeCdnUserResourcePackage`（2018-05-10，主端点，失败即整体失败）+ DCDN `DescribeDcdnUserResourcePackage`（2018-01-15，补充端点，失败容忍），按 `InstanceId` 去重；每端点按 `Status=valid/exhaust/closed` 各查一次（原「不传 Status」实际只回 valid，与备注意图不符，此次一并修正）；接受 `cdnflowbag`/`dcdnpaybag`，`dcdnpaybag` 按 `InitCapacityBaseUnit`/`CurrCapacityBaseUnit` 非 Byte 排除 HTTPS 请求数包（单位字段缺失容忍放行）。冷启动资源包请求数 1 → 6，相关测试计数已同步。
 
 - 2026-11-25 用户裁定：已用完的流量包不展示。三态查询改回只查 `Status=valid`（已耗尽/已关闭不再列出），并在解析时排除剩余量 ≤ 0 的条目（valid 状态可能滞后于余量归零）。冷启动资源包请求数 6 → 2（双端点各 1 条），相关测试计数已同步；字段缺失兜底测试的 sparse 条目补 `CurrCapacity` 以免被新排除规则丢弃。
+- 2026-11-25 用户再裁定：改为按到期时间取包，去掉 `Status=valid` 过滤条件。该接口只有 `Status`（valid/exhaust/closed，默认 valid）枚举参数、没有时间参数，故请求不带 `Status`，客户端合并后只保留 `EndTime` 晚于当前的包（缺失 `EndTime` 视为不可证明未来，同样排除）；请求数不变（每账号 2 条）。用完的包不在端点剔除：由 `groupPackages` 在合并分组后隐藏整组剩余量为 0 的组（单包用完但组内仍有剩余时保留，包数照实计数）。
+
+- 2026-11-26 用真实账号核实「2T 组合只显示 1T」：接口 `Status` 缺省只返回 valid，**已耗尽的包不再返回**（`Status=exhaust` 才列出，`exhausted` 会被 CDN 端点判 InvalidStatus、DCDN 静默空）。修复为每端点 valid + exhaust 两轮，合并后再按（区域，到期日）分组求和；已耗尽包计入组总量、剩余 0，整组用尽仍隐藏。同账号实测：1T（余 553.3G）+ 1T 已耗尽（同到期日 2026-12-15）合并回 2T；另一 1T 已耗尽（到期 2027-09-07）整组隐藏；50G 单独成组。
+- 2026-11-25 用户反馈「同组应 2T 只剩 600G 却只显示 1T」排查加固：到期时间缺失/解析失败（EPOCH）不再当作已过期丢弃，按未知到期保留；容量字段兼容千分位逗号；无 InstanceId 的兜底 id 带上 Action 前缀，避免双端点序号撞 id 被去重误删。分组键仍是（区域，北京自然日到期日）：两个包若到期日不同会拆成两行，这是现有口径，需在明细页按到期日区分确认。
 
 ## 人工验收（真机，未执行）
 

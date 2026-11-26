@@ -1,23 +1,29 @@
 package com.cdndash.app.ui.dashboard
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.CloudQueue
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -26,7 +32,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -40,10 +50,16 @@ import com.cdndash.app.domain.TopSummary
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.weekTotal
+import com.cdndash.app.ui.components.AppCard
+import com.cdndash.app.ui.components.FailureBanner
+import com.cdndash.app.ui.components.MetricText
+import com.cdndash.app.ui.navigation.PillNavContentPadding
+import com.cdndash.app.ui.navigation.TopBarContentPadding
 import com.cdndash.app.ui.packages.PackageSummarySection
+import com.cdndash.app.ui.theme.LocalExtendedColors
 
 /**
- * 看板页。顶部两数（所有账号今日累计 / 最近 7 天总量，票据 06）后接账号卡片列表；
+ * 看板页。顶部品牌渐变 Hero 卡（所有账号今日累计 / 最近 7 天总量，票据 06）后接账号卡片列表；
  * 卡片并列显示今日累计（「截至 HH:mm」、未结算）与最近 7 天合计 + 7 点折线
  * （已结算日、不含今天），下方是按区域展示的资源包余量摘要（票据 05），点卡片进入明细页。
  * 并接通打开 / 下拉 / 前台定时的刷新编排。
@@ -100,8 +116,13 @@ fun DashboardScreen(
         ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    top = TopBarContentPadding,
+                    end = 16.dp,
+                    bottom = PillNavContentPadding,
+                ),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item(key = "top-summary") {
                     TopSummaryHeader(summary = uiState.topSummary)
@@ -118,103 +139,150 @@ fun DashboardScreen(
 }
 
 /**
- * 顶部两数（票据 06）：所有账号今日累计与最近 7 天总量，各带口径小字。
+ * 顶部 Hero 卡（票据 06）：品牌渐变底，今日累计为主大数，7 天总量为次指标。
  *
- * 有缺失时两张卡都标注「N 个账号数据缺失」：ViewModel 把今日与 7 天两路的失败合并成
+ * 有缺失时标注「N 个账号数据缺失」：ViewModel 把今日与 7 天两路的失败合并成
  * 一个账号级状态，缺失数是按账号的并集，无法拆成「今日缺几个、7 天缺几个」而不改刷新编排。
  * 放在 LazyColumn 的第一个 item 而不是覆盖层，因此不遮挡下拉刷新，并随列表滚动。
  */
 @Composable
 private fun TopSummaryHeader(summary: TopSummary, modifier: Modifier = Modifier) {
-    Row(
+    val extended = LocalExtendedColors.current
+    val gradient = Brush.linearGradient(
+        colors = listOf(extended.heroStart, extended.heroEnd),
+    )
+    val onHero = Color.White
+    val onHeroMuted = Color.White.copy(alpha = 0.75f)
+    Surface(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = Color.Transparent,
     ) {
-        SummaryMetric(
-            label = "所有账号今日累计",
-            value = formatBytes(summary.todayTotalBytes),
-            caption = "未结算",
-            missingAccountCount = summary.missingAccountCount,
-            modifier = Modifier.weight(1f),
-        )
-        SummaryMetric(
-            label = "所有账号最近 7 天总量",
-            value = formatBytes(summary.weekTotalBytes),
-            caption = "已结算日 · 不含今天",
-            missingAccountCount = summary.missingAccountCount,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
-private fun SummaryMetric(
-    label: String,
-    value: String,
-    caption: String,
-    missingAccountCount: Int,
-    modifier: Modifier = Modifier,
-) {
-    Card(modifier) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Box(
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.extraLarge)
+                .background(gradient),
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            if (missingAccountCount > 0) {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Text(
-                    text = "$missingAccountCount 个账号数据缺失",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    text = "所有账号今日累计",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = onHeroMuted,
                 )
+                Text(
+                    text = formatBytes(summary.todayTotalBytes),
+                    style = MaterialTheme.typography.displaySmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = onHero,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    text = "未结算",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onHeroMuted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                Spacer(Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Color.White.copy(alpha = 0.2f)),
+                )
+                Row(
+                    modifier = Modifier.padding(top = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "所有账号最近 7 天总量",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = onHeroMuted,
+                        )
+                        Text(
+                            text = formatBytes(summary.weekTotalBytes),
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontFeatureSettings = "tnum",
+                            ),
+                            color = onHero,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                        Text(
+                            text = "已结算日 · 不含今天",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = onHeroMuted,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                    if (summary.missingAccountCount > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.White.copy(alpha = 0.16f),
+                        ) {
+                            Text(
+                                text = "${summary.missingAccountCount} 个账号数据缺失",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = onHero,
+                            )
+                        }
+                    }
+                }
             }
-            Text(
-                text = caption,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 @Composable
 private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
-    Card(
+    AppCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = state.account.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 state.failure?.let { failure ->
-                    Text(
-                        text = failure.label(),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                    ) {
+                        Text(
+                            text = failure.label(),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                    }
                 }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = "查看资源包明细",
+                    modifier = Modifier.padding(start = 4.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                YesterdayMetric(state = state, modifier = Modifier.weight(1f))
                 TodayMetric(state = state, modifier = Modifier.weight(1f))
-                WeekMetric(state = state, modifier = Modifier.weight(1f))
+            }
+            WeekMetric(state = state, modifier = Modifier.fillMaxWidth())
+            // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
+            state.failure?.let { failure ->
+                FailureBanner(label = failure.label(), hint = failure.actionHint())
             }
             PackageSummarySection(
                 groups = state.packageGroups,
@@ -223,30 +291,60 @@ private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 snapshotFetchedAtMillis = state.packageSnapshotFetchedAtMillis,
             )
-            // 三类错误各给一句可操作提示，不合并成「出错了」（User Story 34）。
-            state.failure?.let { failure ->
-                Text(
-                    text = failure.actionHint(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
         }
+    }
+}
+
+/** 昨日流量：最近 7 天里最后一天（昨天，北京自然日）的已结算流量。 */
+@Composable
+private fun YesterdayMetric(state: AccountTodayState, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = "昨日流量",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        MetricText(
+            text = state.week?.lastOrNull()?.let { formatBytes(it.bytes) } ?: "—",
+            large = true,
+            color = if (state.week != null) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+        )
+        val caption = when {
+            state.weekSnapshotFetchedAtMillis != null ->
+                "数据时间 ${formatBeijingHourMinute(state.weekSnapshotFetchedAtMillis)}（离线）"
+
+            state.week != null -> "已结算"
+
+            state.failure != null -> "本次未取到数据"
+
+            state.isRefreshing -> "加载中…"
+
+            else -> "暂无数据"
+        }
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
 /** 今日累计：数值 + 「截至 HH:mm」（北京时间，取最后一个数据点时刻；未结算）。 */
 @Composable
 private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier) {
-    Column(modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = "今日累计",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
+        MetricText(
             text = state.today?.let { formatBytes(it.bytes) } ?: "—",
-            style = MaterialTheme.typography.headlineSmall,
+            large = true,
             color = if (state.today != null) {
                 MaterialTheme.colorScheme.onSurface
             } else {
@@ -283,15 +381,15 @@ private fun TodayMetric(state: AccountTodayState, modifier: Modifier = Modifier)
  */
 @Composable
 private fun WeekMetric(state: AccountTodayState, modifier: Modifier = Modifier) {
-    Column(modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             text = "最近 7 天",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Text(
+        MetricText(
             text = state.week?.let { formatBytes(weekTotal(it)) } ?: "—",
-            style = MaterialTheme.typography.headlineSmall,
+            large = true,
             color = if (state.week != null) {
                 MaterialTheme.colorScheme.onSurface
             } else {
@@ -319,12 +417,11 @@ private fun WeekMetric(state: AccountTodayState, modifier: Modifier = Modifier) 
         )
         WeekSparkline(
             days = state.week.orEmpty(),
-            modifier = Modifier.padding(top = 4.dp),
+            modifier = Modifier.padding(top = 6.dp),
         )
     }
 }
 
-/** 三类错误的标签与可操作提示见 [label] / [actionHint]（票据 07，实现在 FailureText.kt）。 */
 @Composable
 private fun DashboardEmptyState(
     hasAnyAccount: Boolean,
@@ -338,16 +435,23 @@ private fun DashboardEmptyState(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = Icons.Outlined.Dashboard,
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.primary,
-        )
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.CloudQueue,
+                contentDescription = null,
+                modifier = Modifier
+                    .padding(20.dp)
+                    .size(48.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
         Text(
             text = if (hasAnyAccount) "没有启用的账号" else "还没有账号，去设置添加",
-            modifier = Modifier.padding(top = 16.dp),
-            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 24.dp),
+            style = MaterialTheme.typography.titleLarge,
         )
         Text(
             text = if (hasAnyAccount) {

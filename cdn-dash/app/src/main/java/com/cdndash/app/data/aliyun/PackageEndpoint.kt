@@ -16,8 +16,10 @@ import kotlinx.serialization.json.contentOrNull
  *
  * - 新版 CDN 资源包是 CDN/全站加速共享商品（`dcdnpaybag`），可能只出现在 DCDN 端点，
  *   所以两个端点都查，按 `InstanceId` 去重（CDN 端点优先）。
- * - 只查 `Status=valid`：已耗尽/已关闭的包不展示；`valid` 但剩余量为 0（刚用完、
- *   状态还没翻转）的条目也在解析时排除。
+ * - 每端点查两轮：默认（`Status=valid`）与 `Status=exhaust`。已耗尽的包只在第二轮返回，
+ *   不补查会让同组总量少算（「买的 2T 组合只显示 1T」）；两轮都成功才算端点成功。
+ * - 接口没有到期时间参数，只能事后过滤：只保留到期时间晚于当前的包（缺失/解析失败的
+ *   到期时间按未知保留）。已用完（剩余量 0）的包照常返回，由分组层合并后隐藏整组。
  * - 只接受 [ResourcePackage.FLOW_PACKAGE_COMMODITY_CODES]；`dcdnpaybag` 商品也涵盖
  *   静态 HTTPS 请求数包，再按容量单位（流量包 Byte、请求数包「次」）排除非流量包。
  * - 响应条目形如 `ResourcePackageInfos.ResourcePackageInfo[]`，单条目时阿里云历史上
@@ -36,56 +38,65 @@ class PackageEndpoint(
 
     suspend fun resourcePackages(
         account: AccountCredentials,
-        @Suppress("UNUSED_PARAMETER") now: Instant,
+        now: Instant,
     ): ApiResult<List<ResourcePackage>> {
         val cdnResult = fetchEndpoint(cdnRpc, account, ACTION, API_VERSION)
         if (cdnResult !is ApiResult.Ok) return cdnResult
         val dcdnResult = fetchEndpoint(dcdnRpc, account, DCDN_ACTION, DCDN_API_VERSION)
         val merged = (cdnResult.value + dcdnResult.successOrNull().orEmpty())
             .distinctBy { it.instanceId }
+            // 到期时间已知且已过的包不展示；缺失/解析失败（EPOCH）按未知到期保留，避免误丢。
+            .filter { it.expiresAt == Instant.EPOCH || it.expiresAt.isAfter(now) }
         return ApiResult.Ok(merged)
     }
 
-    /** 单端点只查 valid；失败即整端点失败，避免把残缺列表当全量。 */
+    /** 单端点查 valid 与 exhaust 两轮；任一轮失败即整端点失败，避免把残缺列表当全量。 */
     private suspend fun fetchEndpoint(
         rpc: AliyunRpcClient,
         account: AccountCredentials,
         action: String,
         version: String,
     ): ApiResult<List<ResourcePackage>> {
-        val result = rpc.call(
-            account = account,
-            action = action,
-            version = version,
-            businessParams = mapOf("Status" to "valid"),
-        )
-        return when (result) {
-            is ApiResult.Ok -> ApiResult.Ok(parse(result.value))
-            is ApiResult.Failure -> result
+        // 默认轮不传 Status（=valid），第二轮回查已耗尽包。
+        val validBody = when (val valid = rpc.call(account = account, action = action, version = version)) {
+            is ApiResult.Ok -> valid.value
+            is ApiResult.Failure -> return valid
         }
+        val exhaustedBody = when (
+            val exhausted = rpc.call(
+                account = account,
+                action = action,
+                version = version,
+                businessParams = mapOf("Status" to EXHAUST_STATUS),
+            )
+        ) {
+            is ApiResult.Ok -> exhausted.value
+            is ApiResult.Failure -> return exhausted
+        }
+        return ApiResult.Ok(
+            parse(validBody, "$action#valid") + parse(exhaustedBody, "$action#exhaust"),
+        )
     }
 
-    private fun parse(body: JsonObject): List<ResourcePackage> =
+    private fun parse(body: JsonObject, action: String): List<ResourcePackage> =
         body.packageInfos()
             .mapNotNull { it as? JsonObject }
-            .mapIndexedNotNull { index, item -> item.toResourcePackage(index) }
+            .mapIndexedNotNull { index, item -> item.toResourcePackage(index, action) }
 
-    private fun JsonObject.toResourcePackage(index: Int): ResourcePackage? {
+    private fun JsonObject.toResourcePackage(index: Int, action: String): ResourcePackage? {
         // 没有商品码的条目无法证明是 CDN 流量包，同样排除（宁缺毋滥）。
         val commodityCode = string("CommodityCode") ?: return null
         if (commodityCode !in ResourcePackage.FLOW_PACKAGE_COMMODITY_CODES) return null
         // dcdnpaybag 也涵盖 HTTPS 请求数包（单位「次」）；单位字段缺失时容忍放行。
         val baseUnit = string("InitCapacityBaseUnit", "CurrCapacityBaseUnit")
         if (baseUnit != null && !baseUnit.equals("Byte", ignoreCase = true)) return null
-        // 用完的包不展示：valid 状态可能滞后于余量归零。
-        val remainingBytes = bytes("CurrCapacity", "Remaining")
-        if (remainingBytes <= 0L) return null
         return ResourcePackage(
-            instanceId = string("InstanceId") ?: "resource-package-$index",
+            // 兜底 id 带 Action：两个端点的序号互不相干，避免跨端点撞 id 被去重误删。
+            instanceId = string("InstanceId") ?: "resource-package-$action-$index",
             commodityCode = commodityCode,
             region = string("Region") ?: ResourcePackage.UNKNOWN_REGION,
             totalBytes = bytes("InitCapacity", "Total"),
-            remainingBytes = remainingBytes,
+            remainingBytes = bytes("CurrCapacity", "Remaining"),
             effectiveAt = timestamp("StartTime", "EffectiveTime") ?: Instant.EPOCH,
             expiresAt = timestamp("EndTime", "ExpireTime") ?: Instant.EPOCH,
         )
@@ -106,10 +117,14 @@ class PackageEndpoint(
             (this[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
         }
 
-    /** 容量可能是字符串或数字、带小数；缺失/非法按 0，空数据不崩溃。 */
+    /** 容量可能是字符串或数字、带小数或千分位逗号；缺失/非法按 0，空数据不崩溃。 */
     private fun JsonObject.bytes(vararg names: String): Long =
         names.firstNotNullOfOrNull { name ->
-            (this[name] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.roundToLong()
+            (this[name] as? JsonPrimitive)?.contentOrNull
+                ?.replace(",", "")
+                ?.trim()
+                ?.toDoubleOrNull()
+                ?.roundToLong()
         } ?: 0L
 
     private fun JsonObject.timestamp(vararg names: String): Instant? =
@@ -129,5 +144,11 @@ class PackageEndpoint(
         const val DCDN_ACTION: String = "DescribeDcdnUserResourcePackage"
 
         const val DCDN_API_VERSION: String = "2018-01-15"
+
+        /**
+         * 已耗尽包的补查状态值。两个端点只认 `exhaust`：传 `exhausted` 时 CDN 端点报
+         * `InvalidStatus`、DCDN 端点静默返回空列表。
+         */
+        const val EXHAUST_STATUS: String = "exhaust"
     }
 }

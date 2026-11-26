@@ -18,9 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -38,13 +36,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.domain.Account
+import com.cdndash.app.ui.components.AppCard
 import com.cdndash.app.ui.lock.rememberBiometricAvailability
+import com.cdndash.app.ui.navigation.PillNavContentPadding
+import com.cdndash.app.ui.navigation.TopBarContentPadding
 import kotlinx.coroutines.launch
 
 /**
@@ -54,6 +56,8 @@ import kotlinx.coroutines.launch
  * - 刷新间隔：5/10/15/30 分钟，默认 5，供票据 03 读取
  * - 生物识别解锁：默认关闭；设备验不了时隐藏开关并说明原因（票据 09）
  * - 关于：版本与「密钥只在本机」说明
+ *
+ * 视觉上按「账号 / 刷新间隔 / 安全 / 关于」分组成卡片，不再用分隔线硬切。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -76,7 +80,7 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(start = 16.dp, top = TopBarContentPadding, end = 16.dp),
     ) {
         SectionHeader(title = "账号") {
             TextButton(
@@ -119,56 +123,61 @@ fun SettingsScreen(
             )
         }
 
-        HorizontalDivider(Modifier.padding(vertical = 16.dp))
-
         SectionHeader(title = "刷新间隔")
-        Text(
-            text = "打开应用与下拉时自动刷新，前台按所选间隔更新；退到后台后停止请求。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 8.dp),
-        ) {
-            AccountStore.REFRESH_INTERVAL_OPTIONS_MINUTES.forEach { minutes ->
-                FilterChip(
-                    selected = minutes == refreshInterval,
-                    onClick = { viewModel.setRefreshInterval(minutes) },
-                    label = { Text("$minutes 分钟") },
-                )
-            }
-        }
-
-        HorizontalDivider(Modifier.padding(vertical = 16.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("生物识别解锁", style = MaterialTheme.typography.bodyLarge)
+        AppCard(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = if (availability.canShowSwitch) {
-                        "开启后每次打开应用需验证一次指纹或面容，验证失败可回退到锁屏密码。"
-                    } else {
-                        // 设备验不了就不给开关，并说明为什么没有（spec「设备不支持时隐藏并说明」）。
-                        availability.explanation ?: "本机不支持生物识别解锁。"
-                    },
+                    text = "打开应用与下拉时自动刷新，前台按所选间隔更新；退到后台后停止请求。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-            if (availability.canShowSwitch) {
-                Switch(
-                    checked = biometricEnabled,
-                    onCheckedChange = viewModel::setBiometricEnabled,
-                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 12.dp),
+                ) {
+                    AccountStore.REFRESH_INTERVAL_OPTIONS_MINUTES.forEach { minutes ->
+                        FilterChip(
+                            selected = minutes == refreshInterval,
+                            onClick = { viewModel.setRefreshInterval(minutes) },
+                            label = { Text("$minutes 分钟") },
+                        )
+                    }
+                }
             }
         }
 
-        HorizontalDivider(Modifier.padding(vertical = 16.dp))
+        SectionHeader(title = "安全")
+        AppCard(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("生物识别解锁", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        text = if (availability.canShowSwitch) {
+                            "开启后每次打开应用需验证一次指纹或面容，验证失败可回退到锁屏密码。"
+                        } else {
+                            // 设备验不了就不给开关，并说明为什么没有（spec「设备不支持时隐藏并说明」）。
+                            availability.explanation ?: "本机不支持生物识别解锁。"
+                        },
+                        modifier = Modifier.padding(top = 4.dp, end = 12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (availability.canShowSwitch) {
+                    Switch(
+                        checked = biometricEnabled,
+                        onCheckedChange = viewModel::setBiometricEnabled,
+                    )
+                }
+            }
+        }
 
         SectionHeader(title = "关于")
-        Card(Modifier.fillMaxWidth()) {
+        AppCard(Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -196,7 +205,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(PillNavContentPadding))
     }
 
     if (showAddDialog) {
@@ -250,12 +259,13 @@ private fun SectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 16.dp, bottom = 4.dp),
+            .padding(start = 4.dp, top = 20.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),
         )
         action?.invoke()

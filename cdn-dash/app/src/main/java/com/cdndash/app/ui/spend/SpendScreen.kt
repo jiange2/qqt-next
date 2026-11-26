@@ -11,12 +11,19 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -32,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -42,8 +50,12 @@ import com.cdndash.app.domain.MonthlyBill
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatMoney
 import com.cdndash.app.domain.totalBillAmount
+import com.cdndash.app.ui.components.AppCard
+import com.cdndash.app.ui.components.FailureBanner
 import com.cdndash.app.ui.dashboard.spendActionHint
 import com.cdndash.app.ui.dashboard.spendLabel
+import com.cdndash.app.ui.navigation.PillNavContentPadding
+import com.cdndash.app.ui.navigation.TopBarContentPadding
 import java.time.YearMonth
 
 /**
@@ -83,8 +95,8 @@ private fun SpendContent(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(start = 16.dp, top = TopBarContentPadding, end = 16.dp, bottom = PillNavContentPadding),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (uiState.accounts.isEmpty()) {
             SpendEmptyState(hasAnyAccount = uiState.hasAnyAccount)
@@ -109,13 +121,18 @@ private fun SpendContent(
         }
 
         if (uiState.bills.isNotEmpty()) {
-            MonthlyBarChart(bills = uiState.bills)
-            if (uiState.bills.any { it.includesPrepaidPackage }) {
-                Text(
-                    text = "柱顶圆点的月份含预付费资源包",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    MonthlyBarChart(bills = uiState.bills)
+                    if (uiState.bills.any { it.includesPrepaidPackage }) {
+                        Text(
+                            text = "柱顶圆点的月份含预付费资源包",
+                            modifier = Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             MonthBillList(bills = uiState.bills)
         } else if (uiState.failure == null) {
@@ -152,36 +169,50 @@ private fun AccountSwitcher(
 
 @Composable
 private fun SpendSummary(uiState: SpendUiState, onRefresh: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "全年合计",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = if (uiState.bills.isEmpty()) {
-                    "—"
-                } else {
-                    "¥${formatMoney(totalBillAmount(uiState.bills))}"
-                },
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Text(
-                text = "应付金额 · 最近 12 个已出账完整月（不含当月）",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            uiState.fetchedAtMillis?.let { fetchedAt ->
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = 20.dp, top = 16.dp, end = 8.dp, bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "数据时间 ${formatBeijingHourMinute(fetchedAt)}",
+                    text = "全年合计",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = if (uiState.bills.isEmpty()) {
+                        "—"
+                    } else {
+                        "¥${formatMoney(totalBillAmount(uiState.bills))}"
+                    },
+                    style = MaterialTheme.typography.headlineLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    text = "应付金额 · 最近 12 个已出账完整月（不含当月）",
+                    modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                uiState.fetchedAtMillis?.let { fetchedAt ->
+                    Text(
+                        text = "数据时间 ${formatBeijingHourMinute(fetchedAt)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-        }
-        TextButton(onClick = onRefresh, enabled = !uiState.isRefreshing) {
-            Text(if (uiState.isRefreshing) "刷新中…" else "刷新")
+            IconButton(onClick = onRefresh, enabled = !uiState.isRefreshing) {
+                Icon(
+                    imageVector = Icons.Outlined.Refresh,
+                    contentDescription = if (uiState.isRefreshing) "刷新中" else "刷新",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }
@@ -203,33 +234,21 @@ private fun SpendFailureNotice(
     } else {
         null
     }
-    Surface(
-        color = MaterialTheme.colorScheme.errorContainer,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
+    FailureBanner(
+        label = failure.spendLabel(),
+        hint = failure.spendActionHint(cachedAtHourMinute),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = failure.spendLabel(),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            Text(
-                text = failure.spendActionHint(cachedAtHourMinute),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            if (failure != ApiFailureKind.NETWORK || !hasBills) {
-                TextButton(onClick = onRefresh) { Text("刷新") }
-            }
+        if (failure != ApiFailureKind.NETWORK || !hasBills) {
+            TextButton(onClick = onRefresh) { Text("刷新") }
         }
     }
 }
 
-/** 12 根月柱（Canvas 自绘）+ 月份标签；预付费月份在柱顶画一个圆点。 */
+/** 12 根月柱（Canvas 自绘）+ 月份标签；最新月实色高亮，预付费月份在柱顶画一个圆点。 */
 @Composable
 private fun MonthlyBarChart(bills: List<MonthlyBill>) {
     val barColor = MaterialTheme.colorScheme.primary
+    val mutedBarColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
     val prepaidColor = MaterialTheme.colorScheme.tertiary
     val maxAmount = bills.maxOfOrNull { it.pretaxAmount }?.toFloat()?.takeIf { it > 0f } ?: 1f
 
@@ -237,20 +256,20 @@ private fun MonthlyBarChart(bills: List<MonthlyBill>) {
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(180.dp),
+                .height(160.dp),
         ) {
             val slotWidth = size.width / bills.size.coerceAtLeast(1)
-            val barWidth = slotWidth * 0.55f
-            val markerSpace = 10.dp.toPx()
+            val barWidth = slotWidth * 0.52f
+            val markerSpace = 12.dp.toPx()
             val usableHeight = size.height - markerSpace
-            val corner = CornerRadius(4.dp.toPx(), 4.dp.toPx())
+            val corner = CornerRadius(5.dp.toPx(), 5.dp.toPx())
             bills.forEachIndexed { index, bill ->
                 val value = bill.pretaxAmount.toFloat().coerceAtLeast(0f)
                 val barHeight = usableHeight * (value / maxAmount)
                 val left = slotWidth * index + (slotWidth - barWidth) / 2f
                 val top = size.height - barHeight
                 drawRoundRect(
-                    color = barColor,
+                    color = if (index == bills.lastIndex) barColor else mutedBarColor,
                     topLeft = Offset(left, top),
                     size = Size(barWidth, barHeight),
                     cornerRadius = corner,
@@ -264,13 +283,20 @@ private fun MonthlyBarChart(bills: List<MonthlyBill>) {
                 }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth()) {
-            bills.forEach { bill ->
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            bills.forEachIndexed { index, bill ->
+                val latest = index == bills.lastIndex
                 Text(
                     text = bill.month.monthValue.toString(),
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = if (latest) FontWeight.Bold else FontWeight.Normal,
+                    ),
+                    color = if (latest) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     textAlign = TextAlign.Center,
                 )
             }
@@ -282,47 +308,73 @@ private fun MonthlyBarChart(bills: List<MonthlyBill>) {
 @Composable
 private fun MonthBillList(bills: List<MonthlyBill>) {
     var expandedMonth by remember { mutableStateOf<YearMonth?>(null) }
-    Column(modifier = Modifier.fillMaxWidth()) {
-        bills.asReversed().forEach { bill ->
-            val expanded = expandedMonth == bill.month
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expandedMonth = if (expanded) null else bill.month }
-                    .padding(vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "${bill.month.year}年${bill.month.monthValue}月",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    if (bill.includesPrepaidPackage) {
-                        Spacer(Modifier.width(8.dp))
-                        PrepaidTag()
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+            bills.asReversed().forEachIndexed { index, bill ->
+                val expanded = expandedMonth == bill.month
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expandedMonth = if (expanded) null else bill.month }
+                        .padding(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${bill.month.year}年${bill.month.monthValue}月",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (bill.includesPrepaidPackage) {
+                            Spacer(Modifier.width(8.dp))
+                            PrepaidTag()
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            text = "¥${formatMoney(bill.pretaxAmount)}",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                fontFeatureSettings = "tnum",
+                            ),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Icon(
+                            imageVector = if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = if (expanded) "收起明细" else "展开明细",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = "¥${formatMoney(bill.pretaxAmount)}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (expanded) "收起" else "明细",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (expanded) {
+                        Row(modifier = Modifier.padding(top = 4.dp)) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "现金",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = "¥${formatMoney(bill.cashAmount)}",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "代金券",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    text = "¥${formatMoney(bill.voucherAmount)}",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontFeatureSettings = "tnum"),
+                                )
+                            }
+                        }
+                    }
                 }
-                if (expanded) {
-                    Text(
-                        text = "现金 ¥${formatMoney(bill.cashAmount)} · " +
-                            "代金券 ¥${formatMoney(bill.voucherAmount)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                if (index < bills.lastIndex) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
-            HorizontalDivider()
         }
     }
 }
@@ -331,7 +383,7 @@ private fun MonthBillList(bills: List<MonthlyBill>) {
 private fun PrepaidTag() {
     Surface(
         color = MaterialTheme.colorScheme.tertiaryContainer,
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(6.dp),
     ) {
         Text(
             text = "含预付费资源包",

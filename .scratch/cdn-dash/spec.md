@@ -62,7 +62,7 @@ Status: ready-for-agent
 
 - **今日累计**：`DescribeDomainTrafficData`，不传 `DomainName`（账号全量），`Interval=300`，时间窗为北京时间今天 00:00 至请求时刻；结果为字节数，标记为未结算。
 - **7 天走势与总量**：同一接口，`Interval=3600`，时间窗为北京时间「今天-7」00:00 至「今天」00:00；端上按北京自然日汇总为 7 个点，丢弃任何落在今天的点。折线按天渲染，但数据不依赖日粒度接口（日粒度延迟 4–24 小时，昨日可能半截）。
-- **资源包余量**：CDN `DescribeCdnUserResourcePackage` 与 DCDN `DescribeDcdnUserResourcePackage` 双端点合并（新版 CDN 资源包是 CDN/全站加速共享商品 `dcdnpaybag`，可能只出现在 DCDN 端点），按 `InstanceId` 去重；每端点只查 `Status=valid`（已耗尽/已关闭的包不展示），`valid` 但剩余量为 0 的条目也排除。只接受 `CommodityCode` 为 `cdnflowbag`/`dcdnpaybag` 的条目，`dcdnpaybag` 再按容量单位（Byte）排除 HTTPS 请求数包；CDN 为主端点（失败即整体失败），DCDN 为补充端点（失败容忍）。按（区域，到期日）分组，组内求和剩余量与总量并计数包数，按到期日升序；未生效（生效时间晚于当前）的组需要可识别标注。区域之间不合并、不相加。
+- **资源包余量**：CDN `DescribeCdnUserResourcePackage` 与 DCDN `DescribeDcdnUserResourcePackage` 双端点合并（新版 CDN 资源包是 CDN/全站加速共享商品 `dcdnpaybag`，可能只出现在 DCDN 端点），按 `InstanceId` 去重；每端点查两轮：默认（valid）+ `Status=exhaust`，两轮都成功才算端点成功。接口没有到期时间参数，只能事后过滤：客户端按到期时间只保留未来到期的包（缺失到期时间按未知保留）；用完的包不单独剔除，合并分组后整组剩余量为 0 的组隐藏——已耗尽包必须补查，否则同组总量会少算。容量字段兼容千分位逗号。只接受 `CommodityCode` 为 `cdnflowbag`/`dcdnpaybag` 的条目，`dcdnpaybag` 再按容量单位（Byte）排除 HTTPS 请求数包；CDN 为主端点（失败即整体失败），DCDN 为补充端点（失败容忍）。按（区域，到期日）分组，组内求和剩余量与总量并计数包数，按到期日升序；未生效（生效时间晚于当前）的组需要可识别标注。区域之间不合并、不相加。
 - **账号花费**：`QueryAccountBill`，每账号 12 次，`Granularity=MONTHLY`，逐个完整的自然月（剔除当月）；主数取 `PretaxAmount`，明细取 `CashAmount` 与代金券字段；不按产品过滤。无税额字段，界面不出现「含税」字样。
 - **认证与签名**：RPC v1（HMAC-SHA1），公共参数含 `Action`/`Version`/`Format`/`AccessKeyId`/`SignatureMethod`/`SignatureVersion`/`SignatureNonce`/`Timestamp`；`Timestamp` 用 UTC；`SignatureNonce` 每次请求唯一；请求与响应均有超时上限。
 - **错误归一**：鉴权类（密钥无效、签名错误）→ 该账号「凭证失效」；权限类（无 CDN/BSS 读权限）→ 该账号对应模块「权限不足」；限流类（`Throttling`）→ 指数退避重试有限次后按网络错误处理；网络/超时 → 该账号「网络错误」。任何单账号错误都不得使其他账号或整页失败。

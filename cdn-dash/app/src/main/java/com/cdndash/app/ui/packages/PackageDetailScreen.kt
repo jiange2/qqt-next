@@ -10,16 +10,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -31,8 +34,14 @@ import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.formatPackageDate
 import com.cdndash.app.domain.packageGroupsByRegion
+import com.cdndash.app.ui.components.AppCard
+import com.cdndash.app.ui.components.FailureBanner
+import com.cdndash.app.ui.components.MetricText
 import com.cdndash.app.ui.dashboard.actionHint
 import com.cdndash.app.ui.dashboard.label
+import com.cdndash.app.ui.navigation.PillNavContentPadding
+import com.cdndash.app.ui.navigation.TopBarContentPadding
+import com.cdndash.app.ui.theme.LocalExtendedColors
 
 /**
  * 资源包明细页（票据 05、票据 07）：按区域分区、区域内按到期日升序，每行显示到期日、包数、
@@ -104,14 +113,19 @@ private fun PackageDetailList(
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(
+            start = 16.dp,
+            top = TopBarContentPadding,
+            end = 16.dp,
+            bottom = PillNavContentPadding,
+        ),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "header") {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
                     text = accountName.ifBlank { "该账号" },
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                 )
                 Text(
                     text = "只统计 CDN 流量包（cdnflowbag）；不同区域的余量不可相加。",
@@ -130,14 +144,13 @@ private fun PackageDetailList(
 
         if (failure != null) {
             item(key = "refresh-failure") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "刷新失败：${failure.label()}，以下为上次结果",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(onClick = onRetry) { Text("重试") }
+                FailureBanner(
+                    label = "刷新失败：${failure.label()}，以下为上次结果",
+                    hint = failure.actionHint(),
+                ) {
+                    Button(onClick = onRetry, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("重试")
+                    }
                 }
             }
         }
@@ -171,27 +184,47 @@ private fun PackageDetailList(
 
 @Composable
 private fun RegionHeader(region: String, packageCount: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(top = 8.dp),
+    ) {
         Text(
             text = region,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
             modifier = Modifier.weight(1f),
         )
-        Text(
-            text = "$packageCount 个包",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Surface(
+            shape = RoundedCornerShape(6.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Text(
+                text = "$packageCount 个包",
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
     }
 }
 
-/** 一行 = 同一区域、同一到期日的合并结果（User Story 17）。 */
+/** 一行 = 同一区域、同一到期日的合并结果（User Story 17）；剩余量给大数字与比例条。 */
 @Composable
 private fun PackageGroupRow(group: PackageGroup) {
-    Card(Modifier.fillMaxWidth()) {
+    val extended = LocalExtendedColors.current
+    val fraction = if (group.totalBytes > 0L) {
+        (group.remainingBytes.toFloat() / group.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val barColor = when {
+        group.notYetEffective -> extended.warning
+        fraction <= 0.2f -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+    AppCard(Modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -200,23 +233,27 @@ private fun PackageGroupRow(group: PackageGroup) {
                     modifier = Modifier.weight(1f),
                 )
                 when {
-                    group.notYetEffective -> Text(
+                    group.notYetEffective -> StatusTag(
                         text = "未生效",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = extended.warning,
                     )
 
-                    group.remainingBytes == 0L -> Text(
+                    group.remainingBytes == 0L -> StatusTag(
                         text = "已用尽",
-                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            Text(
-                text = "剩余 ${formatBytes(group.remainingBytes)} / 总量 ${formatBytes(group.totalBytes)}",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                MetricText(text = formatBytes(group.remainingBytes))
+                Text(
+                    text = "  / 总量 ${formatBytes(group.totalBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+            }
+            PackageRemainBar(fraction = fraction, color = barColor)
             Text(
                 text = buildString {
                     append("${group.packageCount} 个包")
@@ -228,6 +265,21 @@ private fun PackageGroupRow(group: PackageGroup) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun StatusTag(text: String, color: Color) {
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = color.copy(alpha = 0.12f),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+        )
     }
 }
 

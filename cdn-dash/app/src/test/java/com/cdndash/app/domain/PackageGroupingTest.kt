@@ -10,7 +10,7 @@ import org.junit.Test
 /**
  * 资源包余量视图的纯函数测试（票据 05，spec「Testing Decisions」）。
  *
- * 全部用字面量断言：分组、排序、计数、未生效标注、区域不相加、非流量包商品码排除、空列表。
+ * 全部用字面量断言：分组、排序、计数、未生效标注、整组用完隐藏、区域不相加、非流量包商品码排除、空列表。
  * 「未生效」的参照时刻固定为 [NOW]，不依赖运行时刻。
  */
 class PackageGroupingTest {
@@ -271,6 +271,45 @@ class PackageGroupingTest {
             listOf(LocalDate.of(2026, 12, 31), LocalDate.of(2027, 1, 31)),
             shown.map { it.expiresOn },
         )
+    }
+
+    @Test
+    fun `整组用完的组隐藏而组内仍有剩余时保留全部包数`() {
+        val groups = groupPackages(
+            listOf(
+                // 中国内地：同组两包，一包用完一包有剩余 → 组保留，包数照实为 2。
+                packageInfo(
+                    instanceId = "cn-used-up",
+                    region = "中国内地",
+                    totalBytes = 1000,
+                    remainingBytes = 0,
+                    expiresAt = "2026-12-31T08:00:00Z",
+                ),
+                packageInfo(
+                    instanceId = "cn-active",
+                    region = "中国内地",
+                    totalBytes = 1000,
+                    remainingBytes = 400,
+                    expiresAt = "2026-12-31T10:00:00Z",
+                ),
+                // 海外：组内全部用完 → 整组隐藏。
+                packageInfo(
+                    instanceId = "ov-used-up",
+                    region = "海外",
+                    totalBytes = 500,
+                    remainingBytes = 0,
+                    expiresAt = "2026-12-31T08:00:00Z",
+                ),
+            ),
+            now,
+        )
+
+        assertEquals(1, groups.size)
+        val group = groups.single()
+        assertEquals("中国内地", group.region)
+        assertEquals(2, group.packageCount)
+        assertEquals(2000L, group.totalBytes)
+        assertEquals(400L, group.remainingBytes)
     }
 
     private fun packageInfo(

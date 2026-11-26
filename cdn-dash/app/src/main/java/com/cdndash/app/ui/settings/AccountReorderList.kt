@@ -65,7 +65,7 @@ fun AccountReorderList(
                 val dragging = draggingId == account.id
                 Surface(
                     shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onSizeChanged { itemHeights[account.id] = it.height }

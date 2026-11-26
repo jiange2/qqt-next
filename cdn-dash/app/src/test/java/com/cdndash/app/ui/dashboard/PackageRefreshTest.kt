@@ -192,15 +192,15 @@ class PackageRefreshTest {
         backgroundScope.launch { viewModel.uiState.collect {} }
         viewModel.onForegroundStart()
         runCurrent()
-        // 冷启动取一次资源包（CDN + DCDN 端点各 1 条 valid），另两条是今日累计与 7 天。
-        assertEquals(1, packageRequests)
-        assertEquals(4, server.requestCount)
+        // 冷启动取一次资源包（CDN + DCDN 端点各 valid/exhaust 两条），另两条是今日累计与 7 天。
+        assertEquals(2, packageRequests)
+        assertEquals(6, server.requestCount)
 
         // 定时轮只补今日累计：资源包不随定时器重取。
         advanceTimeBy(5 * 60_000L)
         runCurrent()
-        assertEquals(1, packageRequests)
-        assertEquals(5, server.requestCount)
+        assertEquals(2, packageRequests)
+        assertEquals(7, server.requestCount)
 
         viewModel.onForegroundStop()
     }

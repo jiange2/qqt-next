@@ -46,6 +46,8 @@ data class RegionPackageGroups(
  *   不混入全站加速专用或 OSS 的包；端点已过滤，这里再过滤一次，纯函数自身也是安全的。
  * - 按（区域，北京自然日到期日）分组：组内剩余量/总量求和、计数包数。
  * - 排序：到期日升序；同日不同区域以区域名兜底，保证输出稳定。
+ * - 组内剩余量合计为 0 的组不输出（整组用完）；单包用完但组内还有余量时保留，
+ *   包数照实计数（用完与否按合并后的组判断，不剔除单个包）。
  * - 空列表返回空列表，不抛异常。
  *
  * @param now 判定「未生效」的参照时刻；由调用方注入，便于测试固定时刻。
@@ -68,6 +70,7 @@ fun groupPackages(packages: List<ResourcePackage>, now: Instant): List<PackageGr
             )
         }
         .sortedWith(compareBy({ it.expiresOn }, { it.region }))
+        .filter { it.remainingBytes > 0L }
 
 /**
  * 按区域分区展示（看板摘要与明细页共用）：区域内按到期日升序，区域之间按名称升序，
