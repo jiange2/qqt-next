@@ -29,6 +29,7 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 | 后端（旧） | `backend/` | PHP 7.4, Apache, MySQL 8.0 | API 接口 + Web 管理面板 + 文件存储（待割接下线） |
 | 后端（新） | `backend-next/` | Node.js 22, Fastify, Prisma, Vue 3 + Element Plus | 旧协议门面 + 新管理面板 + 文件存储（见 [backend-next/README.md](backend-next/README.md)） |
 | Android | `android/` | Kotlin, Jetpack Compose, ExoPlayer, Retrofit2 | 音乐播放客户端 |
+| CDN 看板 | `cdn-dash/` | Kotlin, Jetpack Compose M3, OkHttp（手写 RPC v1）, DataStore | 独立 Android 应用：阿里云 CDN 多账号流量/资源包/花费看板，端上直连 |
 
 ## 导航指引
 
@@ -53,6 +54,10 @@ Android 端通过统一的 `api.php` 接口获取所有数据（歌曲、分类�
 - **Android 后台保活/自启动**（前台服务/WiFi 锁/设备重启） → 阅读 [`android/doc/background.md`](android/doc/background.md)
 - **Android UI/导航/页面** → 阅读 [`android/doc/ui.md`](android/doc/ui.md)
 - **Android 本地存储**（本地音乐库快照与覆盖层/已下载/队列快照） → 阅读 [`android/doc/storage.md`](android/doc/storage.md)
+
+**CDN 看板（cdn-dash/，独立 Android 应用）**
+- **领域词汇与数据口径**（区域、资源包余量、凭证失效等） → 阅读 [`cdn-dash/GLOSSARY.md`](cdn-dash/GLOSSARY.md)
+- **功能设计与票据**（骨架、账号、流量、资源包、花费、错误与离线快照） → 阅读 [`.scratch/cdn-dash/issues/`](.scratch/cdn-dash/issues/)
 
 ## 跨模块约定
 
