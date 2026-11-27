@@ -286,6 +286,7 @@ private fun AccountCard(state: AccountTodayState, onClick: () -> Unit) {
             }
             PackageSummarySection(
                 groups = state.packageGroups,
+                week = state.week,
                 failure = state.packageFailure,
                 isRefreshing = state.isRefreshing,
                 modifier = Modifier.fillMaxWidth(),

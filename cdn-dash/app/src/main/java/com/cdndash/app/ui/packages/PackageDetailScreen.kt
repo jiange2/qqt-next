@@ -29,11 +29,16 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cdndash.app.data.AccountStore
 import com.cdndash.app.data.aliyun.AliyunApi
 import com.cdndash.app.data.aliyun.ApiFailureKind
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.PackageGroup
+import com.cdndash.app.domain.PackageRunway
+import com.cdndash.app.domain.estimatePackageRunway
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.formatPackageDate
 import com.cdndash.app.domain.packageGroupsByRegion
+import com.cdndash.app.domain.runwayDetailLabel
+import java.time.Instant
 import com.cdndash.app.ui.components.AppCard
 import com.cdndash.app.ui.components.FailureBanner
 import com.cdndash.app.ui.components.MetricText
@@ -94,8 +99,10 @@ private fun PackageDetailContent(
         else -> PackageDetailList(
             accountName = state.accountName,
             groups = groups,
+            week = state.week,
             failure = state.failure,
             snapshotFetchedAtMillis = state.snapshotFetchedAtMillis,
+            weekSnapshotFetchedAtMillis = state.weekSnapshotFetchedAtMillis,
             onRetry = onRetry,
             modifier = modifier,
         )
@@ -106,11 +113,18 @@ private fun PackageDetailContent(
 private fun PackageDetailList(
     accountName: String,
     groups: List<PackageGroup>,
+    week: List<DayTrafficPoint>?,
     failure: ApiFailureKind?,
     snapshotFetchedAtMillis: Long?,
+    weekSnapshotFetchedAtMillis: Long?,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val now = Instant.now()
+    val hasRunway = groups.any { group ->
+        val runway = estimatePackageRunway(group, week, now)
+        runway !is PackageRunway.Hidden
+    }
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(
@@ -132,6 +146,13 @@ private fun PackageDetailList(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (hasRunway) {
+                    Text(
+                        text = "天数按区域近 7 天日均估算",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (snapshotFetchedAtMillis != null) {
                     Text(
                         text = "数据时间 ${formatBeijingHourMinute(snapshotFetchedAtMillis)}（离线）",
@@ -176,7 +197,14 @@ private fun PackageDetailList(
                 items = regionSection.groups,
                 key = { group -> "${group.region}-${group.expiresOn}" },
             ) { group ->
-                PackageGroupRow(group = group)
+                PackageGroupRow(
+                    group = group,
+                    runwayLabel = runwayDetailLabel(
+                        runway = estimatePackageRunway(group, week, now),
+                        // 7 天来自离线快照时只给天数，不再推算「预计哪天用完」。
+                        allowDate = weekSnapshotFetchedAtMillis == null,
+                    ),
+                )
             }
         }
     }
@@ -207,9 +235,13 @@ private fun RegionHeader(region: String, packageCount: Int) {
     }
 }
 
-/** 一行 = 同一区域、同一到期日的合并结果（User Story 17）；剩余量给大数字与比例条。 */
+/**
+ * 一行 = 同一区域、同一到期日的合并结果（User Story 17）；剩余量给大数字与比例条。
+ *
+ * @param runwayLabel 预计可用天数；null 表示这一组不展示估算。
+ */
 @Composable
-private fun PackageGroupRow(group: PackageGroup) {
+private fun PackageGroupRow(group: PackageGroup, runwayLabel: String?) {
     val extended = LocalExtendedColors.current
     val fraction = if (group.totalBytes > 0L) {
         (group.remainingBytes.toFloat() / group.totalBytes.toFloat()).coerceIn(0f, 1f)
@@ -254,13 +286,15 @@ private fun PackageGroupRow(group: PackageGroup) {
                 )
             }
             PackageRemainBar(fraction = fraction, color = barColor)
+            val footnote = buildList {
+                add("${group.packageCount} 个包")
+                if (group.notYetEffective) {
+                    add("生效于 ${formatPackageDate(group.effectiveAt)}，暂不可抵扣")
+                }
+                runwayLabel?.let { add(it) }
+            }
             Text(
-                text = buildString {
-                    append("${group.packageCount} 个包")
-                    if (group.notYetEffective) {
-                        append(" · 生效于 ${formatPackageDate(group.effectiveAt)}，暂不可抵扣")
-                    }
-                },
+                text = footnote.joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

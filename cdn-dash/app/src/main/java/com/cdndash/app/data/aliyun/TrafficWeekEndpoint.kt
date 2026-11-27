@@ -18,6 +18,8 @@ import kotlinx.serialization.json.contentOrNull
  * - 时间窗：北京时间「今天-7」00:00 → 「今天」00:00（[settledWeekWindow]）。
  * - 解析出 [TrafficPoint] 后交给纯函数 [aggregateSettledDays] 按北京自然日归桶、
  *   丢弃今天、补齐 7 个日点；本类只负责业务参数与 JSON 解析。
+ * - 同一次响应顺带解析 `DomesticValue`/`OverseasValue` 区域拆分，资源包预计可用天数
+ *   因此不需要任何额外请求（ADR 0018）。
  *
  * 签名、HTTP、错误归一全部在 [AliyunRpcClient]；Action/Version 与载荷展开复用 [TrafficPayload]。
  */
@@ -50,7 +52,14 @@ class TrafficWeekEndpoint(private val rpc: AliyunRpcClient) {
                 ?.contentOrNull
                 ?.let(::parseAliyunTimestamp)
                 ?: continue
-            points += TrafficPoint(at = timestamp, bytes = dataPoint["Value"].trafficBytesValue())
+            points += TrafficPoint(
+                at = timestamp,
+                bytes = dataPoint["Value"].trafficBytesValue(),
+                // 同一响应顺带带回区域拆分，估算资源包天数不再多发请求；
+                // 接口未返回这两个字段时按 0，估算层会识别为「区域数据缺失」。
+                domesticBytes = dataPoint["DomesticValue"].trafficBytesValue(),
+                overseasBytes = dataPoint["OverseasValue"].trafficBytesValue(),
+            )
         }
         return points
     }

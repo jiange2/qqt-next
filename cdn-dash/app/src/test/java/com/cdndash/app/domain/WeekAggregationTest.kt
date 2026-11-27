@@ -124,6 +124,43 @@ class WeekAggregationTest {
     }
 
     @Test
+    fun `区域拆分按日分别求和并随今天一起丢弃`() {
+        val days = aggregateSettledDays(
+            listOf(
+                // 北京 11-25 23:55：三个字段都应计入 11-25。
+                TrafficPoint(
+                    at = Instant.parse("2026-11-25T15:55:00Z"),
+                    bytes = 300,
+                    domesticBytes = 200,
+                    overseasBytes = 100,
+                ),
+                // 北京 11-26 00:05：昨天。
+                TrafficPoint(
+                    at = Instant.parse("2026-11-25T16:05:00Z"),
+                    bytes = 400,
+                    domesticBytes = 250,
+                    overseasBytes = 150,
+                ),
+                // 北京 11-27 00:00：今天，总量与区域拆分一并丢弃。
+                TrafficPoint(
+                    at = Instant.parse("2026-11-26T16:00:00Z"),
+                    bytes = 500,
+                    domesticBytes = 500,
+                ),
+            ),
+            now,
+        )
+
+        assertEquals(300L, days[5].bytes)
+        assertEquals(200L, days[5].domesticBytes)
+        assertEquals(100L, days[5].overseasBytes)
+        assertEquals(400L, days[6].bytes)
+        assertEquals(250L, days[6].domesticBytes)
+        assertEquals(150L, days[6].overseasBytes)
+        assertEquals(700L, weekTotal(days))
+    }
+
+    @Test
     fun `7 天合计等于 7 个日点之和`() {
         val days = aggregateSettledDays(
             listOf(

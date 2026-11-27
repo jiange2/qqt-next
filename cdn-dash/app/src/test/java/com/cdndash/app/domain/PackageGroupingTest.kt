@@ -23,6 +23,33 @@ class PackageGroupingTest {
     }
 
     @Test
+    fun `接口区域码归一为中国内地与海外并合并同一区域`() {
+        val groups = groupPackages(
+            listOf(
+                packageInfo(instanceId = "cn-code", region = "CN", remainingBytes = 600),
+                packageInfo(instanceId = "cn-name", region = "中国内地", remainingBytes = 400),
+                packageInfo(instanceId = "overseas-code", region = "OVERSEAS", remainingBytes = 100),
+            ),
+            now,
+        )
+
+        // 资源包接口实际返回 CN/OVERSEAS；归一并与中文写法并组，估算才能认出区域。
+        assertEquals(listOf("中国内地", "海外"), groups.map { it.region })
+        assertEquals(2, groups.first().packageCount)
+        assertEquals(1000L, groups.first().remainingBytes)
+    }
+
+    @Test
+    fun `无法识别的区域码原样保留`() {
+        val groups = groupPackages(
+            listOf(packageInfo(instanceId = "unknown", region = "cn-hangzhou")),
+            now,
+        )
+
+        assertEquals("cn-hangzhou", groups.single().region)
+    }
+
+    @Test
     fun `同区域同到期日的多个包合并为一行并计数`() {
         val groups = groupPackages(
             listOf(

@@ -93,6 +93,34 @@ class TrafficWeekEndpointTest {
     }
 
     @Test
+    fun `解析 DomesticValue 与 OverseasValue 区域拆分`() = runTest {
+        server.enqueue(
+            jsonResponse(
+                """
+                {"TrafficDataPerInterval":{"DataModule":[
+                  {"TimeStamp":"2026-11-25T15:00:00Z","Value":"2048",
+                   "DomesticValue":"1536","OverseasValue":"512"},
+                  {"TimeStamp":"2026-11-25T16:00:00Z","Value":"1000"}
+                ]}}
+                """.trimIndent(),
+            ),
+        )
+
+        val days = requireNotNull(endpoint.settledDays(credentials, now).successOrNull()) {
+            "接口应返回成功结果"
+        }
+
+        // 北京 11-25 23:00：三个值都进 11-25。
+        assertEquals(2_048L, days[5].bytes)
+        assertEquals(1_536L, days[5].domesticBytes)
+        assertEquals(512L, days[5].overseasBytes)
+        // 北京 11-26 00:00：接口没给区域字段时按 0，交给估算层识别为「区域数据缺失」。
+        assertEquals(1_000L, days[6].bytes)
+        assertEquals(0L, days[6].domesticBytes)
+        assertEquals(0L, days[6].overseasBytes)
+    }
+
+    @Test
     fun `空响应返回七个零点而不是失败`() = runTest {
         server.enqueue(jsonResponse(EMPTY_RESPONSE))
 

@@ -27,6 +27,7 @@ fun settledWeekWindow(now: Instant): TimeWindow {
  * - 每点先换算到 [BEIJING_ZONE] 再取日期，23:55（北京）与次日 00:05 落在不同天；
  * - 落在今天（或窗口之外）的点一律丢弃：今天未结算，半日数据不污染 7 天走势；
  * - 输出恒定 [SETTLED_WEEK_DAY_COUNT] 个点，按日期升序，缺数据的日补 0；
+ * - 区域拆分（内地/海外）随总量一起按日求和，供资源包预计可用天数使用；
  * - 空输入返回 7 个全零点，不崩溃。
  *
  * 无状态纯函数：不读系统时钟、不读设备时区（spec「纯函数」）。
@@ -38,17 +39,37 @@ fun aggregateSettledDays(
     val today = now.atZone(BEIJING_ZONE).toLocalDate()
     val firstDay = today.minusDays(SETTLED_WEEK_DAY_COUNT.toLong())
     // LinkedHashMap 的插入顺序就是日期升序；先铺满 7 个 0 再累加，缺日自然补 0。
-    val totalsByDate = linkedMapOf<LocalDate, Long>()
+    val totalsByDate = linkedMapOf<LocalDate, DailyTotals>()
     repeat(SETTLED_WEEK_DAY_COUNT) { offset ->
-        totalsByDate[firstDay.plusDays(offset.toLong())] = 0L
+        totalsByDate[firstDay.plusDays(offset.toLong())] = DailyTotals()
     }
     for (point in points) {
         val date = point.at.atZone(BEIJING_ZONE).toLocalDate()
         // 今天以及窗口之外的日期不在键里，直接跳过（「落在今天的点一律丢弃」）。
-        if (!totalsByDate.containsKey(date)) continue
-        totalsByDate[date] = totalsByDate.getValue(date) + point.bytes
+        val totals = totalsByDate[date] ?: continue
+        totals.add(point)
     }
-    return totalsByDate.map { (date, bytes) -> DayTrafficPoint(date = date, bytes = bytes) }
+    return totalsByDate.map { (date, totals) ->
+        DayTrafficPoint(
+            date = date,
+            bytes = totals.bytes,
+            domesticBytes = totals.domesticBytes,
+            overseasBytes = totals.overseasBytes,
+        )
+    }
+}
+
+/** 一天的三个计数器；区域拆分独立累加，不参与「今天丢弃」之外的任何筛选。 */
+private class DailyTotals {
+    var bytes: Long = 0L
+    var domesticBytes: Long = 0L
+    var overseasBytes: Long = 0L
+
+    fun add(point: TrafficPoint) {
+        bytes += point.bytes
+        domesticBytes += point.domesticBytes
+        overseasBytes += point.overseasBytes
+    }
 }
 
 /** 7 天合计（字节）；空列表返回 0，与「空数据展示全零」一致。 */

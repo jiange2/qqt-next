@@ -19,11 +19,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.cdndash.app.data.aliyun.ApiFailureKind
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.PackageGroup
+import com.cdndash.app.domain.PackageRunway
+import com.cdndash.app.domain.estimatePackageRunway
 import com.cdndash.app.domain.formatBeijingHourMinute
 import com.cdndash.app.domain.formatBytes
 import com.cdndash.app.domain.formatPackageDate
+import com.cdndash.app.domain.runwayDayLabel
 import com.cdndash.app.domain.selectPackageSummaryGroups
+import java.time.Instant
 import com.cdndash.app.ui.components.SectionLabel
 import com.cdndash.app.ui.dashboard.label
 import com.cdndash.app.ui.theme.LocalExtendedColors
@@ -39,6 +44,7 @@ const val PACKAGE_SUMMARY_GROUP_LIMIT: Int = 2
  * 未生效的组标注「未生效」且可用余量按 0 显示。
  *
  * @param groups 余量视图；null 表示本次还没取到（区别于空列表「没有 CDN 流量包」）。
+ * @param week 最近 7 个已结算日（含区域拆分），用于预计可用天数；null/旧快照时静默不估算。
  * @param failure 资源包模块的归一错误；与今日累计的错误互不影响。
  * @param snapshotFetchedAtMillis 非 null 表示 [groups] 来自上次成功快照（离线展示），
  * 值是该快照的抓取时刻，与今日/7 天一样标「数据时间 HH:mm（离线）」。
@@ -46,6 +52,7 @@ const val PACKAGE_SUMMARY_GROUP_LIMIT: Int = 2
 @Composable
 fun PackageSummarySection(
     groups: List<PackageGroup>?,
+    week: List<DayTrafficPoint>?,
     failure: ApiFailureKind?,
     isRefreshing: Boolean,
     modifier: Modifier = Modifier,
@@ -71,8 +78,21 @@ fun PackageSummarySection(
             groups.isEmpty() -> PackageHint("没有 CDN 流量包")
             else -> {
                 val shown = selectPackageSummaryGroups(groups, PACKAGE_SUMMARY_GROUP_LIMIT)
-                shown.forEach { group ->
-                    PackageGroupMeter(group = group)
+                val now = Instant.now()
+                val runways = shown.map { group -> estimatePackageRunway(group, week, now) }
+                // 只在真给出天数/到期结论时解释口径；全是「无流量/无数据」就没有可解释的。
+                if (runways.any { it !is PackageRunway.Hidden && it !is PackageRunway.NoTraffic }) {
+                    Text(
+                        text = "天数按区域近 7 天日均估算",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                shown.forEachIndexed { index, group ->
+                    PackageGroupMeter(
+                        group = group,
+                        runwayLabel = runwayDayLabel(runways[index]),
+                    )
                 }
                 val hiddenGroups = groups.size - shown.size
                 if (hiddenGroups > 0) {
@@ -89,9 +109,15 @@ fun PackageSummarySection(
 /**
  * 一组余量 = 区域/到期一行 + 剩余比例条 + 剩余数值。
  * 摘要与明细页共用，保证同一组数据两处长相一致。
+ *
+ * @param runwayLabel 预计可用天数的短标签；null 表示这一组不展示估算。
  */
 @Composable
-fun PackageGroupMeter(group: PackageGroup, modifier: Modifier = Modifier) {
+fun PackageGroupMeter(
+    group: PackageGroup,
+    modifier: Modifier = Modifier,
+    runwayLabel: String? = null,
+) {
     val extended = LocalExtendedColors.current
     val fraction = if (group.totalBytes > 0L) {
         (group.usableRemainingBytes.toFloat() / group.totalBytes.toFloat()).coerceIn(0f, 1f)
@@ -126,6 +152,7 @@ fun PackageGroupMeter(group: PackageGroup, modifier: Modifier = Modifier) {
         val footnote = buildList {
             if (group.packageCount > 1) add("${group.packageCount} 个包")
             if (group.notYetEffective) add("未生效")
+            runwayLabel?.let { add(it) }
         }
         if (footnote.isNotEmpty()) {
             Text(

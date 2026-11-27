@@ -19,14 +19,27 @@ data class TodayTraffic(
 /**
  * 一个原始流量数据点（接口的 Interval 粒度点）。
  * 票据 04 会用小时粒度点按北京自然日聚合为 [DayTrafficPoint]。
+ *
+ * @property bytes 该点的总边缘出流量（`Value`）。
+ * @property domesticBytes 中国内地部分（`DomesticValue`）；旧快照/接口未返回时为 0。
+ * @property overseasBytes 海外部分（`OverseasValue`，不含中国内地）；未返回时为 0。
  */
 data class TrafficPoint(
     val at: Instant,
     val bytes: Long,
+    val domesticBytes: Long = 0L,
+    val overseasBytes: Long = 0L,
 )
 
-/** 北京自然日 [date] 的边缘出流量，用于「最近 7 天」的已结算日（GLOSSARY「已结算日」）。 */
+/**
+ * 北京自然日 [date] 的边缘出流量，用于「最近 7 天」的已结算日（GLOSSARY「已结算日」）。
+ *
+ * @property bytes 当日总量；[domesticBytes]/[overseasBytes] 是区域拆分，三者同源。
+ * 旧快照没有区域字段时两者为 0，估算层据此识别「区域数据缺失」而不当作零流量。
+ */
 data class DayTrafficPoint(
     val date: LocalDate,
     val bytes: Long,
+    val domesticBytes: Long = 0L,
+    val overseasBytes: Long = 0L,
 )

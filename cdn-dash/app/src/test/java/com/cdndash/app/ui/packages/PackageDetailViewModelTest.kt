@@ -5,9 +5,12 @@ import com.cdndash.app.data.aliyun.AliyunApiImpl
 import com.cdndash.app.data.aliyun.AliyunRpcClient
 import com.cdndash.app.data.aliyun.ApiFailureKind
 import com.cdndash.app.data.aliyun.PackageSnapshotCodec
+import com.cdndash.app.data.aliyun.WeekTrafficSnapshotCodec
+import com.cdndash.app.domain.DayTrafficPoint
 import com.cdndash.app.domain.ResourcePackage
 import com.cdndash.app.domain.SnapshotModule
 import java.time.Instant
+import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -90,6 +93,9 @@ class PackageDetailViewModelTest {
         assertNull(state.groups)
         assertNull(state.snapshotFetchedAtMillis)
         assertEquals(ApiFailureKind.NETWORK, state.failure)
+        // 7 天也失败且没有快照：不展示估算。
+        assertNull(state.week)
+        assertNull(state.weekSnapshotFetchedAtMillis)
     }
 
     @Test
@@ -116,6 +122,66 @@ class PackageDetailViewModelTest {
         assertEquals(2, PackageSnapshotCodec.decode(snapshot.payloadJson)?.size)
     }
 
+    @Test
+    fun `成功取到七天时写入快照且不标离线`() = runTest(dispatcher) {
+        server.dispatcher = actionDispatcher(
+            mapOf(
+                "DescribeCdnUserResourcePackage" to { okResponse(PACKAGE_RESPONSE) },
+                "DescribeDomainTrafficData" to { okResponse(WEEK_RESPONSE) },
+            ),
+        )
+        val account = store.addAccount("账号", "ak-ok", "secret")
+
+        val viewModel = newViewModel(account.id)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(7, state.week?.size)
+        assertNull(state.weekSnapshotFetchedAtMillis)
+        assertEquals(2_048L, state.week?.last()?.bytes)
+        assertEquals(1_536L, state.week?.last()?.domesticBytes)
+
+        val snapshot = requireNotNull(store.snapshot(account.id, SnapshotModule.WEEK_TREND))
+        assertEquals(fixedNow.toEpochMilli(), snapshot.fetchedAtMillis)
+        assertEquals(7, WeekTrafficSnapshotCodec.decode(snapshot.payloadJson)?.size)
+    }
+
+    @Test
+    fun `七天取数失败时回落到 WEEK_TREND 快照并只影响估算`() = runTest(dispatcher) {
+        server.dispatcher = actionDispatcher(
+            mapOf(
+                "DescribeCdnUserResourcePackage" to { okResponse(PACKAGE_RESPONSE) },
+                "DescribeDomainTrafficData" to { MockResponse().setResponseCode(500) },
+            ),
+        )
+        val account = store.addAccount("账号", "ak-ok", "secret")
+        val cachedWeek = listOf(
+            DayTrafficPoint(
+                date = LocalDate.parse("2026-11-25"),
+                bytes = 2_048,
+                domesticBytes = 1_536,
+                overseasBytes = 512,
+            ),
+        )
+        val snapshotAt = fixedNow.minusSeconds(3_600L).toEpochMilli()
+        store.saveSnapshot(
+            accountId = account.id,
+            module = SnapshotModule.WEEK_TREND,
+            payloadJson = WeekTrafficSnapshotCodec.encode(cachedWeek),
+            fetchedAtMillis = snapshotAt,
+        )
+
+        val viewModel = newViewModel(account.id)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        // 包本身成功：7 天失败不能污染资源包的错误态。
+        assertEquals(2, state.groups?.size)
+        assertNull(state.failure)
+        assertEquals(cachedWeek, state.week)
+        assertEquals(snapshotAt, state.weekSnapshotFetchedAtMillis)
+    }
+
     private fun newViewModel(accountId: String): PackageDetailViewModel {
         val api = AliyunApiImpl(
             cdnRpc = AliyunRpcClient(
@@ -137,6 +203,15 @@ class PackageDetailViewModelTest {
             override fun dispatch(request: RecordedRequest): MockResponse = responseFactory()
         }
 
+    /** 按 `Action` 分流的假服务；未声明的 Action（如 DCDN 资源包）一律 500，由端点自行容忍。 */
+    private fun actionDispatcher(responses: Map<String, () -> MockResponse>): Dispatcher =
+        object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val action = request.requestUrl?.queryParameter("Action").orEmpty()
+                return responses[action]?.invoke() ?: MockResponse().setResponseCode(500)
+            }
+        }
+
     private fun okResponse(body: String): MockResponse =
         MockResponse()
             .setResponseCode(200)
@@ -153,6 +228,15 @@ class PackageDetailViewModelTest {
             effectiveAt = Instant.parse("2026-11-01T00:00:00Z"),
             expiresAt = Instant.parse("2026-12-31T16:00:00Z"),
         )
+
+        /** 北京时间 11-26 10:30 的基准下，11-25 23:00 是最后一个已结算日。 */
+        val WEEK_RESPONSE: String =
+            """
+            {"TrafficDataPerInterval":{"DataModule":[
+              {"TimeStamp":"2026-11-25T15:00:00Z","Value":"2048",
+               "DomesticValue":"1536","OverseasValue":"512"}
+            ]}}
+            """.trimIndent()
 
         val PACKAGE_RESPONSE: String =
             """

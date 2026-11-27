@@ -41,5 +41,31 @@ data class ResourcePackage(
 
         /** 接口没有返回区域时的兜底文案：宁可显示未知，也不把不同区域混成一组。 */
         const val UNKNOWN_REGION: String = "未知区域"
+
+        /** 中国内地：对应流量数据点的 `DomesticValue`，估算天数时只与本区域包配对。 */
+        const val MAINLAND_REGION: String = "中国内地"
+
+        /** 海外：对应流量数据点的 `OverseasValue`（全球不含中国内地）。 */
+        const val OVERSEAS_REGION: String = "海外"
+    }
+}
+
+/**
+ * 把资源包接口的 `Region` 归一到 GLOSSARY「区域」的两个已知值。
+ *
+ * CDN/DCDN 资源包接口实际返回区域码（文档示例 `CN`，海外为 `OVERSEAS`），
+ * 直接拿来与「中国内地/海外」比对永远不相等，会让预计可用天数误判成「区域未知」而静默隐藏。
+ * 无法识别的值原样返回（保留展示，但不参与天数估算）。
+ */
+fun canonicalRegion(raw: String): String {
+    val trimmed = raw.trim()
+    return when (trimmed.uppercase()) {
+        "CN", "CHINA", "MAINLAND", "DOMESTIC", "中国内地", "中国大陆", "中国" ->
+            ResourcePackage.MAINLAND_REGION
+
+        "OVERSEAS", "OVERSEA", "INTERNATIONAL", "海外", "国际" ->
+            ResourcePackage.OVERSEAS_REGION
+
+        else -> trimmed
     }
 }

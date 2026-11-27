@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter
  * @property totalBytes 组内总量之和。
  * @property remainingBytes 组内剩余量之和（包含未生效包的余量，仅用于展示原始值）。
  * @property effectiveAt 组内最早的生效时刻；所有包都晚于当前时刻才算「未生效」。
+ * @property expiresAt 组内最早的到期时刻；估算可用天数时与它比较。`EPOCH` 表示到期时间未知。
  * @property notYetEffective 生效时刻晚于当前时刻的组；这类组不得当作可用余量。
  */
 data class PackageGroup(
@@ -23,6 +24,7 @@ data class PackageGroup(
     val totalBytes: Long,
     val remainingBytes: Long,
     val effectiveAt: Instant,
+    val expiresAt: Instant,
     val notYetEffective: Boolean,
 ) {
     /**
@@ -55,6 +57,8 @@ data class RegionPackageGroups(
 fun groupPackages(packages: List<ResourcePackage>, now: Instant): List<PackageGroup> =
     packages
         .filter { it.commodityCode in ResourcePackage.FLOW_PACKAGE_COMMODITY_CODES }
+        // 接口区域码（CN/OVERSEAS）先归一，避免同一区域被拆成两组、估算也认不出区域。
+        .map { it.copy(region = canonicalRegion(it.region)) }
         .groupBy { packageInfo -> packageInfo.region to packageInfo.expiresAt.beijingDate() }
         .map { (key, group) ->
             val earliestEffective = group.minOf { it.effectiveAt }
@@ -65,6 +69,8 @@ fun groupPackages(packages: List<ResourcePackage>, now: Instant): List<PackageGr
                 totalBytes = group.sumOf { it.totalBytes },
                 remainingBytes = group.sumOf { it.remainingBytes },
                 effectiveAt = earliestEffective,
+                // 同组同到期日，取最早时刻做保守比较；缺失到期时间（EPOCH）保持 EPOCH。
+                expiresAt = group.minOf { it.expiresAt },
                 // 「未生效的组」= 组内所有包都还没生效（最早生效时刻仍晚于当前）。
                 notYetEffective = earliestEffective.isAfter(now),
             )
